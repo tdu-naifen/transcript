@@ -17,15 +17,15 @@ final class ModelDownloadModel {
     }
 
     var statusText: String {
+        let locale = LocalizationManager.shared.resolvedLocale
         switch state {
-        case .notInstalled: "Not downloaded"
+        case .notInstalled: return String(localized: "Not downloaded", locale: locale)
         case .downloading(let done, let total):
-            total > 0
-                ? "\(Format.bytes(Int(done))) of \(Format.bytes(Int(total)))"
-                : "Starting…"
-        case .verifying: "Verifying"
-        case .installed(let bytes): Format.bytes(Int(bytes))
-        case .failed(let message): message
+            guard total > 0 else { return String(localized: "Starting…", locale: locale) }
+            return String(localized: "\(Format.bytes(Int(done))) of \(Format.bytes(Int(total)))", locale: locale)
+        case .verifying: return String(localized: "Verifying", locale: locale)
+        case .installed(let bytes): return Format.bytes(Int(bytes))
+        case .failed(let message): return message
         }
     }
 
@@ -44,7 +44,7 @@ final class ModelDownloadModel {
     func download() async {
         isWorking = true
         defer { isWorking = false }
-        _ = try? await services.modelDownloader.ensureInstalled()
+        _ = try? await services.modelDownloader.ensureRecordingModelsInstalled()
     }
 
     func cancel() async {
