@@ -201,7 +201,10 @@ final class RecorderModel {
         }
     }
 
-    private static func defaultTitle(now: Date = Date()) -> String {
-        "Recording \(now.formatted(date: .abbreviated, time: .shortened))"
+    /// The subtitle already shows the date (UI.md row layout), so the default title
+    /// must not restate it — otherwise every unnamed recording shows the same
+    /// timestamp twice.
+    private static func defaultTitle() -> String {
+        "未命名录音"
     }
 }
