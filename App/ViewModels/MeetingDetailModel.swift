@@ -28,9 +28,13 @@ final class MeetingDetailModel {
     private let speakerRepository: SpeakerRepository
     private let deviceId: String
 
-    init(meeting: Meeting, audioURL: URL?, services: AppServices) {
+    init(meeting: Meeting, audioURL: URL?, services: AppServices, isRecordingActive: Bool = false) {
         self.meeting = meeting
-        self.playback = AudioPlaybackModel(url: audioURL, durationMs: meeting.durationMs)
+        self.playback = AudioPlaybackModel(
+            url: audioURL,
+            durationMs: meeting.durationMs,
+            isRecordingActive: isRecordingActive
+        )
         self.utteranceRepository = UtteranceRepository(services.database)
         self.speakerRepository = SpeakerRepository(services.database)
         self.deviceId = services.deviceId

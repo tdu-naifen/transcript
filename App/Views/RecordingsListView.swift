@@ -5,6 +5,7 @@ struct RecordingsListView: View {
     let model: LibraryModel
     let services: AppServices
     @Binding var path: NavigationPath
+    let isRecordingActive: () -> Bool
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -28,6 +29,7 @@ struct RecordingsListView: View {
                         }
                     }
                     .listStyle(.plain)
+                    .scrollContentBackground(.hidden)
                     .safeAreaInset(edge: .bottom) {
                         // Clears the floating record button (RootView), which floats
                         // outside the TabView and so contributes no safe area of its own.
@@ -39,10 +41,12 @@ struct RecordingsListView: View {
                 MeetingDetailView(
                     meeting: meeting,
                     audioURL: model.audioURL(for: meeting),
-                    services: services
+                    services: services,
+                    isRecordingActive: isRecordingActive()
                 )
             }
             .navigationTitle("录音")
+            .background(Color(red: 0.975, green: 0.97, blue: 0.96))
             .refreshable { await model.reload() }
             .task {
                 await model.reload()
@@ -74,21 +78,29 @@ private struct MeetingRow: View {
     let colorIndexes: [Int]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(meeting.title)
-                .font(.body.weight(.medium))
-                .lineLimit(1)
-            HStack(spacing: 8) {
-                Text(meeting.startedAt.formatted(date: .abbreviated, time: .shortened))
-                Text(Format.duration(milliseconds: meeting.durationMs))
-                    .monospacedDigit()
-            }
-            .font(.caption)
-            .foregroundStyle(.secondary)
-            if !colorIndexes.isEmpty {
-                SpeakerDotsView(colorIndexes: colorIndexes)
+        HStack(spacing: 14) {
+            Image(systemName: "waveform")
+                .font(.headline)
+                .foregroundStyle(.red)
+                .frame(width: 42, height: 42)
+                .background(.red.opacity(0.09), in: Circle())
+            VStack(alignment: .leading, spacing: 6) {
+                Text(meeting.title)
+                    .font(.body.weight(.semibold))
+                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    Text(Format.date(meeting.startedAt))
+                    Text(Format.duration(milliseconds: meeting.durationMs))
+                        .monospacedDigit()
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                if !colorIndexes.isEmpty {
+                    SpeakerDotsView(colorIndexes: colorIndexes)
+                }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 7)
+        .accessibilityIdentifier("recordingRow")
     }
 }

@@ -3,20 +3,27 @@ import TranscriptCore
 
 struct RootView: View {
     @State private var launch = LaunchState()
+    private var localization: LocalizationManager { .shared }
 
     var body: some View {
-        switch launch.phase {
-        case .loading:
-            ProgressView().task { launch.load() }
-        case .failed(let message):
-            ContentUnavailableView(
-                "Transcript can't start",
-                systemImage: "exclamationmark.triangle",
-                description: Text(message)
-            )
-        case .ready(let services, let library, let recorder):
-            ReadyView(services: services, library: library, recorder: recorder)
+        Group {
+            switch launch.phase {
+            case .loading:
+                ProgressView().task { launch.load() }
+            case .failed(let message):
+                ContentUnavailableView(
+                    "Transcript can't start",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text(message)
+                )
+            case .ready(let services, let library, let recorder):
+                ReadyView(services: services, library: library, recorder: recorder)
+            }
         }
+        // Reading `language` here registers Observation tracking, so every descendant
+        // `Text`/`Label` (via `LocalizedStringKey`) re-renders in the new language the
+        // instant Settings changes it — no app restart needed.
+        .environment(\.locale, localization.language.locale ?? .autoupdatingCurrent)
     }
 }
 
@@ -35,9 +42,27 @@ private struct ReadyView: View {
     let services: AppServices
     let library: LibraryModel
     let recorder: RecorderModel
-    @State private var isRecordingPresented = false
-    @State private var selectedTab: AppTab = .recordings
+    @State private var isRecordingExpanded = Self.debugRecordingExpanded
+    @State private var selectedTab: AppTab = Self.debugInitialTab
     @State private var recordingsPath = NavigationPath()
+
+    /// Screenshot verification aid, same pattern as `-uiFixtureOpenMeetingId`: the
+    /// simulator has no scripted-tap path to the Settings tab in this environment.
+    private static var debugInitialTab: AppTab {
+        #if DEBUG
+        UserDefaults.standard.string(forKey: "uiFixtureSelectedTab") == "settings" ? .settings : .recordings
+        #else
+        .recordings
+        #endif
+    }
+
+    private static var debugRecordingExpanded: Bool {
+        #if DEBUG
+        UserDefaults.standard.bool(forKey: "uiFixtureExpandRecording")
+        #else
+        false
+        #endif
+    }
 
     /// The record button only makes sense on the recordings list and settings tabs
     /// (UI.md §1); on the meeting detail screen it's semantically wrong (that screen is
@@ -47,34 +72,97 @@ private struct ReadyView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .bottomTrailing) {
+        ZStack {
             TabView(selection: $selectedTab) {
                 Tab("录音", systemImage: "list.bullet", value: AppTab.recordings) {
-                    RecordingsListView(model: library, services: services, path: $recordingsPath)
+                    RecordingsListView(
+                        model: library,
+                        services: services,
+                        path: $recordingsPath,
+                        isRecordingActive: { recorder.isActive }
+                    )
                 }
                 Tab("设置", systemImage: "gearshape", value: AppTab.settings) {
                     SettingsView(services: services)
                 }
             }
 
-            if !isFloatingButtonHidden {
+            if isRecordingExpanded {
+                RecordView(model: recorder) {
+                    withAnimation(.snappy) { isRecordingExpanded = false }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .zIndex(2)
+            }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            if recorder.isActive && !isRecordingExpanded {
+                RecordingMiniBar(model: recorder) {
+                    withAnimation(.snappy) { isRecordingExpanded = true }
+                }
+            }
+        }
+        .overlay(alignment: .bottomTrailing) {
+            if !isFloatingButtonHidden && !recorder.isActive && !isRecordingExpanded {
                 Button {
-                    isRecordingPresented = true
+                    isRecordingExpanded = true
+                    Task {
+                        await recorder.onAppear()
+                        await recorder.toggleRecording()
+                    }
                 } label: {
-                    Image(systemName: "record.circle.fill")
-                        .font(.system(size: 52))
-                        .foregroundStyle(.white, .red)
-                        .background(.ultraThinMaterial, in: Circle())
+                    Image(systemName: "waveform")
+                        .font(.system(size: 25, weight: .semibold))
+                        .foregroundStyle(.red)
                         .frame(width: FloatingRecordButtonMetrics.diameter, height: FloatingRecordButtonMetrics.diameter)
+                        .background(.regularMaterial, in: Circle())
+                        .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
                 }
                 .padding(.trailing, 20)
                 .padding(.bottom, FloatingRecordButtonMetrics.bottomPadding)
                 .accessibilityLabel("Record")
+                .accessibilityIdentifier("globalRecordButton")
             }
         }
-        .fullScreenCover(isPresented: $isRecordingPresented) {
-            RecordView(model: recorder)
+    }
+}
+
+private struct RecordingMiniBar: View {
+    let model: RecorderModel
+    let onExpand: () -> Void
+
+    var body: some View {
+        Button(action: onExpand) {
+            HStack(spacing: 12) {
+                Circle()
+                    .fill(model.phase == .paused ? Color.secondary : Color.red)
+                    .frame(width: 8, height: 8)
+                Text(Format.clock(model.elapsed))
+                    .font(.subheadline.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.primary)
+                LevelMeterView(level: model.level, isActive: model.phase == .recording)
+                    .frame(maxWidth: .infinity)
+                Button {
+                    Task { await model.toggleRecording() }
+                } label: {
+                    Image(systemName: "stop.fill")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.white)
+                        .frame(width: 34, height: 34)
+                        .background(.red, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Stop recording")
+                .accessibilityIdentifier("miniStopButton")
+            }
+            .padding(.horizontal, 14)
+            .frame(height: 58)
+            .background(.regularMaterial)
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Expand recording")
+        .accessibilityIdentifier("recordingMiniBar")
     }
 }
 

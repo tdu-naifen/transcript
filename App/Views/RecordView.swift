@@ -3,70 +3,116 @@ import TranscriptCore
 
 struct RecordView: View {
     @Bindable var model: RecorderModel
+    let onCollapse: () -> Void
 
     var body: some View {
-        NavigationStack {
-            VStack(spacing: 20) {
-                StatusChipRow(
-                    stateLabel: model.stateLabel,
-                    stateTint: model.phase == .recording ? .red : .secondary,
-                    tier: .nemotron2240ms
-                )
+        ZStack {
+            LinearGradient(
+                colors: [Color(red: 1, green: 0.72, blue: 0.7), Color(red: 0.97, green: 0.97, blue: 0.965)],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .ignoresSafeArea()
 
-                if model.permission == .denied {
-                    MicrophoneDeniedView()
-                } else {
+            VStack(spacing: 10) {
+                VStack(spacing: 2) {
+                    HStack {
+                        Button(action: onCollapse) {
+                            Image(systemName: "chevron.down")
+                                .font(.subheadline.weight(.bold))
+                                .foregroundStyle(.primary)
+                                .frame(width: 38, height: 38)
+                                .background(Color.black.opacity(0.045), in: Circle())
+                        }
+                        .accessibilityLabel("Collapse recording")
+                        .accessibilityIdentifier("collapseRecordingButton")
+                        Spacer()
+                    }
+
                     Text(Format.clock(model.elapsed))
-                        .font(.system(size: 64, weight: .light, design: .monospaced))
+                        .font(.system(size: 50, weight: .bold, design: .rounded))
                         .contentTransition(.numericText())
                         .monospacedDigit()
+                        .padding(.bottom, 8)
 
                     LevelMeterView(level: model.level, isActive: model.phase == .recording)
-                        .padding(.horizontal)
-
-                    InputSourcePicker()
-
-                    if let notice = model.notice {
-                        Text(notice)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .onTapGesture { model.dismissNotice() }
-                    }
-
-                    LiveTranscriptView(model: model.transcription)
-                        .frame(maxHeight: .infinity)
-
-                    HStack(spacing: 28) {
-                        if model.isActive {
-                            PauseButton(isPaused: model.phase == .paused) {
-                                Task { await model.togglePause() }
-                            }
-                        }
-                        RecordButton(isRecording: model.isActive, isBusy: model.isBusy) {
-                            Task { await model.toggleRecording() }
-                        }
-                    }
-                    .padding(.bottom, 24)
+                        .frame(height: 26)
                 }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+                .background(.white.opacity(0.96), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                .shadow(color: .black.opacity(0.06), radius: 18, y: 8)
+
+                Group {
+                    if model.permission == .denied {
+                        MicrophoneDeniedView()
+                    } else {
+                        ZStack(alignment: .bottom) {
+                            LiveTranscriptView(model: model.transcription)
+                                .frame(maxHeight: .infinity)
+
+                            LinearGradient(
+                                colors: [.white.opacity(0), .white],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                            .frame(height: 116)
+                            .allowsHitTesting(false)
+
+                            HStack(spacing: 24) {
+                                PauseButton(isPaused: model.phase == .paused) {
+                                    Task { await model.togglePause() }
+                                }
+                                RecordButton(isRecording: model.isActive, isBusy: model.isBusy) {
+                                    Task {
+                                        await model.toggleRecording()
+                                        if !model.isActive { onCollapse() }
+                                    }
+                                }
+                            }
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
+                            .background(.ultraThinMaterial, in: Capsule())
+                            .shadow(color: .black.opacity(0.1), radius: 16, y: 7)
+                            .padding(.bottom, 16)
+                        }
+                        .background(.white, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                        .shadow(color: .black.opacity(0.05), radius: 14, y: 6)
+
+                        if let notice = model.notice {
+                            Text(notice)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .multilineTextAlignment(.center)
+                                .onTapGesture { model.dismissNotice() }
+                        }
+                    }
+                }
+                .frame(maxHeight: .infinity)
             }
-            .padding(.top, 16)
-            .frame(maxHeight: .infinity, alignment: .top)
-            .navigationTitle("Record")
-            .navigationBarTitleDisplayMode(.inline)
-            .task { await model.onAppear() }
-            .alert(
-                "Recording problem",
-                isPresented: Binding(
-                    get: { model.errorMessage != nil },
-                    set: { if !$0 { model.errorMessage = nil } }
-                )
-            ) {
-                Button("OK", role: .cancel) { model.errorMessage = nil }
-            } message: {
-                Text(model.errorMessage ?? "")
-            }
+            .padding(.horizontal, 14)
+            .padding(.top, 6)
+            .padding(.bottom, 6)
         }
+        .task { await model.onAppear() }
+        .alert(
+            "Recording problem",
+            isPresented: Binding(
+                get: { model.errorMessage != nil },
+                set: { if !$0 { model.errorMessage = nil } }
+            )
+        ) {
+            Button("OK", role: .cancel) { model.errorMessage = nil }
+        } message: {
+            Text(model.errorMessage ?? "")
+        }
+        .accessibilityIdentifier("expandedRecordingView")
+    }
+}
+
+extension RecordView {
+    init(model: RecorderModel) {
+        self.init(model: model, onCollapse: {})
     }
 }
 

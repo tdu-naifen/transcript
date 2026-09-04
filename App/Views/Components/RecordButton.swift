@@ -10,11 +10,13 @@ struct RecordButton: View {
         Button(action: action) {
             ZStack {
                 Circle()
-                    .stroke(Color.secondary.opacity(0.35), lineWidth: 4)
-                    .frame(width: 88, height: 88)
-                RoundedRectangle(cornerRadius: isRecording ? 8 : 34, style: .continuous)
-                    .fill(Color.red)
-                    .frame(width: isRecording ? 34 : 68, height: isRecording ? 34 : 68)
+                    .fill(Color(red: 0.94, green: 0.18, blue: 0.2))
+                    .frame(width: 58, height: 58)
+                if isRecording {
+                    RoundedRectangle(cornerRadius: 4, style: .continuous)
+                        .fill(.white)
+                        .frame(width: 18, height: 18)
+                }
             }
             .opacity(isBusy ? 0.4 : 1)
         }

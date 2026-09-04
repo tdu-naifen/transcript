@@ -10,7 +10,9 @@ struct MeetingDetailView: View {
     @State private var model: MeetingDetailModel
     @State private var isParticipantsExpanded = Self.debugStartExpanded
     @State private var isEngineeringDetailPresented = false
+    @State private var isInsightsPresented = false
     @State private var renameText = ""
+    @Environment(\.dismiss) private var dismiss
 
     /// Screenshot verification aid (see `RecordingsListView.openFixtureMeetingIfRequested`):
     /// `-uiFixtureExpandParticipants 1` starts the header expanded since there's no way
@@ -24,35 +26,39 @@ struct MeetingDetailView: View {
     }
 
 
-    init(meeting: Meeting, audioURL: URL?, services: AppServices) {
+    init(meeting: Meeting, audioURL: URL?, services: AppServices, isRecordingActive: Bool = false) {
         self.meeting = meeting
         self.audioURL = audioURL
-        _model = State(initialValue: MeetingDetailModel(meeting: meeting, audioURL: audioURL, services: services))
+        _model = State(initialValue: MeetingDetailModel(
+            meeting: meeting,
+            audioURL: audioURL,
+            services: services,
+            isRecordingActive: isRecordingActive
+        ))
     }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            topBar
+            participantsHeader
             transcript
         }
+        .background(Color(red: 0.975, green: 0.97, blue: 0.96))
         .safeAreaInset(edge: .bottom) {
             AudioPlayerBar(playback: model.playback)
         }
-        .navigationTitle(meeting.title)
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button {
-                    isEngineeringDetailPresented = true
-                } label: {
-                    Image(systemName: "ellipsis.circle")
-                }
-                .accessibilityLabel("详细信息")
-            }
-        }
+        .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $isEngineeringDetailPresented) {
             EngineeringDetailSheet(meeting: meeting, audioURL: audioURL)
+        }
+        .sheet(isPresented: $isInsightsPresented) {
+            SpeakerInsightsView(
+                meeting: meeting,
+                utterances: model.utterances,
+                speakers: model.speakersById,
+                participants: model.participants,
+                playbackProgress: model.playback.progress
+            )
         }
         .alert(
             "重命名",
@@ -76,14 +82,76 @@ struct MeetingDetailView: View {
         .onDisappear { model.playback.stop() }
     }
 
-    private var header: some View {
+    /// Resolved eagerly (not via a `LocalizedStringKey` literal) because it mixes a
+    /// pluralized count with an already-localized duration string; combining both
+    /// pieces here and displaying with `Text(verbatim:)` avoids needing a multi-argument
+    /// "Vary by Plural" catalog entry for the combined phrase.
+    private var participantsSummaryText: String {
+        let locale = LocalizationManager.shared.resolvedLocale
+        let count = model.participants.count
+        let peopleText = count == 1
+            ? String(localized: "1 participant", locale: locale)
+            : String(localized: "\(count) participants", locale: locale)
+        return "\(peopleText) · \(Format.duration(milliseconds: meeting.durationMs))"
+    }
+
+    private var topBar: some View {
+        HStack {
+            Button { dismiss() } label: {
+                Image(systemName: "chevron.left")
+                    .font(.headline)
+                    .frame(width: 42, height: 42)
+                    .background(.white, in: Circle())
+            }
+            .accessibilityLabel("Back")
+            .accessibilityIdentifier("meetingBackButton")
+
+            Spacer()
+            VStack(spacing: 2) {
+                Text(meeting.title)
+                    .font(.headline)
+                    .lineLimit(1)
+                Text(headerMetadata)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity)
+            Spacer()
+
+            Menu {
+                Button("Speaker Insights", systemImage: "chart.bar.xaxis") {
+                    isInsightsPresented = true
+                }
+                Button("Details", systemImage: "info.circle") {
+                    isEngineeringDetailPresented = true
+                }
+            } label: {
+                Image(systemName: "ellipsis")
+                    .font(.headline)
+                    .frame(width: 42, height: 42)
+                    .background(.white, in: Circle())
+            }
+            .accessibilityLabel("Meeting options")
+            .accessibilityIdentifier("meetingOptionsButton")
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+    }
+
+    private var headerMetadata: String {
+        let date = Format.date(meeting.startedAt)
+        guard let locale = meeting.localeIdentifier, !locale.isEmpty else { return date }
+        return "\(date) · \(Locale.current.localizedString(forIdentifier: locale) ?? locale)"
+    }
+
+    private var participantsHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
             Button {
                 withAnimation { isParticipantsExpanded.toggle() }
             } label: {
                 HStack(spacing: 8) {
                     SpeakerDotsView(colorIndexes: model.participants.map(\.colorIndex))
-                    Text("\(model.participants.count) 人 · \(Format.duration(milliseconds: meeting.durationMs))")
+                    Text(verbatim: participantsSummaryText)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
                     Spacer()
@@ -94,6 +162,7 @@ struct MeetingDetailView: View {
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityIdentifier("participantsToggle")
 
             if isParticipantsExpanded {
                 VStack(alignment: .leading, spacing: 10) {
@@ -107,7 +176,6 @@ struct MeetingDetailView: View {
             }
         }
         .padding(.horizontal)
-        .padding(.top, 8)
         .padding(.bottom, isParticipantsExpanded ? 10 : 6)
     }
 
@@ -122,7 +190,7 @@ struct MeetingDetailView: View {
         } else {
             ScrollViewReader { proxy in
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 12) {
+                    LazyVStack(alignment: .leading, spacing: 14) {
                         ForEach(model.utterances) { utterance in
                             TranscriptRow(
                                 utterance: utterance,
@@ -186,28 +254,128 @@ private struct TranscriptRow: View {
     let onTapName: (String) -> Void
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
+        VStack(alignment: .leading, spacing: 7) {
             HStack(spacing: 6) {
                 if let speaker {
                     Circle()
                         .fill(Color.speaker(colorIndex: speaker.colorIndex))
                         .frame(width: 8, height: 8)
                     Text(speaker.resolvedName)
-                        .font(.caption.weight(.medium))
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(Color.speaker(colorIndex: speaker.colorIndex))
                         .contentShape(Rectangle())
                         .onTapGesture { onTapName(speaker.id) }
                 }
                 Text(Format.duration(milliseconds: utterance.startMs))
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.tertiary)
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(.orange)
+                Spacer()
+                if isCurrent {
+                    Image(systemName: "waveform")
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(speaker.map { Color.speaker(colorIndex: $0.colorIndex) } ?? .red)
+                        .symbolEffect(.variableColor.iterative)
+                }
             }
-            Text(utterance.text).font(.callout)
+            Text(utterance.text)
+                .font(.system(size: 18))
+                .lineSpacing(2)
         }
-        .padding(8)
+        .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(isCurrent ? Color.accentColor.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 8))
+        .background(
+            isCurrent
+                ? (speaker.map { Color.speaker(colorIndex: $0.colorIndex).opacity(0.1) } ?? Color.red.opacity(0.08))
+                : Color.clear,
+            in: RoundedRectangle(cornerRadius: 14, style: .continuous)
+        )
         .contentShape(Rectangle())
         .onTapGesture(perform: onTapLine)
+        .accessibilityIdentifier("meetingTranscriptRow")
+    }
+}
+
+private struct SpeakerInsightsView: View {
+    let meeting: Meeting
+    let utterances: [Utterance]
+    let speakers: [String: Speaker]
+    let participants: [MeetingDetailModel.ParticipantSummary]
+    let playbackProgress: Double
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 22) {
+                    ForEach(participants) { participant in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Circle()
+                                    .fill(Color.speaker(colorIndex: participant.colorIndex))
+                                    .frame(width: 9, height: 9)
+                                Text(participant.resolvedName)
+                                    .font(.subheadline.weight(.semibold))
+                                    .lineLimit(1)
+                                Spacer()
+                                Text("\(participant.percentage)%")
+                                    .font(.subheadline.monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            SpeakerTimeline(
+                                meetingDurationMs: meeting.durationMs,
+                                utterances: utterances.filter { $0.speakerId == participant.id },
+                                color: Color.speaker(colorIndex: participant.colorIndex),
+                                playbackProgress: playbackProgress
+                            )
+                            .frame(height: 22)
+                        }
+                    }
+                }
+                .padding()
+            }
+            .background(Color(red: 0.975, green: 0.97, blue: 0.96))
+            .navigationTitle("Speaker Insights")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") { dismiss() }
+                }
+            }
+        }
+        .presentationDetents([.medium, .large])
+        .accessibilityIdentifier("speakerInsightsSheet")
+    }
+}
+
+private struct SpeakerTimeline: View {
+    let meetingDurationMs: Int
+    let utterances: [Utterance]
+    let color: Color
+    let playbackProgress: Double
+
+    var body: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.secondary.opacity(0.12))
+                ForEach(utterances) { utterance in
+                    let start = fraction(utterance.startMs)
+                    let end = fraction(utterance.endMs)
+                    Capsule()
+                        .fill(color)
+                        .frame(width: max(3, proxy.size.width * (end - start)))
+                        .offset(x: proxy.size.width * start)
+                }
+                Rectangle()
+                    .fill(.red)
+                    .frame(width: 1.5, height: 28)
+                    .offset(x: proxy.size.width * playbackProgress)
+            }
+        }
+    }
+
+    private func fraction(_ milliseconds: Int) -> CGFloat {
+        guard meetingDurationMs > 0 else { return 0 }
+        return min(1, max(0, CGFloat(milliseconds) / CGFloat(meetingDurationMs)))
     }
 }
 
@@ -221,8 +389,8 @@ private struct EngineeringDetailSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                Section("Recording") {
-                    LabeledContent("Started", value: meeting.startedAt.formatted(date: .long, time: .shortened))
+                Section("Recording Info") {
+                    LabeledContent("Started", value: Format.date(meeting.startedAt, dateStyle: .long, timeStyle: .shortened))
                     LabeledContent("Duration", value: Format.duration(milliseconds: meeting.durationMs))
                     LabeledContent("State", value: meeting.state.label)
                     if let origin = meeting.failedFromState {
@@ -243,10 +411,10 @@ private struct EngineeringDetailSheet: View {
                 }
 
                 Section("Sync") {
-                    LabeledContent("Sent to Mac", value: meeting.syncedToMacAt?.formatted() ?? "Not yet")
-                    LabeledContent("Verified on Mac", value: meeting.audioVerifiedOnMacAt?.formatted() ?? "Not yet")
+                    LabeledContent("Sent to Mac", value: dateOrNotYet(meeting.syncedToMacAt))
+                    LabeledContent("Verified on Mac", value: dateOrNotYet(meeting.audioVerifiedOnMacAt))
                     if let purgedAt = meeting.localAudioPurgedAt {
-                        LabeledContent("Local audio purged", value: purgedAt.formatted())
+                        LabeledContent("Local audio purged", value: Format.date(purgedAt, dateStyle: .numeric, timeStyle: .shortened))
                     }
                 }
             }
@@ -258,5 +426,10 @@ private struct EngineeringDetailSheet: View {
                 }
             }
         }
+    }
+
+    private func dateOrNotYet(_ date: Date?) -> String {
+        guard let date else { return String(localized: "Not yet", locale: LocalizationManager.shared.resolvedLocale) }
+        return Format.date(date, dateStyle: .numeric, timeStyle: .shortened)
     }
 }
