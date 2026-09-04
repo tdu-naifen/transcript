@@ -50,6 +50,10 @@ private final class LaunchState {
             phase = .ready(services, library, recorder)
             #if DEBUG
             SmokeRecording.runIfRequested(recorder)
+            Task { @MainActor in
+                await UIFixture.seedIfRequested(services: services)
+                await library.reload()
+            }
             #endif
         } catch {
             phase = .failed(String(describing: error))
