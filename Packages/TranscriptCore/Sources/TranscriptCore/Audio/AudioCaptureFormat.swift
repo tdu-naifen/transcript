@@ -51,6 +51,9 @@ public struct AudioCaptureConfiguration: Sendable {
     public var audioBitRate: Int
     /// How much audio a crash can cost: fMP4 fragments land on disk whole, at this cadence.
     public var segmentSeconds: Double
+    /// What gets archived (UI §5.1). Independent of `sampleRate`, which is the fixed
+    /// ASR input format.
+    public var archiveQuality: RecordingQuality
 
     public init(
         tier: AudioChunkTier = .nemotron2240ms,
@@ -58,7 +61,8 @@ public struct AudioCaptureConfiguration: Sendable {
         levelInterval: TimeInterval = 1.0 / 20,
         tapBufferSize: AVAudioFrameCount = 4096,
         audioBitRate: Int = 32_000,
-        segmentSeconds: Double = 5
+        segmentSeconds: Double = 5,
+        archiveQuality: RecordingQuality = .voice
     ) {
         self.tier = tier
         self.sampleRate = sampleRate
@@ -66,6 +70,7 @@ public struct AudioCaptureConfiguration: Sendable {
         self.tapBufferSize = tapBufferSize
         self.audioBitRate = audioBitRate
         self.segmentSeconds = segmentSeconds
+        self.archiveQuality = archiveQuality
     }
 }
 

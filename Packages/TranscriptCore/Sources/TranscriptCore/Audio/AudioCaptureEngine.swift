@@ -42,10 +42,24 @@ public final class AudioCaptureEngine: @unchecked Sendable {
     private var eventSinks: [UUID: AsyncStream<AudioCaptureEvent>.Continuation] = [:]
     private var observers: [any NSObjectProtocol] = []
 
+    /// What the archive stream is currently resampled to (UI §5.1). Mutable so a
+    /// Settings change takes effect on the next recording without recreating the engine.
+    private var archiveQuality: RecordingQuality
+    private var archiveResampler: AudioResampler?
+    private var archiveBuffer: AudioChunkBuffer?
+    private var archiveChunkSinks: [UUID: AsyncStream<AudioChunk>.Continuation] = [:]
+
     public init(configuration: AudioCaptureConfiguration = AudioCaptureConfiguration()) {
         self.configuration = configuration
+        self.archiveQuality = configuration.archiveQuality
         self.buffer = AudioChunkBuffer(tier: configuration.tier, sampleRate: configuration.sampleRate)
         observeSessionNotifications()
+    }
+
+    /// Threadsafe: may be called at any time, including mid-recording (takes effect on
+    /// the next `start()`).
+    public func setArchiveQuality(_ quality: RecordingQuality) {
+        lock.withLock { archiveQuality = quality }
     }
 
     deinit {
@@ -63,6 +77,19 @@ public final class AudioCaptureEngine: @unchecked Sendable {
             continuation.onTermination = { [weak self] _ in
                 guard let self else { return }
                 lock.withLock { _ = chunkSinks.removeValue(forKey: id) }
+            }
+        }
+    }
+
+    /// Only yields samples while `archiveQuality == .highFidelity`; empty otherwise
+    /// (the file writer uses ``chunks()`` for `.voice`, UI §5.1).
+    public func archiveChunks() -> AsyncStream<AudioChunk> {
+        AsyncStream(AudioChunk.self, bufferingPolicy: .unbounded) { continuation in
+            let id = UUID()
+            lock.withLock { archiveChunkSinks[id] = continuation }
+            continuation.onTermination = { [weak self] _ in
+                guard let self else { return }
+                lock.withLock { _ = archiveChunkSinks.removeValue(forKey: id) }
             }
         }
     }
@@ -143,10 +170,21 @@ public final class AudioCaptureEngine: @unchecked Sendable {
                 }
             }
             resampler = nil
+            if let archiveResampler, let tail = try? archiveResampler.drain(), !tail.isEmpty, archiveBuffer != nil {
+                for chunk in archiveBuffer!.append(tail) {
+                    for sink in archiveChunkSinks.values { sink.yield(chunk) }
+                }
+            }
+            archiveResampler = nil
             state = .idle
             let final = buffer.finish()
             let frameCount = buffer.totalFrameCount
             for sink in chunkSinks.values { sink.yield(final) }
+            if var archiveBuffer {
+                let archiveFinal = archiveBuffer.finish()
+                for sink in archiveChunkSinks.values { sink.yield(archiveFinal) }
+            }
+            archiveBuffer = nil
             deactivateSession()
             emitLocked(.stopped(frameCount: frameCount))
             return frameCount
@@ -156,19 +194,25 @@ public final class AudioCaptureEngine: @unchecked Sendable {
     /// Ends every stream. The engine is unusable afterwards.
     public func invalidate() {
         stop()
-        let (chunks, levels, events): (
+        let (chunks, archiveChunks, levels, events): (
+            [AsyncStream<AudioChunk>.Continuation],
             [AsyncStream<AudioChunk>.Continuation],
             [AsyncStream<AudioLevel>.Continuation],
             [AsyncStream<AudioCaptureEvent>.Continuation]
         ) = lock.withLock {
-            let result = (Array(chunkSinks.values), Array(levelSinks.values), Array(eventSinks.values))
+            let result = (
+                Array(chunkSinks.values), Array(archiveChunkSinks.values),
+                Array(levelSinks.values), Array(eventSinks.values)
+            )
             chunkSinks.removeAll()
+            archiveChunkSinks.removeAll()
             levelSinks.removeAll()
             eventSinks.removeAll()
             return result
         }
         // Finishing runs `onTermination`, which takes the lock, so it happens outside it.
         for sink in chunks { sink.finish() }
+        for sink in archiveChunks { sink.finish() }
         for sink in levels { sink.finish() }
         for sink in events { sink.finish() }
     }
@@ -182,6 +226,19 @@ public final class AudioCaptureEngine: @unchecked Sendable {
             throw AudioCaptureError.invalidInputFormat
         }
         resampler = try AudioResampler(inputFormat: format, sampleRate: configuration.sampleRate)
+        if archiveQuality == .highFidelity,
+           let archiveFormat = AVAudioFormat(
+               commonFormat: .pcmFormatFloat32,
+               sampleRate: archiveQuality.archiveSampleRate,
+               channels: AudioCaptureFormat.channelCount,
+               interleaved: false
+           ) {
+            archiveResampler = try AudioResampler(inputFormat: format, outputFormat: archiveFormat)
+            archiveBuffer = AudioChunkBuffer(frameCount: 1, sampleRate: archiveFormat.sampleRate)
+        } else {
+            archiveResampler = nil
+            archiveBuffer = nil
+        }
         if tapInstalled {
             input.removeTap(onBus: 0)
             tapInstalled = false
@@ -210,6 +267,22 @@ public final class AudioCaptureEngine: @unchecked Sendable {
 
         for chunk in buffer.append(samples) {
             for sink in chunkSinks.values { sink.yield(chunk) }
+        }
+
+        if let archiveResampler {
+            let archiveSamples: [Float]
+            do {
+                archiveSamples = try archiveResampler.resample(pcm)
+            } catch {
+                emitLocked(.failed(message: String(describing: error)))
+                return
+            }
+            if !archiveSamples.isEmpty, var archiveBuffer {
+                for chunk in archiveBuffer.append(archiveSamples) {
+                    for sink in archiveChunkSinks.values { sink.yield(chunk) }
+                }
+                self.archiveBuffer = archiveBuffer
+            }
         }
 
         let now = ProcessInfo.processInfo.systemUptime
