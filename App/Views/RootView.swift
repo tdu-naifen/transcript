@@ -41,7 +41,7 @@ private struct ReadyView: View {
         ZStack(alignment: .bottomTrailing) {
             TabView {
                 Tab("录音", systemImage: "list.bullet") {
-                    RecordingsListView(model: library)
+                    RecordingsListView(model: library, services: services)
                 }
                 Tab("设置", systemImage: "gearshape") {
                     SettingsView(services: services)

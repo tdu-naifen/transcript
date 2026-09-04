@@ -3,9 +3,11 @@ import TranscriptCore
 
 struct RecordingsListView: View {
     let model: LibraryModel
+    let services: AppServices
+    @State private var path = NavigationPath()
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             Group {
                 if model.meetings.isEmpty {
                     ContentUnavailableView(
@@ -16,13 +18,7 @@ struct RecordingsListView: View {
                 } else {
                     List {
                         ForEach(model.meetings) { meeting in
-                            NavigationLink {
-                                MeetingDetailView(
-                                    meeting: meeting,
-                                    audioURL: model.audioURL(for: meeting),
-                                    database: model.database
-                                )
-                            } label: {
+                            NavigationLink(value: meeting) {
                                 MeetingRow(meeting: meeting, colorIndexes: model.speakerColorIndexes[meeting.id] ?? [])
                             }
                         }
@@ -39,10 +35,37 @@ struct RecordingsListView: View {
                     }
                 }
             }
+            .navigationDestination(for: Meeting.self) { meeting in
+                MeetingDetailView(
+                    meeting: meeting,
+                    audioURL: model.audioURL(for: meeting),
+                    services: services
+                )
+            }
             .navigationTitle("录音")
             .refreshable { await model.reload() }
-            .task { await model.reload() }
+            .task {
+                await model.reload()
+                openFixtureMeetingIfRequested()
+            }
+            .onChange(of: model.meetings) { _, _ in
+                // `UIFixture` seeds meetings asynchronously after this task's own
+                // `reload()` may already have run, so retry once the list updates.
+                openFixtureMeetingIfRequested()
+            }
         }
+    }
+
+    /// Simulator UI automation can't tap a row (no assistive-access API in this
+    /// environment), so screenshotting the detail screen needs a scripted way in:
+    /// `-uiFixtureOpenMeetingId fixture-meeting-review-90min` alongside `-uiFixture 1`.
+    private func openFixtureMeetingIfRequested() {
+        #if DEBUG
+        guard path.isEmpty,
+              let id = UserDefaults.standard.string(forKey: "uiFixtureOpenMeetingId"),
+              let meeting = model.meetings.first(where: { $0.id == id }) else { return }
+        path.append(meeting)
+        #endif
     }
 }
 
@@ -67,21 +90,5 @@ private struct MeetingRow: View {
             }
         }
         .padding(.vertical, 4)
-    }
-}
-
-/// Stable per-speaker color dots (UI.md §4.4): the color survives renaming and is
-/// consistent across every meeting the speaker appears in.
-private struct SpeakerDotsView: View {
-    let colorIndexes: [Int]
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(Array(colorIndexes.enumerated()), id: \.offset) { _, colorIndex in
-                Circle()
-                    .fill(Color.speaker(colorIndex: colorIndex))
-                    .frame(width: 8, height: 8)
-            }
-        }
     }
 }
