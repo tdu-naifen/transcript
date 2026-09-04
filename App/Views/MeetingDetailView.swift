@@ -177,7 +177,7 @@ struct MeetingDetailView: View {
                     } label: {
                         Label(reprocessingText("Name Speakers"), systemImage: "person.2")
                     }
-                    Button("Speaker Insights", systemImage: "chart.bar.xaxis") {
+                    Button(acceptanceText("Speaker Insights"), systemImage: "chart.bar.xaxis") {
                         isInsightsPresented = true
                     }
                     .accessibilityIdentifier("speakerInsightsMenuItem")
@@ -557,11 +557,11 @@ private struct SpeakerInsightsView: View {
                 .padding()
             }
             .background(Color(red: 0.975, green: 0.97, blue: 0.96))
-            .navigationTitle("Speaker Insights")
+            .navigationTitle(acceptanceText("Speaker Insights"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") { dismiss() }
+                    Button(acceptanceText("Done")) { dismiss() }
                 }
             }
         }
