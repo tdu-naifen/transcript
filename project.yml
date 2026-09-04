@@ -1,0 +1,47 @@
+name: Transcript
+options:
+  bundleIdPrefix: com.transcript
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+
+packages:
+  TranscriptCore:
+    path: Packages/TranscriptCore
+
+targets:
+  Transcript:
+    type: application
+    platform: iOS
+    sources:
+      - path: App
+    dependencies:
+      - package: TranscriptCore
+        product: TranscriptCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.transcript.Transcript
+        PRODUCT_NAME: Transcript
+        INFOPLIST_FILE: App/Info.plist
+        CODE_SIGN_ENTITLEMENTS: App/Transcript.entitlements
+        CODE_SIGN_IDENTITY: ""
+        CODE_SIGN_STYLE: Manual
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+        ENABLE_USER_SCRIPT_SANDBOXING: YES
+        SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY: YES
+
+schemes:
+  Transcript:
+    build:
+      targets:
+        Transcript: all
+    run:
+      config: Debug
+    archive:
+      config: Release
