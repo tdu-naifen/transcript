@@ -8,16 +8,56 @@ let package = Package(
         .macOS(.v26)
     ],
     products: [
-        .library(name: "TranscriptCore", targets: ["TranscriptCore"])
+        .library(name: "TranscriptCore", targets: ["TranscriptCore"]),
+        .executable(name: "asr-bench", targets: ["ASRBenchmarkTool"]),
+        .executable(name: "diarize-bench", targets: ["DiarizeBenchTool"])
     ],
     dependencies: [
-        .package(url: "https://github.com/groue/GRDB.swift", .upToNextMajor(from: "7.0.0"))
+        .package(url: "https://github.com/groue/GRDB.swift", .upToNextMajor(from: "7.0.0")),
+        .package(url: "https://github.com/FluidInference/FluidAudio.git", from: "0.12.4")
     ],
     targets: [
         .target(
             name: "TranscriptCore",
-            dependencies: [.product(name: "GRDB", package: "GRDB.swift")]
+            dependencies: [
+                .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "FluidAudio", package: "FluidAudio")
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6),
+                .enableUpcomingFeature("ExistentialAny"),
+                .unsafeFlags(["-strict-concurrency=complete"])
+            ]
         ),
-        .testTarget(name: "TranscriptCoreTests", dependencies: ["TranscriptCore"])
+        .executableTarget(
+            name: "ASRBenchmarkTool",
+            dependencies: ["TranscriptCore"],
+            swiftSettings: [
+                .swiftLanguageMode(.v6),
+                .enableUpcomingFeature("ExistentialAny"),
+                .unsafeFlags(["-strict-concurrency=complete"])
+            ]
+        ),
+        .executableTarget(
+            name: "DiarizeBenchTool",
+            dependencies: [
+                "TranscriptCore",
+                .product(name: "FluidAudio", package: "FluidAudio")
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6),
+                .enableUpcomingFeature("ExistentialAny"),
+                .unsafeFlags(["-strict-concurrency=complete"])
+            ]
+        ),
+        .testTarget(
+            name: "TranscriptCoreTests",
+            dependencies: ["TranscriptCore"],
+            swiftSettings: [
+                .swiftLanguageMode(.v6),
+                .enableUpcomingFeature("ExistentialAny"),
+                .unsafeFlags(["-strict-concurrency=complete"])
+            ]
+        )
     ]
 )
