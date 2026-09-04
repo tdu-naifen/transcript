@@ -62,6 +62,7 @@ public actor MeetingReprocessor {
     private let deviceId: String
     private let configuration: Configuration
     private var isRunning = false
+    private var activeRunId: UUID?
     private var activeTranscriber: LiveTranscriber?
     private var activeDiarizer: SpeakerDiarizer?
 
@@ -88,70 +89,91 @@ public actor MeetingReprocessor {
         }
 
         isRunning = true
+        let runId = UUID()
+        activeRunId = runId
         defer {
             isRunning = false
-            activeTranscriber = nil
-            activeDiarizer = nil
+            if activeRunId == runId {
+                activeRunId = nil
+                activeTranscriber = nil
+                activeDiarizer = nil
+            }
         }
 
-        return try await withTaskCancellationHandler {
-            try Task.checkCancellation()
-            await progress(.init(stage: .loadingAudio, fractionCompleted: 0.03))
-            let samples = try AudioFileLoader.load16kMono(url: audioURL)
-            try Task.checkCancellation()
-            let durationMs = max(1, Int(Double(samples.count) / 16_000 * 1_000))
+        do {
+            return try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                await progress(.init(stage: .loadingAudio, fractionCompleted: 0.03))
+                let samples = try AudioFileLoader.load16kMono(url: audioURL)
+                try Task.checkCancellation()
+                let durationMs = max(1, Int(Double(samples.count) / 16_000 * 1_000))
+                let oldUtterances = try await UtteranceRepository(database).fetch(meetingId: meetingId)
+                let namedSpeakerIds = Set(try await SpeakerRepository(database)
+                    .speakers(inMeeting: meetingId)
+                    .compactMap { $0.speaker.displayName == nil ? nil : $0.speaker.id })
 
-            let segments = try await transcribe(
-                samples: samples, durationMs: durationMs, meetingId: meetingId, progress: progress
-            )
-            guard !segments.isEmpty else { throw MeetingReprocessingError.noSpeechDetected }
-
-            let diarization = try await detectSpeakers(
-                samples: samples, durationMs: durationMs, progress: progress
-            )
-            guard !diarization.isEmpty else {
-                throw MeetingReprocessingError.speakerDetectionFailed("No speaker segments were produced.")
-            }
-
-            let speakerDrafts = try await identifySpeakers(
-                samples: samples, diarization: diarization, progress: progress
-            )
-            try Task.checkCancellation()
-            let utteranceDrafts = segments.map { segment in
-                ReprocessedUtteranceDraft(
-                    startMs: segment.startMs,
-                    endMs: segment.endMs,
-                    text: segment.text,
-                    speakerIndex: SpeakerOverlapAssigner.speakerIndex(
-                        utteranceStartMs: segment.startMs,
-                        utteranceEndMs: segment.endMs,
-                        segments: diarization
-                    ),
-                    localeIdentifier: segment.localeIdentifier
+                let segments = try await transcribe(
+                    samples: samples, durationMs: durationMs, meetingId: meetingId, progress: progress
                 )
-            }
+                guard !segments.isEmpty else { throw MeetingReprocessingError.noSpeechDetected }
 
-            await progress(.init(stage: .saving, fractionCompleted: 0.97))
-            let stored = try await MeetingReprocessingRepository(database).replace(
-                meetingId: meetingId,
-                utterances: utteranceDrafts,
-                speakers: speakerDrafts,
-                deviceId: deviceId
-            )
-            await progress(.init(stage: .saving, fractionCompleted: 1))
-            return MeetingReprocessingSummary(
-                utteranceCount: stored.utteranceCount,
-                speakerCount: stored.speakerCount,
-                identifiedSpeakerCount: speakerDrafts.filter { $0.existingSpeakerId != nil }.count,
-                usedVoiceprintIdentification: speakerDrafts.contains { $0.embedding != nil }
-            )
-        } onCancel: {
-            Task { await self.cancelChildren() }
+                let diarization = try await detectSpeakers(
+                    samples: samples, durationMs: durationMs, progress: progress
+                )
+                guard !diarization.isEmpty else {
+                    throw MeetingReprocessingError.speakerDetectionFailed("No speaker segments were produced.")
+                }
+
+                let speakerDrafts = try await identifySpeakers(
+                    samples: samples,
+                    diarization: diarization,
+                    oldUtterances: oldUtterances,
+                    namedSpeakerIds: namedSpeakerIds,
+                    progress: progress
+                )
+                try Task.checkCancellation()
+                let utteranceDrafts = segments.map { segment in
+                    ReprocessedUtteranceDraft(
+                        startMs: segment.startMs,
+                        endMs: segment.endMs,
+                        text: segment.text,
+                        speakerIndex: SpeakerOverlapAssigner.speakerIndex(
+                            utteranceStartMs: segment.startMs,
+                            utteranceEndMs: segment.endMs,
+                            segments: diarization
+                        ),
+                        localeIdentifier: segment.localeIdentifier
+                    )
+                }
+
+                await progress(.init(stage: .saving, fractionCompleted: 0.97))
+                let stored = try await MeetingReprocessingRepository(database).replace(
+                    meetingId: meetingId,
+                    utterances: utteranceDrafts,
+                    speakers: speakerDrafts,
+                    deviceId: deviceId
+                )
+                await progress(.init(stage: .saving, fractionCompleted: 1))
+                return MeetingReprocessingSummary(
+                    utteranceCount: stored.utteranceCount,
+                    speakerCount: stored.speakerCount,
+                    identifiedSpeakerCount: Set(speakerDrafts.compactMap {
+                        $0.wasVoiceprintMatch ? $0.existingSpeakerId : nil
+                    }).count,
+                    usedVoiceprintIdentification: speakerDrafts.contains { $0.embedding != nil }
+                )
+            } onCancel: {
+                Task { await self.cancelChildren(runId: runId) }
+            }
+        } catch is CancellationError {
+            await cancelChildren(runId: runId)
+            throw CancellationError()
         }
     }
 
     public func cancel() async {
-        await cancelChildren()
+        guard let activeRunId else { return }
+        await cancelChildren(runId: activeRunId)
     }
 
     private func transcribe(
@@ -161,6 +183,7 @@ public actor MeetingReprocessor {
         progress: @escaping ProgressHandler
     ) async throws -> [ASRSegment] {
         await progress(.init(stage: .transcribing, fractionCompleted: 0.08))
+        try Task.checkCancellation()
         let transcriber = LiveTranscriber(
             engine: StreamingNemotronMultilingualAsrManager(),
             configuration: .init(
@@ -189,6 +212,7 @@ public actor MeetingReprocessor {
                 break
             }
         }
+        try Task.checkCancellation()
         activeTranscriber = nil
         if let failure { throw MeetingReprocessingError.transcriptionFailed(failure) }
         return completed.values.sorted { ($0.startMs, $0.id) < ($1.startMs, $1.id) }
@@ -200,6 +224,7 @@ public actor MeetingReprocessor {
         progress: @escaping ProgressHandler
     ) async throws -> [DiarizerSegment] {
         await progress(.init(stage: .detectingSpeakers, fractionCompleted: 0.52))
+        try Task.checkCancellation()
         let diarizer = SpeakerDiarizer(configuration: .init(
             mainModelPath: configuration.sortformerModelPath
         ))
@@ -226,6 +251,7 @@ public actor MeetingReprocessor {
                 break
             }
         }
+        try Task.checkCancellation()
         activeDiarizer = nil
         if let failure { throw MeetingReprocessingError.speakerDetectionFailed(failure) }
         return finalized + tentative
@@ -234,13 +260,26 @@ public actor MeetingReprocessor {
     private func identifySpeakers(
         samples: [Float],
         diarization: [DiarizerSegment],
+        oldUtterances: [Utterance],
+        namedSpeakerIds: Set<String>,
         progress: @escaping ProgressHandler
     ) async throws -> [ReprocessedSpeakerDraft] {
         await progress(.init(stage: .identifyingSpeakers, fractionCompleted: 0.82))
+        try Task.checkCancellation()
         let indexes = Set(diarization.map(\.speakerIndex)).sorted()
         guard let directory = configuration.campPlusDirectory,
               DiarizationModelStore.isCampPlusInstalled(at: directory) else {
-            return indexes.map { ReprocessedSpeakerDraft(speakerIndex: $0) }
+            return indexes.map { index in
+                ReprocessedSpeakerDraft(
+                    speakerIndex: index,
+                    existingSpeakerId: Self.confirmedSpeakerId(
+                        for: index,
+                        diarization: diarization,
+                        oldUtterances: oldUtterances,
+                        namedSpeakerIds: namedSpeakerIds
+                    )
+                )
+            }
         }
 
         do {
@@ -249,21 +288,32 @@ public actor MeetingReprocessor {
             var drafts: [ReprocessedSpeakerDraft] = []
             for (offset, index) in indexes.enumerated() {
                 try Task.checkCancellation()
+                let confirmedSpeakerId = Self.confirmedSpeakerId(
+                    for: index,
+                    diarization: diarization,
+                    oldUtterances: oldUtterances,
+                    namedSpeakerIds: namedSpeakerIds
+                )
                 let slotSamples = Self.samples(
                     forSpeakerIndex: index, from: samples, segments: diarization
                 )
                 guard !slotSamples.isEmpty else {
-                    drafts.append(ReprocessedSpeakerDraft(speakerIndex: index))
+                    drafts.append(ReprocessedSpeakerDraft(
+                        speakerIndex: index, existingSpeakerId: confirmedSpeakerId
+                    ))
                     continue
                 }
                 let embedding = try await embedder.embed(audio: slotSamples)
-                let match = try await speakers.findNearestSpeaker(
-                    embedding: embedding, threshold: voiceprintMatchThreshold
-                )
+                let voiceprintMatch = confirmedSpeakerId == nil
+                    ? try await speakers.findNearestSpeaker(
+                        embedding: embedding, threshold: voiceprintMatchThreshold
+                    )
+                    : nil
                 drafts.append(ReprocessedSpeakerDraft(
                     speakerIndex: index,
-                    existingSpeakerId: match?.speakerId,
-                    embedding: embedding
+                    existingSpeakerId: confirmedSpeakerId ?? voiceprintMatch?.speakerId,
+                    embedding: embedding,
+                    wasVoiceprintMatch: voiceprintMatch != nil
                 ))
                 let fraction = Double(offset + 1) / Double(max(1, indexes.count))
                 await progress(.init(
@@ -278,9 +328,10 @@ public actor MeetingReprocessor {
         }
     }
 
-    private func cancelChildren() async {
-        await activeTranscriber?.cancel()
-        await activeDiarizer?.cancel()
+    private func cancelChildren(runId: UUID) async {
+        guard activeRunId == runId else { return }
+        await activeTranscriber?.cancelAndWait()
+        await activeDiarizer?.cancelAndWait()
     }
 
     private nonisolated static func chunkStream(_ samples: [Float]) -> AsyncStream<AudioChunk> {
@@ -304,5 +355,30 @@ public actor MeetingReprocessor {
             result.append(contentsOf: samples[lower..<upper])
         }
         return result
+    }
+
+    private nonisolated static func confirmedSpeakerId(
+        for index: Int,
+        diarization: [DiarizerSegment],
+        oldUtterances: [Utterance],
+        namedSpeakerIds: Set<String>
+    ) -> String? {
+        let slotSegments = diarization.filter { $0.speakerIndex == index }
+        var overlapBySpeaker: [String: Double] = [:]
+        for utterance in oldUtterances {
+            guard let speakerId = utterance.speakerId, namedSpeakerIds.contains(speakerId) else {
+                continue
+            }
+            let utteranceStart = Double(utterance.startMs) / 1_000
+            let utteranceEnd = Double(utterance.endMs) / 1_000
+            for segment in slotSegments {
+                let overlap = min(utteranceEnd, Double(segment.endTime))
+                    - max(utteranceStart, Double(segment.startTime))
+                if overlap > 0 { overlapBySpeaker[speakerId, default: 0] += overlap }
+            }
+        }
+        return overlapBySpeaker.max {
+            ($0.value, $1.key) < ($1.value, $0.key)
+        }?.key
     }
 }

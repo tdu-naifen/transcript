@@ -33,15 +33,18 @@ public struct ReprocessedSpeakerDraft: Sendable, Equatable {
     public var speakerIndex: Int
     public var existingSpeakerId: String?
     public var embedding: [Float]?
+    public var wasVoiceprintMatch: Bool
 
     public init(
         speakerIndex: Int,
         existingSpeakerId: String? = nil,
-        embedding: [Float]? = nil
+        embedding: [Float]? = nil,
+        wasVoiceprintMatch: Bool = false
     ) {
         self.speakerIndex = speakerIndex
         self.existingSpeakerId = existingSpeakerId
         self.embedding = embedding
+        self.wasVoiceprintMatch = wasVoiceprintMatch
     }
 }
 

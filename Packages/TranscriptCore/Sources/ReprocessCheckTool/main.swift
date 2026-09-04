@@ -62,6 +62,33 @@ func run() async throws {
             language: .auto
         )
     )
+    if arguments.contains("--verify-cancel-retry") {
+        let (stages, continuation) = AsyncStream<MeetingReprocessingStage>.makeStream()
+        let cancelledRun = Task {
+            try await reprocessor.run(meetingId: meeting.id, audioURL: audioURL) { progress in
+                if progress.stage == .detectingSpeakers {
+                    continuation.yield(progress.stage)
+                    continuation.finish()
+                }
+            }
+        }
+        for await _ in stages {
+            cancelledRun.cancel()
+            break
+        }
+        do {
+            _ = try await cancelledRun.value
+            throw CheckError.assertion("cancelled run unexpectedly completed")
+        } catch is CancellationError {
+            guard try await utterances.count(meetingId: meeting.id) == 0 else {
+                throw CheckError.assertion("cancelled run changed transcript rows")
+            }
+            guard try await speakers.speakers(inMeeting: meeting.id).isEmpty else {
+                throw CheckError.assertion("cancelled run changed meeting speakers")
+            }
+            print("CANCEL_PRESERVED_OLD_RESULT=true")
+        }
+    }
     let started = ContinuousClock.now
     let summary = try await reprocessor.run(meetingId: meeting.id, audioURL: audioURL) { progress in
         print("PROGRESS=\(progress.stage.rawValue):\(String(format: "%.2f", progress.fractionCompleted))")

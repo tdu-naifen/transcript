@@ -71,6 +71,15 @@ public actor LiveTranscriber {
         continuation = nil
     }
 
+    public func cancelAndWait() async {
+        let running = task
+        task = nil
+        running?.cancel()
+        continuation?.finish()
+        continuation = nil
+        await running?.value
+    }
+
     /// Number of chunks processed, for tests and the debug panel.
     public private(set) var processedChunks = 0
 

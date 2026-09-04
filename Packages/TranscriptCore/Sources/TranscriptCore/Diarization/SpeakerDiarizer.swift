@@ -93,6 +93,15 @@ public actor SpeakerDiarizer {
         continuation = nil
     }
 
+    public func cancelAndWait() async {
+        let running = task
+        task = nil
+        running?.cancel()
+        continuation?.finish()
+        continuation = nil
+        await running?.value
+    }
+
     /// Resets streaming state for a new recording while keeping the model loaded.
     public func reset() {
         diarizer.reset()
