@@ -53,24 +53,69 @@ public struct MeetingRepository: Sendable {
             guard var meeting = try Meeting.fetchOne(db, key: id) else {
                 throw RepositoryError.notFound(table: Meeting.databaseTableName, id: id)
             }
-            guard meeting.state.canTransition(to: newState, failedFrom: meeting.failedFromState) else {
-                throw IllegalMeetingStateTransition(
-                    from: meeting.state, to: newState, failedFrom: meeting.failedFromState
-                )
-            }
-            meeting.failedFromState = Meeting.normalizedFailedFromState(
-                state: newState,
-                failedFromState: newState == .failed ? meeting.state : nil
-            )
-            meeting.state = newState
-            if newState == .recorded {
-                meeting.localeIdentifier = try PrimaryLanguage.derive(db, meetingId: id)
-            }
-            meeting.updatedAt = now
-            meeting.originDeviceId = deviceId
+            try Self.applyTransition(db, to: &meeting, newState: newState, deviceId: deviceId, now: now)
             try meeting.update(db)
             return meeting
         }
+    }
+
+    /// Seals Layer A and moves the state machine in a single transaction.
+    ///
+    /// PLAN §9.4.1: nothing used to write `durationMs`, so a stopped or crashed recording
+    /// landed in `recorded` with a zero duration and no hash. Sealing is therefore not
+    /// exposed as four separate setters — a meeting either has all of Layer A or it is
+    /// still `recording`.
+    ///
+    /// `audio` is optional only for the salvage path, where a crash may have left a
+    /// duration but no readable file; the duration is preserved either way, because
+    /// losing a meeting is unacceptable (PLAN §3.2.1).
+    @discardableResult
+    public func sealRecording(
+        id: String,
+        to newState: MeetingState = .recorded,
+        durationMs: Int,
+        audio: SealedAudio?,
+        deviceId: String,
+        now: Date = Date()
+    ) async throws -> Meeting {
+        try await database.writer.write { db in
+            guard var meeting = try Meeting.fetchOne(db, key: id) else {
+                throw RepositoryError.notFound(table: Meeting.databaseTableName, id: id)
+            }
+            meeting.durationMs = max(0, durationMs)
+            if let audio {
+                meeting.audioFileName = audio.fileName
+                meeting.audioSHA256 = audio.sha256
+                meeting.audioByteCount = audio.byteCount
+            }
+            try Self.applyTransition(db, to: &meeting, newState: newState, deviceId: deviceId, now: now)
+            try meeting.update(db)
+            return meeting
+        }
+    }
+
+    private static func applyTransition(
+        _ db: Database,
+        to meeting: inout Meeting,
+        newState: MeetingState,
+        deviceId: String,
+        now: Date
+    ) throws {
+        guard meeting.state.canTransition(to: newState, failedFrom: meeting.failedFromState) else {
+            throw IllegalMeetingStateTransition(
+                from: meeting.state, to: newState, failedFrom: meeting.failedFromState
+            )
+        }
+        meeting.failedFromState = Meeting.normalizedFailedFromState(
+            state: newState,
+            failedFromState: newState == .failed ? meeting.state : nil
+        )
+        meeting.state = newState
+        if newState == .recorded {
+            meeting.localeIdentifier = try PrimaryLanguage.derive(db, meetingId: meeting.id)
+        }
+        meeting.updatedAt = now
+        meeting.originDeviceId = deviceId
     }
 
     /// Bytes finished transferring. Written by the iPhone (PLAN §3.4).
