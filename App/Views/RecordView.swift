@@ -108,7 +108,6 @@ struct RecordView: View {
         } message: {
             Text(model.errorMessage ?? "")
         }
-        .accessibilityIdentifier("expandedRecordingView")
     }
 }
 
