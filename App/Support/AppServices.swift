@@ -20,12 +20,23 @@ final class AppServices {
     private var engine: StreamingNemotronMultilingualAsrManager?
 
     init() throws {
-        database = try AppDatabase.onDisk()
+        database = try Self.makeDatabase()
         store = try AudioFileStore.standard()
         deviceId = UIDevice.current.identifierForVendor?.uuidString ?? "unknown-device"
         session = RecordingSession(database: database, deviceId: deviceId, store: store)
         recovery = RecordingRecovery(database: database, deviceId: deviceId, store: store)
         modelDownloader = ASRModelDownloader()
+    }
+
+    /// `-uiFixture 1` gets an in-memory database (UI.md §6.1) so fixture meetings never
+    /// mix with real recordings and never persist into a normal launch.
+    private static func makeDatabase() throws -> AppDatabase {
+        #if DEBUG
+        if UserDefaults.standard.integer(forKey: "uiFixture") == 1 {
+            return try AppDatabase.inMemory()
+        }
+        #endif
+        return try AppDatabase.onDisk()
     }
 
     var isModelInstalled: Bool { ASRModelStore.bundle().isInstalled }
