@@ -78,6 +78,11 @@ func loadSamples(at url: URL) throws -> [Float] {
     return samples
 }
 
+func mb(_ bytes: Int64?) -> String {
+    guard let bytes else { return "n/a" }
+    return String(format: "%.0f MB", Double(bytes) / 1_048_576)
+}
+
 func sortformerVariant(named name: String) throws -> SortformerConfig.ModelVariant {
     switch name {
     case "fastV2_1": return .fastV2_1
@@ -103,6 +108,9 @@ func run() async throws {
         exit(1)
     }
 
+    // Three footprints, because this tool holds the whole file in RAM while the live
+    // path streams it — without splitting them out the peak reads as a model cost.
+    let baseFootprint = MemoryFootprint.current()
     let samples = try loadSamples(at: options.audio)
     guard !samples.isEmpty else {
         print("no audio decoded from \(options.audio.path)")
@@ -116,6 +124,7 @@ func run() async throws {
     let diarizer = SpeakerDiarizer(configuration: .init(mainModelPath: modelPath, config: config))
 
     let chunks = AudioFileLoader.chunks(from: samples)
+    let audioFootprint = MemoryFootprint.current()
     let (stream, continuation) = AsyncStream<AudioChunk>.makeStream()
     for chunk in chunks { continuation.yield(chunk) }
     continuation.finish()
@@ -155,6 +164,7 @@ func run() async throws {
         + "→ RTF \(String(format: "%.3f", audioSeconds > 0 ? elapsedSeconds / audioSeconds : 0))")
     print("- finalized segments: \(finalized.count) (\(lastTentativeCount) tentative left open at end)")
     print("- distinct speaker slots seen: \(bySpeaker.count)")
+    print("- footprint: base \(mb(baseFootprint)) → +audio \(mb(audioFootprint)) → peak \(mb(MemoryFootprint.peak()))")
     for (speaker, segments) in bySpeaker.sorted(by: { $0.key < $1.key }) {
         let totalDuration = segments.reduce(0) { $0 + Double($1.duration) }
         print("  - speaker \(speaker): \(segments.count) segment(s), \(String(format: "%.1f", totalDuration))s total")
