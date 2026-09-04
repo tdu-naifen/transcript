@@ -1,10 +1,8 @@
 import FluidAudio
 import Foundation
 
-/// Resolves where the diarization / voiceprint models live on disk. Mirrors
-/// ``ASRModelStore``: never touches the network — models must already be local (dev
-/// override, or bundled with the app once packaging lands). 🔴 OFFLINE ONLY at runtime;
-/// see `scripts/download_diarization_models.sh` for the dev-time fetch.
+/// Resolves existing local diarization and voiceprint models before the downloader
+/// chooses managed Application Support destinations.
 public enum DiarizationModelStore {
     /// Set to a checkout's `Models/sortformer-diarization` to run without moving files
     /// into Application Support first.
@@ -69,13 +67,12 @@ public enum DiarizationModelStore {
     }
 
     public static func isSortformerInstalled(at path: URL) -> Bool {
-        FileManager.default.fileExists(atPath: path.path)
+        ModelAssetValidation.isValidCompiledModel(at: path)
     }
 
     public static func isCampPlusInstalled(at directory: URL) -> Bool {
-        let fm = FileManager.default
         return [ModelNames.CampPlus.preprocessorFile, ModelNames.CampPlus.modelFile].allSatisfy {
-            fm.fileExists(atPath: directory.appending(path: $0).path)
+            ModelAssetValidation.isValidCompiledModel(at: directory.appending(path: $0))
         }
     }
 

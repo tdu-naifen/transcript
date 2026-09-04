@@ -11,7 +11,8 @@ let package = Package(
     products: [
         .library(name: "TranscriptCore", targets: ["TranscriptCore"]),
         .executable(name: "asr-bench", targets: ["ASRBenchmarkTool"]),
-        .executable(name: "diarize-bench", targets: ["DiarizeBenchTool"])
+        .executable(name: "diarize-bench", targets: ["DiarizeBenchTool"]),
+        .executable(name: "model-install-smoke", targets: ["ModelInstallSmokeTool"])
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift", .upToNextMajor(from: "7.0.0")),
@@ -44,6 +45,18 @@ let package = Package(
         ),
         .executableTarget(
             name: "DiarizeBenchTool",
+            dependencies: [
+                "TranscriptCore",
+                .product(name: "FluidAudio", package: "FluidAudio")
+            ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6),
+                .enableUpcomingFeature("ExistentialAny"),
+                .unsafeFlags(["-strict-concurrency=complete"])
+            ]
+        ),
+        .executableTarget(
+            name: "ModelInstallSmokeTool",
             dependencies: [
                 "TranscriptCore",
                 .product(name: "FluidAudio", package: "FluidAudio")
