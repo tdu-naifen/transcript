@@ -36,35 +36,51 @@ private struct ReadyView: View {
     let library: LibraryModel
     let recorder: RecorderModel
     @State private var isRecordingPresented = false
+    @State private var selectedTab: AppTab = .recordings
+    @State private var recordingsPath = NavigationPath()
+
+    /// The record button only makes sense on the recordings list and settings tabs
+    /// (UI.md §1); on the meeting detail screen it's semantically wrong (that screen is
+    /// for replaying a past meeting) and visually overlaps the audio player's controls.
+    private var isFloatingButtonHidden: Bool {
+        selectedTab == .recordings && !recordingsPath.isEmpty
+    }
 
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            TabView {
-                Tab("录音", systemImage: "list.bullet") {
-                    RecordingsListView(model: library, services: services)
+            TabView(selection: $selectedTab) {
+                Tab("录音", systemImage: "list.bullet", value: AppTab.recordings) {
+                    RecordingsListView(model: library, services: services, path: $recordingsPath)
                 }
-                Tab("设置", systemImage: "gearshape") {
+                Tab("设置", systemImage: "gearshape", value: AppTab.settings) {
                     SettingsView(services: services)
                 }
             }
 
-            Button {
-                isRecordingPresented = true
-            } label: {
-                Image(systemName: "record.circle.fill")
-                    .font(.system(size: 52))
-                    .foregroundStyle(.white, .red)
-                    .background(.ultraThinMaterial, in: Circle())
-                    .frame(width: FloatingRecordButtonMetrics.diameter, height: FloatingRecordButtonMetrics.diameter)
+            if !isFloatingButtonHidden {
+                Button {
+                    isRecordingPresented = true
+                } label: {
+                    Image(systemName: "record.circle.fill")
+                        .font(.system(size: 52))
+                        .foregroundStyle(.white, .red)
+                        .background(.ultraThinMaterial, in: Circle())
+                        .frame(width: FloatingRecordButtonMetrics.diameter, height: FloatingRecordButtonMetrics.diameter)
+                }
+                .padding(.trailing, 20)
+                .padding(.bottom, FloatingRecordButtonMetrics.bottomPadding)
+                .accessibilityLabel("Record")
             }
-            .padding(.trailing, 20)
-            .padding(.bottom, FloatingRecordButtonMetrics.bottomPadding)
-            .accessibilityLabel("Record")
         }
         .fullScreenCover(isPresented: $isRecordingPresented) {
             RecordView(model: recorder)
         }
     }
+}
+
+private enum AppTab: Hashable {
+    case recordings
+    case settings
 }
 
 @MainActor

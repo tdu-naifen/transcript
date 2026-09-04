@@ -4,7 +4,7 @@ import TranscriptCore
 struct RecordingsListView: View {
     let model: LibraryModel
     let services: AppServices
-    @State private var path = NavigationPath()
+    @Binding var path: NavigationPath
 
     var body: some View {
         NavigationStack(path: $path) {
