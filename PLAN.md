@@ -124,6 +124,34 @@ recording ──▶ recorded ──▶ audioSynced ──▶ queued ──▶ an
 - 上滑 process 只传 transcript + embedding（~1.3MB），瞬间完成
 - 断点重传 + SHA-256 校验
 
+### 3.3.1 容器必须是 fragmented MP4（实测结论）
+
+🔴 **`AVAudioFile` 的经典 M4A writer 会在 close 时原地回填 `moov`**（实测：
+close 后字节 [0, 24576) 内有 436 处 diff，文件大小不变）。
+→ **边写边累加的 SHA-256 会是错的**，§3.4 的校验方案直接失效。
+
+解法：用 `AVAssetWriter` 的 **segment delegate 产出 fragmented MP4**，字节交出时即为终值。
+
+两个连带后果：
+1. 容器 UTI 是 `public.mpeg-4`，**`com.apple.m4a-audio` 在设了 segment delegate 时会被直接拒绝**。
+   `.m4a` 扩展名只是命名约定，不是真实容器类型
+2. ✅ **这才让 §3.2.1 的「崩溃录音可救」真正成立** —— 未 finalize 的经典 M4A 是不可播放的垃圾，
+   而 fMP4 可以播到最后一个完整 fragment。**崩溃损失上限 = `segmentSeconds`（当前 5s）**
+
+### 3.3.2 时长的权威来源
+
+三个来源互相矛盾（实测：5000ms 采集帧 vs 5.18s 容器时长，AAC priming + fragment padding 导致）：
+
+- ✅ **采集帧数 ÷ 采样率 —— 权威值**。只有它能正确穿越暂停和中断
+- ❌ 墙钟（含暂停时间）
+- ⚠️ 文件容器时长 —— 仅崩溃救回时作为 fallback，因此**救回的会议时长会略偏大**
+
+### 3.3.3 音频密封点
+
+Layer A “sealed 后 immutable” 的 seal 发生在 **`recording → recorded` 转换**，
+一个事务内同时写入 `durationMs` / `audioFileName` / `audioSHA256` / `audioByteCount`。
+**`failed` 也可 seal** —— 这是崩溃救回的必要条件。
+
 ### 3.4 iPhone 本地音频清理（可选功能）
 
 一年约 32GB 音频，手机放不下。既然 Mac 有完整副本：
@@ -409,6 +437,21 @@ embedding 和 utterance 引用转移到另一个 speaker。
   而**加密属性事后不能加**
 - **RAG chunk 表不存在**：§5a 的 30–60s speaker-turn 块是独立表，**不是 `utterance` 的视图**。
   FTS5 虚拟表应建在 chunk 上，随 Phase 5 一起加
+
+### 9.4.1 Phase 0 验收后遗留（已知，非阻塞）
+
+- ~~`meeting.durationMs` 无人写入~~ ✅ 已关闭（§3.3.3 的原子 seal）
+- `syncedToMacAt` 没有 write-once 保护（不像它的兄弟 `audioVerifiedOnMacAt`）。
+  iPhone 独占所以不竞争，但重传会静默覆盖，导致“字节何时落地”不可考
+- `utterance.revision` 被 bump 但**无人读取** —— P2P 传输层落地前它是 write-only 状态
+- `mergeSpeakers` 逐行搬运 embedding，不做 `sampleCount` 合并 →
+  合并后的 speaker 会累积多行而非整合。当前规模无碍，但**影响 §9.2 的 CloudKit 表示设计**
+- `AppDatabase.writer` 仍是 public，可绕过仓储层直接 INSERT。
+  schema CHECK 已封住数据丢失和状态机两条路；revision 单调性无法用 CHECK 表达，
+  需要 `BEFORE INSERT` 触发器（~6 行）才能彻底封死。UNIQUE 索引已挡住有害情形
+- 🔴 **音频文件的生命周期无人管**：PLAN 没写删除 meeting 时音频文件怎么办，
+  也没有孤儿文件清扫（在创建文件和插入 DB 行之间崩溃会泄漏文件）
+- 录音尚未做后台延续：`UIBackgroundModes: audio` 已声明，但没有代码主动保活会话
 
 ### 9.5 其他
 
