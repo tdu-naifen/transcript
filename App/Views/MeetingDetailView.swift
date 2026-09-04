@@ -64,13 +64,7 @@ struct MeetingDetailView: View {
             EngineeringDetailSheet(meeting: model.meeting, audioURL: audioURL)
         }
         .sheet(isPresented: $isInsightsPresented) {
-            SpeakerInsightsView(
-                meeting: model.meeting,
-                utterances: model.utterances,
-                speakers: model.speakersById,
-                participants: model.participants,
-                playbackProgress: model.playback.progress
-            )
+            SpeakerInsightsView(model: model)
         }
         .sheet(isPresented: $isReprocessingPresented) {
             MeetingReprocessingSheet(model: model, isPresented: $isReprocessingPresented)
@@ -186,6 +180,7 @@ struct MeetingDetailView: View {
                     Button("Speaker Insights", systemImage: "chart.bar.xaxis") {
                         isInsightsPresented = true
                     }
+                    .accessibilityIdentifier("speakerInsightsMenuItem")
                 }
                 Button("Details", systemImage: "info.circle") {
                     isEngineeringDetailPresented = true
@@ -259,7 +254,19 @@ struct MeetingDetailView: View {
                 "无法加载转写", systemImage: "exclamationmark.triangle", description: Text(loadFailure)
             )
         } else if model.utterances.isEmpty {
-            ContentUnavailableView("没有转写内容", systemImage: "text.bubble")
+            ContentUnavailableView {
+                Label(acceptanceText("No transcript"), systemImage: "text.bubble")
+            } description: {
+                Text(acceptanceText("Reprocess the original audio to create a transcript."))
+            } actions: {
+                if model.hasLocalAudioForReprocessing {
+                    Button(acceptanceText("Reprocess")) {
+                        isReprocessingConfirmationPresented = true
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .accessibilityIdentifier("emptyTranscriptReprocessButton")
+                }
+            }
         } else {
             ScrollViewReader { proxy in
                 ScrollView {
@@ -283,6 +290,14 @@ struct MeetingDetailView: View {
                 }
             }
         }
+    }
+
+    private func acceptanceText(_ key: String) -> String {
+        String(
+            localized: String.LocalizationValue(key),
+            table: "AcceptanceUI",
+            locale: LocalizationManager.shared.resolvedLocale
+        )
     }
 }
 
@@ -452,6 +467,10 @@ private struct TranscriptRow: View {
                         .foregroundStyle(Color.speaker(colorIndex: speaker.colorIndex))
                         .contentShape(Rectangle())
                         .onTapGesture { onTapName(speaker.id) }
+                } else {
+                    Text(acceptanceText("Unknown speaker"))
+                        .font(.subheadline.weight(.bold))
+                        .foregroundStyle(.secondary)
                 }
                 Text(Format.duration(milliseconds: utterance.startMs))
                     .font(.caption.monospacedDigit().weight(.semibold))
@@ -480,42 +499,59 @@ private struct TranscriptRow: View {
         .onTapGesture(perform: onTapLine)
         .accessibilityIdentifier("meetingTranscriptRow")
     }
+
+    private func acceptanceText(_ key: String) -> String {
+        String(
+            localized: String.LocalizationValue(key),
+            table: "AcceptanceUI",
+            locale: LocalizationManager.shared.resolvedLocale
+        )
+    }
 }
 
 private struct SpeakerInsightsView: View {
-    let meeting: Meeting
-    let utterances: [Utterance]
-    let speakers: [String: Speaker]
-    let participants: [MeetingDetailModel.ParticipantSummary]
-    let playbackProgress: Double
+    let model: MeetingDetailModel
+    @State private var renamingSpeakerId: String?
+    @State private var renameText = ""
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    ForEach(participants) { participant in
-                        VStack(alignment: .leading, spacing: 8) {
-                            HStack {
-                                Circle()
-                                    .fill(Color.speaker(colorIndex: participant.colorIndex))
-                                    .frame(width: 9, height: 9)
-                                Text(participant.resolvedName)
-                                    .font(.subheadline.weight(.semibold))
-                                    .lineLimit(1)
-                                Spacer()
-                                Text("\(participant.percentage)%")
-                                    .font(.subheadline.monospacedDigit())
-                                    .foregroundStyle(.secondary)
+                    ForEach(model.participants) { participant in
+                        Button {
+                            renamingSpeakerId = participant.id
+                            renameText = participant.resolvedName
+                        } label: {
+                            VStack(alignment: .leading, spacing: 8) {
+                                HStack {
+                                    Circle()
+                                        .fill(Color.speaker(colorIndex: participant.colorIndex))
+                                        .frame(width: 9, height: 9)
+                                    Text(participant.resolvedName)
+                                        .font(.subheadline.weight(.semibold))
+                                        .lineLimit(1)
+                                    Spacer()
+                                    Text("\(participant.percentage)%")
+                                        .font(.subheadline.monospacedDigit())
+                                        .foregroundStyle(.secondary)
+                                    Image(systemName: "pencil")
+                                        .font(.caption)
+                                        .foregroundStyle(.secondary)
+                                }
+                                SpeakerTimeline(
+                                    meetingDurationMs: model.meeting.durationMs,
+                                    utterances: model.utterances.filter { $0.speakerId == participant.id },
+                                    color: Color.speaker(colorIndex: participant.colorIndex),
+                                    playbackProgress: model.playback.progress
+                                )
+                                .frame(height: 22)
                             }
-                            SpeakerTimeline(
-                                meetingDurationMs: meeting.durationMs,
-                                utterances: utterances.filter { $0.speakerId == participant.id },
-                                color: Color.speaker(colorIndex: participant.colorIndex),
-                                playbackProgress: playbackProgress
-                            )
-                            .frame(height: 22)
                         }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel("\(acceptanceText("Edit speaker name")): \(participant.resolvedName)")
+                        .accessibilityIdentifier("speakerRenameButton.\(participant.id)")
                     }
                 }
                 .padding()
@@ -531,6 +567,30 @@ private struct SpeakerInsightsView: View {
         }
         .presentationDetents([.medium, .large])
         .accessibilityIdentifier("speakerInsightsSheet")
+        .alert(acceptanceText("Edit speaker name"), isPresented: Binding(
+            get: { renamingSpeakerId != nil },
+            set: { if !$0 { renamingSpeakerId = nil } }
+        )) {
+            TextField(acceptanceText("Speaker name"), text: $renameText)
+                .accessibilityIdentifier("speakerNameField")
+            Button(acceptanceText("Cancel"), role: .cancel) { renamingSpeakerId = nil }
+            Button(acceptanceText("Save")) {
+                guard let speakerId = renamingSpeakerId else { return }
+                renamingSpeakerId = nil
+                Task { await model.renameSpeaker(id: speakerId, newName: renameText) }
+            }
+            .accessibilityIdentifier("speakerNameSaveButton")
+        } message: {
+            Text(acceptanceText("This name is used for this speaker in every meeting."))
+        }
+    }
+
+    private func acceptanceText(_ key: String) -> String {
+        String(
+            localized: String.LocalizationValue(key),
+            table: "AcceptanceUI",
+            locale: LocalizationManager.shared.resolvedLocale
+        )
     }
 }
 

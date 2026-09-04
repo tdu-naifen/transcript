@@ -31,6 +31,9 @@ final class TranscriptUITests: XCTestCase {
         app.buttons["collapseRecordingButton"].tap()
 
         app.buttons["miniStopButton"].tap()
+        XCTAssertTrue(app.textFields["meetingNameField"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.textFields["meetingNameField"].value as? String == "")
+        app.buttons["meetingNameSaveButton"].tap()
         XCTAssertTrue(app.buttons["globalRecordButton"].waitForExistence(timeout: 5))
     }
 
@@ -45,8 +48,12 @@ final class TranscriptUITests: XCTestCase {
 
         XCTAssertTrue(app.buttons["meetingOptionsButton"].waitForExistence(timeout: 5))
         app.buttons["meetingOptionsButton"].tap()
-        app.buttons["Speaker Insights"].tap()
+        app.buttons["speakerInsightsMenuItem"].tap()
         XCTAssertTrue(app.otherElements["speakerInsightsSheet"].waitForExistence(timeout: 3))
+
+        app.buttons["speakerRenameButton.fixture-speaker-alexandra"].tap()
+        XCTAssertTrue(app.textFields["speakerNameField"].waitForExistence(timeout: 2))
+        app.buttons["speakerNameSaveButton"].tap()
 
         app.buttons["Done"].tap()
         XCTAssertTrue(app.buttons["meetingBackButton"].waitForExistence(timeout: 3))

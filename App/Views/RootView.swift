@@ -45,6 +45,11 @@ private struct ReadyView: View {
     @State private var isRecordingExpanded = Self.debugRecordingExpanded
     @State private var selectedTab: AppTab = Self.debugInitialTab
     @State private var recordingsPath = NavigationPath()
+    @State private var activeMeeting: Meeting?
+    @State private var namingMeetingId: String?
+    @State private var meetingName = ""
+    @State private var defaultMeetingName = ""
+    @State private var isMeetingNamingPresented = false
 
     /// Screenshot verification aid, same pattern as `-uiFixtureOpenMeetingId`: the
     /// simulator has no scripted-tap path to the Settings tab in this environment.
@@ -88,18 +93,22 @@ private struct ReadyView: View {
             }
 
             if isRecordingExpanded {
-                RecordView(model: recorder) {
-                    withAnimation(.snappy) { isRecordingExpanded = false }
-                }
+                RecordView(
+                    model: recorder,
+                    onCollapse: { withAnimation(.snappy) { isRecordingExpanded = false } },
+                    onStop: requestStop
+                )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .zIndex(2)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             if recorder.isActive && !isRecordingExpanded {
-                RecordingMiniBar(model: recorder) {
-                    withAnimation(.snappy) { isRecordingExpanded = true }
-                }
+                RecordingMiniBar(
+                    model: recorder,
+                    onExpand: { withAnimation(.snappy) { isRecordingExpanded = true } },
+                    onStop: requestStop
+                )
             }
         }
         .overlay(alignment: .bottomTrailing) {
@@ -124,12 +133,68 @@ private struct ReadyView: View {
                 .accessibilityIdentifier("globalRecordButton")
             }
         }
+        .alert(acceptanceText("Confirm meeting name"), isPresented: $isMeetingNamingPresented) {
+            TextField(acceptanceText("Meeting name"), text: $meetingName)
+                .accessibilityIdentifier("meetingNameField")
+            Button(acceptanceText("Keep Default"), role: .cancel) {}
+            Button(acceptanceText("Save")) { saveMeetingName() }
+                .accessibilityIdentifier("meetingNameSaveButton")
+        } message: {
+            Text(acceptanceText("Enter or confirm a name for this meeting."))
+        }
+        .onChange(of: recorder.phase) { oldPhase, newPhase in
+            if newPhase == .recording || newPhase == .paused {
+                Task { await captureActiveMeeting() }
+            } else if newPhase == .stopping && oldPhase != .stopping {
+                presentMeetingNaming()
+            } else if newPhase == .idle && oldPhase == .stopping {
+                Task { await library.reload() }
+            }
+        }
+    }
+
+    private func requestStop() {
+        presentMeetingNaming()
+        Task { await recorder.toggleRecording() }
+    }
+
+    private func captureActiveMeeting() async {
+        guard let id = await services.session.activeMeetingId else { return }
+        activeMeeting = try? await MeetingRepository(services.database).fetch(id: id)
+    }
+
+    private func presentMeetingNaming() {
+        guard !isMeetingNamingPresented, let meeting = activeMeeting else { return }
+        namingMeetingId = meeting.id
+        defaultMeetingName = meeting.title
+        meetingName = meeting.title
+        isMeetingNamingPresented = true
+    }
+
+    private func saveMeetingName() {
+        guard let id = namingMeetingId else { return }
+        let title = MeetingTitle.confirmedTitle(meetingName, defaultTitle: defaultMeetingName)
+        Task {
+            _ = try? await MeetingRepository(services.database).rename(
+                id: id, title: title, deviceId: services.deviceId
+            )
+            await library.reload()
+        }
+    }
+
+    private func acceptanceText(_ key: String) -> String {
+        String(
+            localized: String.LocalizationValue(key),
+            table: "AcceptanceUI",
+            locale: LocalizationManager.shared.resolvedLocale
+        )
     }
 }
 
 private struct RecordingMiniBar: View {
     let model: RecorderModel
     let onExpand: () -> Void
+    let onStop: () -> Void
 
     var body: some View {
         Button(action: onExpand) {
@@ -142,9 +207,7 @@ private struct RecordingMiniBar: View {
                     .foregroundStyle(.primary)
                 LevelMeterView(level: model.level, isActive: model.phase == .recording)
                     .frame(maxWidth: .infinity)
-                Button {
-                    Task { await model.toggleRecording() }
-                } label: {
+                Button(action: onStop) {
                     Image(systemName: "stop.fill")
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.white)

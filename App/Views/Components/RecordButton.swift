@@ -24,6 +24,7 @@ struct RecordButton: View {
         .disabled(isBusy)
         .animation(.spring(response: 0.28, dampingFraction: 0.7), value: isRecording)
         .accessibilityLabel(isRecording ? "Stop recording" : "Start recording")
+        .accessibilityIdentifier(isRecording ? "expandedStopButton" : "expandedStartButton")
     }
 }
 

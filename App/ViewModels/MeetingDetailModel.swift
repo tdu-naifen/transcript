@@ -195,6 +195,10 @@ final class MeetingDetailModel {
     func confirmRename(newName: String) async {
         guard let speakerId = renamingSpeakerId else { return }
         renamingSpeakerId = nil
+        await renameSpeaker(id: speakerId, newName: newName)
+    }
+
+    func renameSpeaker(id speakerId: String, newName: String) async {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             try await speakerRepository.rename(

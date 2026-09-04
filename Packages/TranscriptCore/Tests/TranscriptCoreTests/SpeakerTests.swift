@@ -244,7 +244,18 @@ import Testing
     @Test func renamingKeepsAnonymousNameAndIdentity() async throws {
         let db = try AppDatabase.inMemory()
         let speakers = SpeakerRepository(db)
+        let meetings = MeetingRepository(db)
         let speaker = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
+        let firstMeeting = makeTestMeeting(id: "first-meeting")
+        let secondMeeting = makeTestMeeting(id: "second-meeting")
+        try await meetings.insert(firstMeeting)
+        try await meetings.insert(secondMeeting)
+        try await speakers.assignDisplayIndex(
+            meetingId: firstMeeting.id, speakerId: speaker.id, displayIndex: 0, deviceId: testiPhoneId
+        )
+        try await speakers.assignDisplayIndex(
+            meetingId: secondMeeting.id, speakerId: speaker.id, displayIndex: 0, deviceId: testiPhoneId
+        )
         try await speakers.rename(id: speaker.id, displayName: "John", deviceId: testiPhoneId)
 
         let stored = try #require(try await speakers.fetch(id: speaker.id))
@@ -252,6 +263,8 @@ import Testing
         #expect(stored.displayName == "John")
         #expect(stored.anonymousName == speaker.anonymousName)
         #expect(stored.resolvedName == "John")
+        #expect(try await speakers.speakers(inMeeting: firstMeeting.id).map(\.speaker.resolvedName) == ["John"])
+        #expect(try await speakers.speakers(inMeeting: secondMeeting.id).map(\.speaker.resolvedName) == ["John"])
     }
 
     @Test func upsertReplacesExistingSpeaker() async throws {

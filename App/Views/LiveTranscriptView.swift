@@ -73,6 +73,10 @@ private struct TranscriptLineView: View {
                     Text(speaker.resolvedName)
                         .font(.caption.weight(.bold))
                         .foregroundStyle(Color.speaker(colorIndex: speaker.colorIndex))
+                } else {
+                    Text(acceptanceText(line.isFinal ? "Unknown speaker" : "Identifying speaker…"))
+                        .font(.caption.weight(.bold))
+                        .foregroundStyle(.secondary)
                 }
                 Text(Format.duration(milliseconds: line.startMs))
                     .font(.caption.monospacedDigit().weight(.semibold))
@@ -91,5 +95,13 @@ private struct TranscriptLineView: View {
     private var dotColor: Color {
         if let speaker { return Color.speaker(colorIndex: speaker.colorIndex) }
         return line.isFinal ? Color(red: 0.94, green: 0.29, blue: 0.25) : .secondary
+    }
+
+    private func acceptanceText(_ key: String) -> String {
+        String(
+            localized: String.LocalizationValue(key),
+            table: "AcceptanceUI",
+            locale: LocalizationManager.shared.resolvedLocale
+        )
     }
 }

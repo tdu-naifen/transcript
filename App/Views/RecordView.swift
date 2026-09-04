@@ -4,6 +4,7 @@ import TranscriptCore
 struct RecordView: View {
     @Bindable var model: RecorderModel
     let onCollapse: () -> Void
+    let onStop: () -> Void
 
     var body: some View {
         ZStack {
@@ -64,9 +65,10 @@ struct RecordView: View {
                                     Task { await model.togglePause() }
                                 }
                                 RecordButton(isRecording: model.isActive, isBusy: model.isBusy) {
-                                    Task {
-                                        await model.toggleRecording()
-                                        if !model.isActive { onCollapse() }
+                                    if model.isActive {
+                                        onStop()
+                                    } else {
+                                        Task { await model.toggleRecording() }
                                     }
                                 }
                             }
@@ -112,7 +114,7 @@ struct RecordView: View {
 
 extension RecordView {
     init(model: RecorderModel) {
-        self.init(model: model, onCollapse: {})
+        self.init(model: model, onCollapse: {}, onStop: { Task { await model.toggleRecording() } })
     }
 }
 

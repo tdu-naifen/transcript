@@ -1,0 +1,76 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Cancel" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "取消" } }
+      }
+    },
+    "Confirm meeting name" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "确认会议名称" } }
+      }
+    },
+    "Enter or confirm a name for this meeting." : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请输入或确认这场会议的名称。" } }
+      }
+    },
+    "Edit speaker name" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "编辑说话人姓名" } }
+      }
+    },
+    "Identifying speaker…" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在识别说话人…" } }
+      }
+    },
+    "Keep Default" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "保留默认名称" } }
+      }
+    },
+    "Meeting name" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "会议名称" } }
+      }
+    },
+    "No transcript" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "没有转写内容" } }
+      }
+    },
+    "Reprocess" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新处理" } }
+      }
+    },
+    "Reprocess the original audio to create a transcript." : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "使用原始音频重新处理并生成转写。" } }
+      }
+    },
+    "Save" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "保存" } }
+      }
+    },
+    "Speaker name" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "说话人姓名" } }
+      }
+    },
+    "This name is used for this speaker in every meeting." : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此姓名会用于所有会议中的同一说话人。" } }
+      }
+    },
+    "Unknown speaker" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未知说话人" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}
