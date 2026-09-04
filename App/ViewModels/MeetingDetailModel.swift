@@ -15,7 +15,7 @@ final class MeetingDetailModel {
         var hasCustomName: Bool
     }
 
-    let meeting: Meeting
+    private(set) var meeting: Meeting
     let playback: AudioPlaybackModel
 
     private(set) var utterances: [Utterance] = []
@@ -26,6 +26,7 @@ final class MeetingDetailModel {
 
     private let utteranceRepository: UtteranceRepository
     private let speakerRepository: SpeakerRepository
+    private let meetingRepository: MeetingRepository
     private let deviceId: String
 
     init(meeting: Meeting, audioURL: URL?, services: AppServices, isRecordingActive: Bool = false) {
@@ -37,6 +38,7 @@ final class MeetingDetailModel {
         )
         self.utteranceRepository = UtteranceRepository(services.database)
         self.speakerRepository = SpeakerRepository(services.database)
+        self.meetingRepository = MeetingRepository(services.database)
         self.deviceId = services.deviceId
     }
 
@@ -72,6 +74,21 @@ final class MeetingDetailModel {
 
     func cancelRename() {
         renamingSpeakerId = nil
+    }
+
+    @discardableResult
+    func renameMeeting(newTitle: String) async -> Bool {
+        let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return false }
+        do {
+            meeting = try await meetingRepository.rename(
+                id: meeting.id, title: trimmed, deviceId: deviceId
+            )
+            return true
+        } catch {
+            loadFailure = String(describing: error)
+            return false
+        }
     }
 
     /// Renaming is iPhone-only and always allowed post-recording (UI.md §4.2); this

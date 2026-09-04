@@ -136,6 +136,38 @@ import Testing
         #expect(requeued.failedFromState == nil)
     }
 
+    @Test func renamePreservesMeetingIdentityAndSealedAudio() async throws {
+        let db = try AppDatabase.inMemory()
+        let repo = MeetingRepository(db)
+        let meeting = Meeting(
+            id: "meeting-to-rename",
+            title: "Recording Sep 4, 2026 at 6:30 PM",
+            startedAt: Date(timeIntervalSince1970: 1_788_552_600),
+            durationMs: 42_000,
+            audioFileName: "sealed.m4a",
+            audioSHA256: "abc123",
+            audioByteCount: 4_096,
+            state: .recorded,
+            originDeviceId: testiPhoneId
+        )
+        try await repo.insert(meeting)
+
+        let renamed = try await repo.rename(
+            id: meeting.id,
+            title: "Customer interview",
+            deviceId: testiPhoneId,
+            now: Date(timeIntervalSince1970: 1_788_552_700)
+        )
+
+        #expect(renamed.id == meeting.id)
+        #expect(renamed.title == "Customer interview")
+        #expect(renamed.startedAt == meeting.startedAt)
+        #expect(renamed.durationMs == meeting.durationMs)
+        #expect(renamed.audioFileName == meeting.audioFileName)
+        #expect(renamed.audioSHA256 == meeting.audioSHA256)
+        #expect(renamed.audioByteCount == meeting.audioByteCount)
+    }
+
     @Test func failureRecordsOriginStateAndRetryResumes() async throws {
         let db = try AppDatabase.inMemory()
         let repo = MeetingRepository(db)

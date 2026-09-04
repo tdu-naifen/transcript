@@ -36,6 +36,25 @@ public struct MeetingRepository: Sendable {
         }
     }
 
+    @discardableResult
+    public func rename(
+        id: String,
+        title: String,
+        deviceId: String,
+        now: Date = Date()
+    ) async throws -> Meeting {
+        try await database.writer.write { db in
+            guard var meeting = try Meeting.fetchOne(db, key: id) else {
+                throw RepositoryError.notFound(table: Meeting.databaseTableName, id: id)
+            }
+            meeting.title = title
+            meeting.updatedAt = now
+            meeting.originDeviceId = deviceId
+            try meeting.update(db)
+            return meeting
+        }
+    }
+
     /// Records `failedFromState` when entering `failed`, and requires that leaving
     /// `failed` lands on a legal successor of it (PLAN §3.2.1).
     ///

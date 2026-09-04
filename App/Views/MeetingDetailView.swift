@@ -6,11 +6,14 @@ import TranscriptCore
 struct MeetingDetailView: View {
     let meeting: Meeting
     let audioURL: URL?
+    let onMeetingRenamed: () -> Void
 
     @State private var model: MeetingDetailModel
     @State private var isParticipantsExpanded = Self.debugStartExpanded
     @State private var isEngineeringDetailPresented = false
     @State private var isInsightsPresented = false
+    @State private var isMeetingRenamePresented = false
+    @State private var meetingRenameText = ""
     @State private var renameText = ""
     @Environment(\.dismiss) private var dismiss
 
@@ -26,9 +29,16 @@ struct MeetingDetailView: View {
     }
 
 
-    init(meeting: Meeting, audioURL: URL?, services: AppServices, isRecordingActive: Bool = false) {
+    init(
+        meeting: Meeting,
+        audioURL: URL?,
+        services: AppServices,
+        isRecordingActive: Bool = false,
+        onMeetingRenamed: @escaping () -> Void = {}
+    ) {
         self.meeting = meeting
         self.audioURL = audioURL
+        self.onMeetingRenamed = onMeetingRenamed
         _model = State(initialValue: MeetingDetailModel(
             meeting: meeting,
             audioURL: audioURL,
@@ -49,11 +59,11 @@ struct MeetingDetailView: View {
         }
         .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $isEngineeringDetailPresented) {
-            EngineeringDetailSheet(meeting: meeting, audioURL: audioURL)
+            EngineeringDetailSheet(meeting: model.meeting, audioURL: audioURL)
         }
         .sheet(isPresented: $isInsightsPresented) {
             SpeakerInsightsView(
-                meeting: meeting,
+                meeting: model.meeting,
                 utterances: model.utterances,
                 speakers: model.speakersById,
                 participants: model.participants,
@@ -75,6 +85,18 @@ struct MeetingDetailView: View {
         } message: {
             Text("清空可恢复为原始动物名，所有会议同步生效。")
         }
+        .alert("重命名", isPresented: $isMeetingRenamePresented) {
+            TextField("名字", text: $meetingRenameText)
+            Button("取消", role: .cancel) {}
+            Button("保存") {
+                Task {
+                    if await model.renameMeeting(newTitle: meetingRenameText) {
+                        onMeetingRenamed()
+                    }
+                }
+            }
+            .disabled(meetingRenameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
         .onChange(of: model.renamingSpeakerId) { _, speakerId in
             renameText = speakerId.flatMap { model.speakersById[$0]?.resolvedName } ?? ""
         }
@@ -92,7 +114,7 @@ struct MeetingDetailView: View {
         let peopleText = count == 1
             ? String(localized: "1 participant", locale: locale)
             : String(localized: "\(count) participants", locale: locale)
-        return "\(peopleText) · \(Format.duration(milliseconds: meeting.durationMs))"
+        return "\(peopleText) · \(Format.duration(milliseconds: model.meeting.durationMs))"
     }
 
     private var topBar: some View {
@@ -108,7 +130,7 @@ struct MeetingDetailView: View {
 
             Spacer()
             VStack(spacing: 2) {
-                Text(meeting.title)
+                Text(model.meeting.title)
                     .font(.headline)
                     .lineLimit(1)
                 Text(headerMetadata)
@@ -119,6 +141,10 @@ struct MeetingDetailView: View {
             Spacer()
 
             Menu {
+                Button("重命名", systemImage: "pencil") {
+                    meetingRenameText = model.meeting.title
+                    isMeetingRenamePresented = true
+                }
                 Button("Speaker Insights", systemImage: "chart.bar.xaxis") {
                     isInsightsPresented = true
                 }
@@ -139,8 +165,8 @@ struct MeetingDetailView: View {
     }
 
     private var headerMetadata: String {
-        let date = Format.date(meeting.startedAt)
-        guard let locale = meeting.localeIdentifier, !locale.isEmpty else { return date }
+        let date = Format.date(model.meeting.startedAt)
+        guard let locale = model.meeting.localeIdentifier, !locale.isEmpty else { return date }
         return "\(date) · \(Locale.current.localizedString(forIdentifier: locale) ?? locale)"
     }
 

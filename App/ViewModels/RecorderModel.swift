@@ -139,7 +139,7 @@ final class RecorderModel {
             // loads; the broadcast stream buffers until inference catches up.
             let chunks = services.session.chunks()
             let diarizationChunks = services.session.chunks()
-            let meeting = try await services.session.start(title: Self.defaultTitle())
+            let meeting = try await services.session.start(title: Self.defaultTitle(at: Date()))
             transcription.start(
                 meetingId: meeting.id,
                 chunks: chunks,
@@ -252,10 +252,7 @@ final class RecorderModel {
         }
     }
 
-    /// The subtitle already shows the date (UI.md row layout), so the default title
-    /// must not restate it — otherwise every unnamed recording shows the same
-    /// timestamp twice.
-    private static func defaultTitle() -> String {
-        "未命名录音"
+    private static func defaultTitle(at date: Date) -> String {
+        Format.date(date, dateStyle: .abbreviated, timeStyle: .shortened)
     }
 }

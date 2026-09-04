@@ -42,7 +42,8 @@ struct RecordingsListView: View {
                     meeting: meeting,
                     audioURL: model.audioURL(for: meeting),
                     services: services,
-                    isRecordingActive: isRecordingActive()
+                    isRecordingActive: isRecordingActive(),
+                    onMeetingRenamed: { Task { await model.reload() } }
                 )
             }
             .navigationTitle("录音")
