@@ -39,7 +39,7 @@ struct RecordingsListView: View {
                     }
                 }
             }
-            .navigationTitle("Recordings")
+            .navigationTitle("录音")
             .refreshable { await model.reload() }
             .task { await model.reload() }
         }
