@@ -146,7 +146,10 @@ private struct ReadyView: View {
             if newPhase == .recording || newPhase == .paused {
                 Task { await captureActiveMeeting() }
             } else if newPhase == .stopping && oldPhase != .stopping {
-                presentMeetingNaming()
+                Task {
+                    if activeMeeting == nil { await captureActiveMeeting() }
+                    presentMeetingNaming()
+                }
             } else if newPhase == .idle && oldPhase == .stopping {
                 Task { await library.reload() }
             }
@@ -154,8 +157,16 @@ private struct ReadyView: View {
     }
 
     private func requestStop() {
-        presentMeetingNaming()
-        Task { await recorder.toggleRecording() }
+        if activeMeeting != nil {
+            presentMeetingNaming()
+            Task { await recorder.toggleRecording() }
+        } else {
+            Task {
+                await captureActiveMeeting()
+                presentMeetingNaming()
+                await recorder.toggleRecording()
+            }
+        }
     }
 
     private func captureActiveMeeting() async {
