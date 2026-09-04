@@ -13,6 +13,9 @@ settings:
 packages:
   TranscriptCore:
     path: Packages/TranscriptCore
+  FluidAudio:
+    url: https://github.com/FluidInference/FluidAudio.git
+    from: 0.12.4
 
 targets:
   Transcript:
@@ -23,6 +26,8 @@ targets:
     dependencies:
       - package: TranscriptCore
         product: TranscriptCore
+      - package: FluidAudio
+        product: FluidAudio
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.transcript.Transcript
