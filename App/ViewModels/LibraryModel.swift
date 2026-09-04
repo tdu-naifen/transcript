@@ -11,10 +11,12 @@ final class LibraryModel {
 
     private let repository: MeetingRepository
     private let store: AudioFileStore
+    let database: AppDatabase
 
     init(services: AppServices) {
         repository = MeetingRepository(services.database)
         store = services.store
+        database = services.database
     }
 
     func reload() async {

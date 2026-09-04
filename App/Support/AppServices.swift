@@ -1,10 +1,11 @@
+import FluidAudio
 import Foundation
 import SwiftUI
 import TranscriptCore
 import UIKit
 
 /// Everything the app needs that outlives a view: the database, the audio directory,
-/// and the single recording session.
+/// the single recording session, and the ASR model.
 @MainActor
 final class AppServices {
     let database: AppDatabase
@@ -12,6 +13,11 @@ final class AppServices {
     let deviceId: String
     let session: RecordingSession
     let recovery: RecordingRecovery
+    let modelDownloader: ASRModelDownloader
+
+    /// Kept alive between recordings so the ~600 MB load is paid once per launch.
+    /// Its language is set per-run by ``LiveTranscriber``, not baked in at creation.
+    private var engine: StreamingNemotronMultilingualAsrManager?
 
     init() throws {
         database = try AppDatabase.onDisk()
@@ -19,7 +25,35 @@ final class AppServices {
         deviceId = UIDevice.current.identifierForVendor?.uuidString ?? "unknown-device"
         session = RecordingSession(database: database, deviceId: deviceId, store: store)
         recovery = RecordingRecovery(database: database, deviceId: deviceId, store: store)
+        modelDownloader = ASRModelDownloader()
     }
+
+    var isModelInstalled: Bool { ASRModelStore.bundle().isInstalled }
+
+    /// The chosen transcription language, persisted across launches.
+    var asrLanguage: ASRLanguage {
+        get {
+            guard let raw = UserDefaults.standard.string(forKey: Self.languageKey), raw != "auto" else {
+                return .auto
+            }
+            return .locale(raw)
+        }
+        set {
+            UserDefaults.standard.set(newValue.promptKey, forKey: Self.languageKey)
+        }
+    }
+
+    /// Nil when no model is installed — recording still works, transcription simply
+    /// does not happen.
+    func asrEngine() -> StreamingNemotronMultilingualAsrManager? {
+        guard ASRModelStore.bundle().isInstalled else { return nil }
+        if let engine { return engine }
+        let created = StreamingNemotronMultilingualAsrManager()
+        engine = created
+        return created
+    }
+
+    private static let languageKey = "asrLanguage"
 
     /// A recording left behind by a process that died is closed out before the user can
     /// start a new one (PLAN §3.2.1).

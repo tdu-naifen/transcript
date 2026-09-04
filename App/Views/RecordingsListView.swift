@@ -16,7 +16,11 @@ struct RecordingsListView: View {
                 } else {
                     List(model.meetings) { meeting in
                         NavigationLink {
-                            MeetingDetailView(meeting: meeting, audioURL: model.audioURL(for: meeting))
+                            MeetingDetailView(
+                                meeting: meeting,
+                                audioURL: model.audioURL(for: meeting),
+                                database: model.database
+                            )
                         } label: {
                             MeetingRow(meeting: meeting)
                         }

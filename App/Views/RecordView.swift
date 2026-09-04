@@ -6,7 +6,7 @@ struct RecordView: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 28) {
+            VStack(spacing: 20) {
                 StatusChipRow(
                     stateLabel: model.stateLabel,
                     stateTint: model.phase == .recording ? .red : .secondary,
@@ -34,7 +34,8 @@ struct RecordView: View {
                             .onTapGesture { model.dismissNotice() }
                     }
 
-                    Spacer()
+                    LiveTranscriptView(model: model.transcription)
+                        .frame(maxHeight: .infinity)
 
                     HStack(spacing: 28) {
                         if model.isActive {

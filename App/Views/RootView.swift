@@ -23,7 +23,7 @@ struct RootView: View {
                     RecordingsListView(model: library)
                 }
                 Tab("Settings", systemImage: "gearshape") {
-                    SettingsView(deviceId: services.deviceId, audioDirectory: services.store.directory)
+                    SettingsView(services: services)
                 }
             }
         }

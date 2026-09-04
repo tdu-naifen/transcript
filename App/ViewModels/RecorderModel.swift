@@ -23,6 +23,7 @@ final class RecorderModel {
 
     private let services: AppServices
     private let library: LibraryModel
+    let transcription: TranscriptionModel
     private var levelTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
     private var tickTask: Task<Void, Never>?
@@ -33,6 +34,7 @@ final class RecorderModel {
     init(services: AppServices, library: LibraryModel) {
         self.services = services
         self.library = library
+        self.transcription = TranscriptionModel(services: services)
     }
 
     var isBusy: Bool { phase == .starting || phase == .stopping }
@@ -51,6 +53,7 @@ final class RecorderModel {
 
     func onAppear() async {
         permission = MicrophonePermission.current
+        transcription.refreshAvailability()
         observeStreams()
         guard !didSalvage else { return }
         didSalvage = true
@@ -102,7 +105,11 @@ final class RecorderModel {
 
         phase = .starting
         do {
-            _ = try await services.session.start(title: Self.defaultTitle())
+            // Subscribed before capture starts, so no chunk is lost while the model
+            // loads; the broadcast stream buffers until inference catches up.
+            let chunks = services.session.chunks()
+            let meeting = try await services.session.start(title: Self.defaultTitle())
+            transcription.start(meetingId: meeting.id, chunks: chunks)
             accumulated = 0
             elapsed = 0
             startedAt = Date()
@@ -123,6 +130,7 @@ final class RecorderModel {
             // The meeting is still preserved, sealed into `failed` (PLAN §3.2.1).
             errorMessage = String(describing: error)
         }
+        transcription.stop()
         startedAt = nil
         accumulated = 0
         elapsed = 0
