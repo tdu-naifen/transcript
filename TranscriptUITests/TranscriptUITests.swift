@@ -98,7 +98,9 @@ final class TranscriptUITests: XCTestCase {
         }
         wait(for: [playbackFinished], timeout: 58)
 
-        app.buttons["miniStopButton"].tap()
+        app.buttons["recordingMiniBar"].tap()
+        XCTAssertTrue(app.buttons["expandedStopButton"].waitForExistence(timeout: 3))
+        app.buttons["expandedStopButton"].tap()
         let nameField = app.textFields["meetingNameField"]
         XCTAssertTrue(nameField.waitForExistence(timeout: 120))
         XCTAssertFalse((nameField.value as? String ?? "").isEmpty)
