@@ -10,6 +10,11 @@ import TranscriptCore
 @MainActor
 @Observable
 final class TranscriptionModel {
+    enum RecordingError: Error {
+        case requiredModelsMissing
+        case processingNotRunning
+    }
+
     enum Status: Equatable {
         case modelMissing
         case idle
@@ -32,17 +37,19 @@ final class TranscriptionModel {
     private var eventTask: Task<Void, Never>?
     private var diarizationTask: Task<Void, Never>?
     private var currentMeetingId: String?
+    private var diarizationTimeline = DiarizationTimelineAccumulator()
+    private var processingFailure: String?
 
     init(services: AppServices) {
         self.services = services
-        status = services.isModelInstalled ? .idle : .modelMissing
+        status = services.areRecordingModelsInstalled ? .idle : .modelMissing
     }
 
     var isAvailable: Bool { status != .modelMissing }
 
     func refreshAvailability() {
         guard status == .idle || status == .modelMissing else { return }
-        status = services.isModelInstalled ? .idle : .modelMissing
+        status = services.areRecordingModelsInstalled ? .idle : .modelMissing
     }
 
     /// `chunks` must be subscribed before capture starts so no chunk is missed while
@@ -51,14 +58,19 @@ final class TranscriptionModel {
         meetingId: String,
         chunks: AsyncStream<AudioChunk>,
         diarizationChunks: AsyncStream<AudioChunk>
-    ) {
-        guard let engine = services.asrEngine() else {
+    ) throws {
+        let modelPath = DiarizationModelStore.sortformerMainModelPath()
+        guard services.areRecordingModelsInstalled,
+              DiarizationModelStore.isSortformerInstalled(at: modelPath),
+              let engine = services.asrEngine() else {
             status = .modelMissing
-            return
+            throw RecordingError.requiredModelsMissing
         }
         lines.removeAll()
         diarizationSegments.removeAll()
+        diarizationTimeline = DiarizationTimelineAccumulator()
         speakersByIndex.removeAll()
+        processingFailure = nil
         detectedLanguage = nil
         currentMeetingId = meetingId
         status = .preparing
@@ -76,24 +88,56 @@ final class TranscriptionModel {
             let events = await transcriber.events()
             await transcriber.run(chunks: chunks)
             for await event in events {
-                self?.apply(event)
+                await self?.apply(event)
             }
         }
 
-        startDiarization(meetingId: meetingId, chunks: diarizationChunks)
+        startDiarization(meetingId: meetingId, chunks: diarizationChunks, modelPath: modelPath)
     }
 
-    func stop() {
-        eventTask?.cancel()
+    func finish() async throws {
+        guard let transcriber, let diarizer else { throw RecordingError.processingNotRunning }
+        var failure: (any Error)?
+        do {
+            try await LiveRecordingDrain.wait(
+                asr: { try await transcriber.finishAndWait() },
+                diarization: { try await diarizer.finishAndWait() }
+            )
+        } catch {
+            failure = error
+        }
+        await eventTask?.value
+        await diarizationTask?.value
+        if failure == nil, let processingFailure {
+            failure = LiveRecordingDrainError(failures: [processingFailure])
+        }
+        do {
+            try await reconcileSpeakerAssignments()
+        } catch {
+            if failure == nil { failure = error }
+            errorMessageForDiarization(String(describing: error))
+        }
         eventTask = nil
-        diarizationTask?.cancel()
         diarizationTask = nil
-        let transcriber = self.transcriber
-        let diarizer = self.diarizer
         self.transcriber = nil
         self.diarizer = nil
-        Task { await transcriber?.cancel() }
-        Task { await diarizer?.cancel() }
+        currentMeetingId = nil
+        if let failure {
+            status = .failed(String(describing: failure))
+            throw failure
+        }
+        status = .idle
+    }
+
+    func discard() async {
+        eventTask?.cancel()
+        diarizationTask?.cancel()
+        await transcriber?.cancelAndWait()
+        await diarizer?.cancelAndWait()
+        eventTask = nil
+        diarizationTask = nil
+        transcriber = nil
+        diarizer = nil
         currentMeetingId = nil
         if status == .running || status == .preparing { status = .idle }
     }
@@ -107,7 +151,7 @@ final class TranscriptionModel {
         return speakersByIndex[index]
     }
 
-    private func apply(_ event: ASRTranscriptEvent) {
+    private func apply(_ event: ASRTranscriptEvent) async {
         switch event {
         case .ready(let info):
             status = .running
@@ -121,7 +165,11 @@ final class TranscriptionModel {
             }
             if let locale = segment.localeIdentifier { detectedLanguage = locale }
             if segment.isFinal {
-                Task { [weak self] in await self?.reconcileSpeakerAssignments() }
+                do {
+                    try await reconcileSpeakerAssignments()
+                } catch {
+                    errorMessageForDiarization(String(describing: error))
+                }
             }
         case .failed(let message):
             status = .failed(message)
@@ -130,10 +178,11 @@ final class TranscriptionModel {
         }
     }
 
-    private func startDiarization(meetingId: String, chunks: AsyncStream<AudioChunk>) {
-        let modelPath = DiarizationModelStore.sortformerMainModelPath()
-        guard DiarizationModelStore.isSortformerInstalled(at: modelPath) else { return }
-
+    private func startDiarization(
+        meetingId: String,
+        chunks: AsyncStream<AudioChunk>,
+        modelPath: URL
+    ) {
         let diarizer = SpeakerDiarizer(configuration: .init(mainModelPath: modelPath))
         self.diarizer = diarizer
         diarizationTask = Task { [weak self] in
@@ -154,7 +203,11 @@ final class TranscriptionModel {
                 errorMessageForDiarization(message)
             }
         case .update(let finalized, let tentative):
-            diarizationSegments = (finalized + tentative).filter { (0..<4).contains($0.speakerIndex) }
+            diarizationTimeline.apply(
+                finalized: finalized.filter { (0..<4).contains($0.speakerIndex) },
+                tentative: tentative.filter { (0..<4).contains($0.speakerIndex) }
+            )
+            diarizationSegments = diarizationTimeline.segments
             let indexes = Set(diarizationSegments.map(\.speakerIndex)).sorted()
             for index in indexes where speakersByIndex[index] == nil {
                 do {
@@ -171,37 +224,38 @@ final class TranscriptionModel {
                     errorMessageForDiarization(String(describing: error))
                 }
             }
-            await reconcileSpeakerAssignments()
+            do {
+                try await reconcileSpeakerAssignments()
+            } catch {
+                errorMessageForDiarization(String(describing: error))
+            }
         }
     }
 
-    private func reconcileSpeakerAssignments() async {
+    private func reconcileSpeakerAssignments() async throws {
         guard let meetingId = currentMeetingId else { return }
-        do {
-            let repository = UtteranceRepository(services.database)
-            let utterances = try await repository.fetch(meetingId: meetingId)
-            var assignments: [String: String] = [:]
-            for utterance in utterances {
-                guard let index = SpeakerOverlapAssigner.speakerIndex(
-                    utteranceStartMs: utterance.startMs,
-                    utteranceEndMs: utterance.endMs,
-                    segments: diarizationSegments
-                ), let speaker = speakersByIndex[index], utterance.speakerId != speaker.id else { continue }
-                assignments[utterance.id] = speaker.id
-            }
-            if !assignments.isEmpty {
-                try await repository.reassignSpeakers(
-                    meetingId: meetingId,
-                    assignments: assignments,
-                    deviceId: services.deviceId
-                )
-            }
-        } catch {
-            errorMessageForDiarization(String(describing: error))
+        let repository = UtteranceRepository(services.database)
+        let utterances = try await repository.fetch(meetingId: meetingId)
+        var assignments: [String: String] = [:]
+        for utterance in utterances {
+            guard let index = SpeakerOverlapAssigner.speakerIndex(
+                utteranceStartMs: utterance.startMs,
+                utteranceEndMs: utterance.endMs,
+                segments: diarizationSegments
+            ), let speaker = speakersByIndex[index], utterance.speakerId != speaker.id else { continue }
+            assignments[utterance.id] = speaker.id
+        }
+        if !assignments.isEmpty {
+            try await repository.reassignSpeakers(
+                meetingId: meetingId,
+                assignments: assignments,
+                deviceId: services.deviceId
+            )
         }
     }
 
     private func errorMessageForDiarization(_ message: String) {
+        if processingFailure == nil { processingFailure = message }
         guard status != .failed(message) else { return }
         status = .failed(message)
     }

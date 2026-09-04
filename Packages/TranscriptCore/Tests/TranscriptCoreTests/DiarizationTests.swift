@@ -52,18 +52,60 @@ import Testing
         #expect(index == 0)
     }
 
-    @Test func tiesResolveToTheLowestSpeakerIndexRegardlessOfOrder() {
+    @Test func tiesRemainUnassignedRegardlessOfOrder() {
         let segments = [segment(2, 0, 1), segment(0, 1, 2)]
         let index = SpeakerOverlapAssigner.speakerIndex(
             utteranceStartMs: 0, utteranceEndMs: 2000, segments: segments
         )
-        #expect(index == 0)
+        #expect(index == nil)
 
         let reordered = [segment(0, 1, 2), segment(2, 0, 1)]
         let reorderedIndex = SpeakerOverlapAssigner.speakerIndex(
             utteranceStartMs: 0, utteranceEndMs: 2000, segments: reordered
         )
-        #expect(reorderedIndex == 0)
+        #expect(reorderedIndex == nil)
+    }
+
+    @Test func adjacentSegmentsForTheSameSpeakerAccumulateBeforeComparison() {
+        let segments = [segment(1, 0, 1), segment(1, 1, 2), segment(0, 2, 3)]
+        let index = SpeakerOverlapAssigner.speakerIndex(
+            utteranceStartMs: 0, utteranceEndMs: 3000, segments: segments
+        )
+        #expect(index == 1)
+    }
+}
+
+@Suite struct DiarizationTimelineAccumulatorTests {
+    private func segment(_ speakerIndex: Int, _ startFrame: Int, _ endFrame: Int) -> DiarizerSegment {
+        DiarizerSegment(
+            speakerIndex: speakerIndex, startFrame: startFrame, endFrame: endFrame,
+            frameDurationSeconds: 1.0
+        )
+    }
+
+    @Test func finalizedDeltasAccumulateAndTentativeTailIsReplaced() {
+        var timeline = DiarizationTimelineAccumulator()
+        let firstFinal = segment(0, 0, 1)
+        let firstTentative = segment(1, 1, 2)
+        timeline.apply(finalized: [firstFinal], tentative: [firstTentative])
+
+        let secondFinal = segment(1, 1, 2)
+        let replacementTentative = segment(0, 2, 3)
+        timeline.apply(finalized: [secondFinal], tentative: [replacementTentative])
+
+        #expect(timeline.finalized.map(\.speakerIndex) == [0, 1])
+        #expect(timeline.tentative.map(\.speakerIndex) == [0])
+        #expect(timeline.segments.count == 3)
+    }
+
+    @Test func emptyFinalizedDeltaDoesNotEraseStableHistory() {
+        var timeline = DiarizationTimelineAccumulator()
+        timeline.apply(finalized: [segment(2, 0, 1)], tentative: [segment(3, 1, 2)])
+        timeline.apply(finalized: [], tentative: [segment(3, 1, 3)])
+
+        #expect(timeline.finalized.map(\.speakerIndex) == [2])
+        #expect(timeline.tentative.map(\.speakerIndex) == [3])
+        #expect(timeline.tentative.first?.endTime == 3)
     }
 }
 

@@ -62,6 +62,7 @@ public actor SpeakerDiarizer {
     private let configuration: Configuration
     private var continuation: AsyncStream<Event>.Continuation?
     private var task: Task<Void, Never>?
+    private var terminalFailure: String?
 
     public init(configuration: Configuration) {
         self.configuration = configuration
@@ -83,7 +84,16 @@ public actor SpeakerDiarizer {
     /// ignored, so the model can never be loaded twice by a double tap.
     public func run(chunks: AsyncStream<AudioChunk>) {
         guard task == nil else { return }
+        terminalFailure = nil
         task = Task { await self.consume(chunks) }
+    }
+
+    public func finishAndWait() async throws {
+        let running = task
+        await running?.value
+        if let terminalFailure {
+            throw LiveRecordingDrainError(failures: [terminalFailure])
+        }
     }
 
     public func cancel() {
@@ -121,7 +131,7 @@ public actor SpeakerDiarizer {
             let models = try SortformerModels(config: configuration.config, main: mainModel)
             diarizer.initialize(models: models)
         } catch {
-            emit(.failed(String(describing: error)))
+            fail(error)
             emit(.finished)
             return
         }
@@ -133,7 +143,7 @@ public actor SpeakerDiarizer {
                 try diarizer.addAudio(chunk.samples, sourceSampleRate: chunk.sampleRate)
                 if let update = try diarizer.process() { emit(update) }
             } catch {
-                emit(.failed(String(describing: error)))
+                fail(error)
                 break
             }
             if chunk.isFinal { break }
@@ -143,7 +153,7 @@ public actor SpeakerDiarizer {
             do {
                 if let update = try diarizer.finalizeSession() { emit(update) }
             } catch {
-                emit(.failed(String(describing: error)))
+                fail(error)
             }
         }
 
@@ -158,5 +168,27 @@ public actor SpeakerDiarizer {
     private func emit(_ event: Event) {
         continuation?.yield(event)
         if case .finished = event { continuation?.finish() }
+    }
+
+    private func fail(_ error: any Error) {
+        let message = String(describing: error)
+        if terminalFailure == nil { terminalFailure = message }
+        emit(.failed(message))
+    }
+}
+
+/// Materializes FluidAudio's incremental timeline updates. Finalized entries are deltas
+/// and remain stable; each update replaces only the provisional tail.
+public struct DiarizationTimelineAccumulator: Sendable {
+    public private(set) var finalized: [DiarizerSegment] = []
+    public private(set) var tentative: [DiarizerSegment] = []
+
+    public init() {}
+
+    public var segments: [DiarizerSegment] { finalized + tentative }
+
+    public mutating func apply(finalized newFinalized: [DiarizerSegment], tentative newTentative: [DiarizerSegment]) {
+        finalized.append(contentsOf: newFinalized)
+        tentative = newTentative
     }
 }

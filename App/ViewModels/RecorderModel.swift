@@ -135,12 +135,16 @@ final class RecorderModel {
 
         phase = .starting
         do {
+            transcription.refreshAvailability()
+            guard transcription.isAvailable else {
+                throw TranscriptionModel.RecordingError.requiredModelsMissing
+            }
             // Subscribed before capture starts, so no chunk is lost while the model
             // loads; the broadcast stream buffers until inference catches up.
             let chunks = services.session.chunks()
             let diarizationChunks = services.session.chunks()
             let meeting = try await services.session.start(title: Self.defaultTitle(at: Date()))
-            transcription.start(
+            try transcription.start(
                 meetingId: meeting.id,
                 chunks: chunks,
                 diarizationChunks: diarizationChunks
@@ -153,6 +157,8 @@ final class RecorderModel {
             startTicking()
             await activityController.start(meetingId: meeting.id)
         } catch {
+            _ = try? await services.session.abort()
+            await transcription.discard()
             phase = .idle
             errorMessage = String(describing: error)
         }
@@ -161,13 +167,29 @@ final class RecorderModel {
     private func stop() async {
         phase = .stopping
         stopTicking()
+        var pendingStop: RecordingSession.PendingStop?
+        var stopFailure: (any Error)?
         do {
-            _ = try await services.session.stop()
+            pendingStop = try await services.session.drainCapture()
         } catch {
-            // The meeting is still preserved, sealed into `failed` (PLAN §3.2.1).
-            errorMessage = String(describing: error)
+            stopFailure = error
         }
-        transcription.stop()
+        do {
+            try await transcription.finish()
+        } catch {
+            if stopFailure == nil { stopFailure = error }
+        }
+        if let pendingStop {
+            do {
+                _ = try await services.session.publish(
+                    pendingStop,
+                    as: stopFailure == nil ? .recorded : .failed
+                )
+            } catch {
+                stopFailure = error
+            }
+        }
+        if let stopFailure { errorMessage = String(describing: stopFailure) }
         await activityController.end()
         startedAt = nil
         accumulated = 0

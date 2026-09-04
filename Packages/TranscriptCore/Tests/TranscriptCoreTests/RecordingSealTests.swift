@@ -101,6 +101,11 @@ import Testing
         #expect(RecordingSession.durationMs(frames: 0, sampleRate: 16_000) == 0)
         #expect(RecordingSession.durationMs(frames: 16_000, sampleRate: 0) == 0)
     }
+
+    @Test func pendingStopTokenIdentifiesTheMeetingBeingPublished() {
+        let token = RecordingSession.PendingStop(meetingId: "pending-meeting")
+        #expect(token.meetingId == "pending-meeting")
+    }
 }
 
 @Suite struct RecordingRecoveryTests {

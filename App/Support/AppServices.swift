@@ -43,7 +43,12 @@ final class AppServices {
         return try AppDatabase.onDisk()
     }
 
-    var isModelInstalled: Bool { ASRModelStore.bundle().isInstalled }
+    var areRecordingModelsInstalled: Bool {
+        ASRModelStore.bundle().isInstalled
+            && DiarizationModelStore.isSortformerInstalled(
+                at: DiarizationModelStore.sortformerMainModelPath()
+            )
+    }
 
     /// The chosen transcription language, persisted across launches.
     var asrLanguage: ASRLanguage {

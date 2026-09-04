@@ -41,6 +41,7 @@ public actor LiveTranscriber {
     private let configuration: Configuration
     private var continuation: AsyncStream<ASRTranscriptEvent>.Continuation?
     private var task: Task<Void, Never>?
+    private var terminalFailure: String?
 
     public init(engine: StreamingNemotronMultilingualAsrManager, configuration: Configuration) {
         self.engine = engine
@@ -61,7 +62,16 @@ public actor LiveTranscriber {
     /// ignored, so the ~600 MB model can never be loaded twice by a double tap.
     public func run(chunks: AsyncStream<AudioChunk>) {
         guard task == nil else { return }
+        terminalFailure = nil
         task = Task { await self.consume(chunks) }
+    }
+
+    public func finishAndWait() async throws {
+        let running = task
+        await running?.value
+        if let terminalFailure {
+            throw LiveRecordingDrainError(failures: [terminalFailure])
+        }
     }
 
     public func cancel() {
@@ -88,7 +98,7 @@ public actor LiveTranscriber {
         do {
             try await engine.loadModels(from: configuration.modelDirectory)
         } catch {
-            emit(.failed(String(describing: error)))
+            fail(error)
             emit(.finished)
             return
         }
@@ -120,7 +130,7 @@ public actor LiveTranscriber {
                 await deliver(output.finalized)
                 if let partial = output.partial { emit(.segment(partial)) }
             } catch {
-                emit(.failed(String(describing: error)))
+                fail(error)
                 encounteredError = true
                 break
             }
@@ -133,7 +143,7 @@ public actor LiveTranscriber {
                 let newTimings = Array(timings.dropFirst(deliveredTimingCount))
                 await deliver(segmenter.consume(newTimings).finalized)
             } catch {
-                emit(.failed(String(describing: error)))
+                fail(error)
             }
         }
 
@@ -163,8 +173,14 @@ public actor LiveTranscriber {
         do {
             try await repository.append(rows)
         } catch {
-            emit(.failed(String(describing: error)))
+            fail(error)
         }
+    }
+
+    private func fail(_ error: any Error) {
+        let message = String(describing: error)
+        if terminalFailure == nil { terminalFailure = message }
+        emit(.failed(message))
     }
 
     private func emit(_ event: ASRTranscriptEvent) {

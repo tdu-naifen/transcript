@@ -19,6 +19,20 @@ public actor RecordingSession {
         let task: Task<(frames: Int, failure: String?), Never>
     }
 
+    public struct PendingStop: Sendable, Equatable {
+        public let meetingId: String
+
+        init(meetingId: String) {
+            self.meetingId = meetingId
+        }
+    }
+
+    private struct Pending {
+        let token: PendingStop
+        let durationMs: Int
+        let audio: SealedAudio
+    }
+
     public nonisolated let configuration: AudioCaptureConfiguration
 
     private let meetings: MeetingRepository
@@ -26,6 +40,7 @@ public actor RecordingSession {
     private let deviceId: String
     private let engine: AudioCaptureEngine
     private var active: Active?
+    private var pending: Pending?
     private var phase: Phase = .idle
 
     public init(
@@ -51,10 +66,10 @@ public actor RecordingSession {
 
     public var currentPhase: Phase { phase }
 
-    public var activeMeetingId: String? { active?.meetingId }
+    public var activeMeetingId: String? { active?.meetingId ?? pending?.token.meetingId }
 
     public func start(title: String, now: Date = Date()) async throws -> Meeting {
-        guard active == nil else { throw AudioCaptureError.alreadyRecording }
+        guard active == nil, pending == nil else { throw AudioCaptureError.alreadyRecording }
 
         let meeting = Meeting(
             title: title,
@@ -127,6 +142,13 @@ public actor RecordingSession {
     /// rethrown. Nothing is discarded (PLAN §3.2.1).
     @discardableResult
     public func stop(now: Date = Date()) async throws -> Meeting {
+        let token = try await drainCapture(now: now)
+        return try await publish(token, as: .recorded, now: now)
+    }
+
+    /// Closes capture and seals the audio file, but deliberately leaves the meeting in
+    /// `recording` until its ASR and diarization consumers have drained.
+    public func drainCapture(now: Date = Date()) async throws -> PendingStop {
         guard let active else { throw AudioCaptureError.notRecording }
         self.active = nil
         phase = .idle
@@ -148,14 +170,9 @@ public actor RecordingSession {
 
         do {
             let audio = try await active.writer.finish()
-            return try await meetings.sealRecording(
-                id: active.meetingId,
-                to: .recorded,
-                durationMs: durationMs,
-                audio: audio,
-                deviceId: deviceId,
-                now: now
-            )
+            let token = PendingStop(meetingId: active.meetingId)
+            pending = Pending(token: token, durationMs: durationMs, audio: audio)
+            return token
         } catch {
             active.writer.abandon()
             try await sealFailure(
@@ -166,6 +183,30 @@ public actor RecordingSession {
             )
             throw error
         }
+    }
+
+    /// Publishes a drained recording after downstream processing has completed. A
+    /// processing failure uses `.failed`, retaining the same sealed audio for reprocess.
+    @discardableResult
+    public func publish(
+        _ token: PendingStop,
+        as state: MeetingState,
+        now: Date = Date()
+    ) async throws -> Meeting {
+        guard let pending, pending.token == token else { throw AudioCaptureError.notRecording }
+        guard state == .recorded || state == .failed else {
+            throw IllegalMeetingStateTransition(from: .recording, to: state)
+        }
+        let meeting = try await meetings.sealRecording(
+            id: token.meetingId,
+            to: state,
+            durationMs: pending.durationMs,
+            audio: pending.audio,
+            deviceId: deviceId,
+            now: now
+        )
+        self.pending = nil
+        return meeting
     }
 
     /// Gives up on the current recording but keeps the partial result, so it can be
