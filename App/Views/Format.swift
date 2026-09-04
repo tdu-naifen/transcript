@@ -5,17 +5,12 @@ import TranscriptCore
 enum Format {
     /// mm:ss, or h:mm:ss past an hour.
     static func clock(_ seconds: TimeInterval) -> String {
-        let total = max(0, Int(seconds))
-        let hours = total / 3600
-        let minutes = (total % 3600) / 60
-        let secs = total % 60
-        return hours > 0
-            ? String(format: "%d:%02d:%02d", hours, minutes, secs)
-            : String(format: "%02d:%02d", minutes, secs)
+        DurationFormat.clock(seconds: seconds)
     }
 
+    /// Disambiguates seconds from minutes (UI.md row durations); see `DurationFormat`.
     static func duration(milliseconds: Int) -> String {
-        clock(Double(milliseconds) / 1000)
+        DurationFormat.label(milliseconds: milliseconds)
     }
 
     static func bytes(_ count: Int?) -> String {
