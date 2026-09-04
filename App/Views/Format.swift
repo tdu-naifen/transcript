@@ -53,3 +53,16 @@ extension MeetingState {
         }
     }
 }
+
+extension Color {
+    /// A stable palette for `Speaker.colorIndex` (UI.md §4.4): the same index always maps
+    /// to the same color, independent of name or display order.
+    private static let speakerPalette: [Color] = [
+        .red, .orange, .yellow, .green, .mint, .teal, .cyan, .blue, .indigo, .purple, .pink, .brown
+    ]
+
+    static func speaker(colorIndex: Int) -> Color {
+        let count = speakerPalette.count
+        return speakerPalette[((colorIndex % count) + count) % count]
+    }
+}

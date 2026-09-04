@@ -15,17 +15,44 @@ struct RootView: View {
                 description: Text(message)
             )
         case .ready(let services, let library, let recorder):
+            ReadyView(services: services, library: library, recorder: recorder)
+        }
+    }
+}
+
+/// The recordings list is the home screen (UI.md §1): two tabs plus a record button that
+/// belongs to neither and floats above the tab bar.
+private struct ReadyView: View {
+    let services: AppServices
+    let library: LibraryModel
+    let recorder: RecorderModel
+    @State private var isRecordingPresented = false
+
+    var body: some View {
+        ZStack(alignment: .bottomTrailing) {
             TabView {
-                Tab("Home", systemImage: "waveform") {
-                    RecordView(model: recorder)
-                }
-                Tab("Recordings", systemImage: "list.bullet") {
+                Tab("录音", systemImage: "list.bullet") {
                     RecordingsListView(model: library)
                 }
-                Tab("Settings", systemImage: "gearshape") {
+                Tab("设置", systemImage: "gearshape") {
                     SettingsView(services: services)
                 }
             }
+
+            Button {
+                isRecordingPresented = true
+            } label: {
+                Image(systemName: "record.circle.fill")
+                    .font(.system(size: 52))
+                    .foregroundStyle(.white, .red)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .padding(.trailing, 20)
+            .padding(.bottom, 58)
+            .accessibilityLabel("Record")
+        }
+        .fullScreenCover(isPresented: $isRecordingPresented) {
+            RecordView(model: recorder)
         }
     }
 }

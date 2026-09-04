@@ -14,15 +14,21 @@ struct RecordingsListView: View {
                         description: Text("Recordings you make appear here, newest first.")
                     )
                 } else {
-                    List(model.meetings) { meeting in
-                        NavigationLink {
-                            MeetingDetailView(
-                                meeting: meeting,
-                                audioURL: model.audioURL(for: meeting),
-                                database: model.database
-                            )
-                        } label: {
-                            MeetingRow(meeting: meeting)
+                    List {
+                        ForEach(model.meetings) { meeting in
+                            NavigationLink {
+                                MeetingDetailView(
+                                    meeting: meeting,
+                                    audioURL: model.audioURL(for: meeting),
+                                    database: model.database
+                                )
+                            } label: {
+                                MeetingRow(meeting: meeting, colorIndexes: model.speakerColorIndexes[meeting.id] ?? [])
+                            }
+                        }
+                        .onDelete { offsets in
+                            let toDelete = offsets.map { model.meetings[$0] }
+                            Task { for meeting in toDelete { await model.delete(meeting) } }
                         }
                     }
                     .listStyle(.plain)
@@ -37,6 +43,7 @@ struct RecordingsListView: View {
 
 private struct MeetingRow: View {
     let meeting: Meeting
+    let colorIndexes: [Int]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
@@ -50,8 +57,26 @@ private struct MeetingRow: View {
             }
             .font(.caption)
             .foregroundStyle(.secondary)
-            StatusChip(text: meeting.state.label, tint: meeting.state.tint)
+            if !colorIndexes.isEmpty {
+                SpeakerDotsView(colorIndexes: colorIndexes)
+            }
         }
         .padding(.vertical, 4)
+    }
+}
+
+/// Stable per-speaker color dots (UI.md §4.4): the color survives renaming and is
+/// consistent across every meeting the speaker appears in.
+private struct SpeakerDotsView: View {
+    let colorIndexes: [Int]
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(Array(colorIndexes.enumerated()), id: \.offset) { _, colorIndex in
+                Circle()
+                    .fill(Color.speaker(colorIndex: colorIndex))
+                    .frame(width: 8, height: 8)
+            }
+        }
     }
 }
