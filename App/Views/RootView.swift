@@ -20,6 +20,15 @@ struct RootView: View {
     }
 }
 
+/// Geometry of the floating record button (UI.md §1), shared with `RecordingsListView`
+/// so its list can reserve enough bottom inset to never be occluded by the button.
+enum FloatingRecordButtonMetrics {
+    static let diameter: CGFloat = 64
+    static let bottomPadding: CGFloat = 58
+    /// Clearance a scrollable list needs at its bottom edge: padding + button + margin.
+    static let listBottomClearance: CGFloat = bottomPadding + diameter + 16
+}
+
 /// The recordings list is the home screen (UI.md §1): two tabs plus a record button that
 /// belongs to neither and floats above the tab bar.
 private struct ReadyView: View {
@@ -46,9 +55,10 @@ private struct ReadyView: View {
                     .font(.system(size: 52))
                     .foregroundStyle(.white, .red)
                     .background(.ultraThinMaterial, in: Circle())
+                    .frame(width: FloatingRecordButtonMetrics.diameter, height: FloatingRecordButtonMetrics.diameter)
             }
             .padding(.trailing, 20)
-            .padding(.bottom, 58)
+            .padding(.bottom, FloatingRecordButtonMetrics.bottomPadding)
             .accessibilityLabel("Record")
         }
         .fullScreenCover(isPresented: $isRecordingPresented) {

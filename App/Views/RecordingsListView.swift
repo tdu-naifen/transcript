@@ -32,6 +32,11 @@ struct RecordingsListView: View {
                         }
                     }
                     .listStyle(.plain)
+                    .safeAreaInset(edge: .bottom) {
+                        // Clears the floating record button (RootView), which floats
+                        // outside the TabView and so contributes no safe area of its own.
+                        Color.clear.frame(height: FloatingRecordButtonMetrics.listBottomClearance)
+                    }
                 }
             }
             .navigationTitle("Recordings")
