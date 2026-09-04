@@ -14,6 +14,7 @@ final class AppServices {
     let session: RecordingSession
     let recovery: RecordingRecovery
     let modelDownloader: ASRModelDownloader
+    let meetingReprocessor: MeetingReprocessingCoordinator
 
     /// Kept alive between recordings so the ~600 MB load is paid once per launch.
     /// Its language is set per-run by ``LiveTranscriber``, not baked in at creation.
@@ -26,6 +27,9 @@ final class AppServices {
         session = RecordingSession(database: database, deviceId: deviceId, store: store)
         recovery = RecordingRecovery(database: database, deviceId: deviceId, store: store)
         modelDownloader = ASRModelDownloader()
+        meetingReprocessor = MeetingReprocessingCoordinator(
+            database: database, deviceId: deviceId, recordingSession: session
+        )
     }
 
     /// `-uiFixture 1` gets an in-memory database (UI.md §6.1) so fixture meetings never

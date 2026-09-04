@@ -7,6 +7,13 @@ import TranscriptCore
 @MainActor
 @Observable
 final class MeetingDetailModel {
+    enum ReprocessingState: Equatable {
+        case idle
+        case running(MeetingReprocessingProgress)
+        case succeeded(MeetingReprocessingSummary)
+        case failed(String)
+    }
+
     struct ParticipantSummary: Identifiable, Equatable {
         let id: String
         var resolvedName: String
@@ -23,11 +30,17 @@ final class MeetingDetailModel {
     private(set) var speakersById: [String: Speaker] = [:]
     private(set) var loadFailure: String?
     private(set) var renamingSpeakerId: String?
+    private(set) var reprocessingState: ReprocessingState = .idle
 
     private let utteranceRepository: UtteranceRepository
     private let speakerRepository: SpeakerRepository
     private let meetingRepository: MeetingRepository
+    private let meetingReprocessor: MeetingReprocessingCoordinator
+    private let audioURL: URL?
+    private let reprocessingLanguage: ASRLanguage
+    private let isRecordingActive: Bool
     private let deviceId: String
+    private var reprocessingTask: Task<Void, Never>?
 
     init(meeting: Meeting, audioURL: URL?, services: AppServices, isRecordingActive: Bool = false) {
         self.meeting = meeting
@@ -39,6 +52,10 @@ final class MeetingDetailModel {
         self.utteranceRepository = UtteranceRepository(services.database)
         self.speakerRepository = SpeakerRepository(services.database)
         self.meetingRepository = MeetingRepository(services.database)
+        self.meetingReprocessor = services.meetingReprocessor
+        self.audioURL = audioURL
+        self.reprocessingLanguage = services.asrLanguage
+        self.isRecordingActive = isRecordingActive
         self.deviceId = services.deviceId
     }
 
@@ -50,12 +67,26 @@ final class MeetingDetailModel {
         return utterances[index].id
     }
 
+    var hasLocalAudioForReprocessing: Bool {
+        guard let audioURL else { return false }
+        return FileManager.default.fileExists(atPath: audioURL.path)
+    }
+
+    var isReprocessing: Bool {
+        if case .running = reprocessingState { return true }
+        return false
+    }
+
     func load() async {
         do {
             async let fetchedUtterances = utteranceRepository.fetch(meetingId: meeting.id)
             async let fetchedSpeakers = speakerRepository.speakers(inMeeting: meeting.id)
-            let (utterances, speakers) = try await (fetchedUtterances, fetchedSpeakers)
+            async let fetchedMeeting = meetingRepository.fetch(id: meeting.id)
+            let (utterances, speakers, meeting) = try await (
+                fetchedUtterances, fetchedSpeakers, fetchedMeeting
+            )
             self.utterances = utterances
+            if let meeting { self.meeting = meeting }
             applySpeakers(speakers.map(\.speaker))
             loadFailure = nil
         } catch {
@@ -74,6 +105,73 @@ final class MeetingDetailModel {
 
     func cancelRename() {
         renamingSpeakerId = nil
+    }
+
+    func startReprocessing() {
+        guard reprocessingTask == nil, hasLocalAudioForReprocessing, let audioURL else { return }
+        guard !isRecordingActive else {
+            reprocessingState = .failed(String(describing: MeetingReprocessingConflict.recordingInProgress))
+            return
+        }
+        reprocessingState = .running(.init(stage: .loadingAudio, fractionCompleted: 0))
+        reprocessingTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let summary = try await meetingReprocessor.run(
+                    meetingId: meeting.id,
+                    audioURL: audioURL,
+                    language: reprocessingLanguage
+                ) { [weak self] progress in
+                    await MainActor.run { self?.reprocessingState = .running(progress) }
+                }
+                try Task.checkCancellation()
+                await load()
+                reprocessingState = .succeeded(summary)
+            } catch is CancellationError {
+                reprocessingState = .idle
+            } catch {
+                reprocessingState = .failed(reprocessingErrorMessage(error))
+            }
+            reprocessingTask = nil
+        }
+    }
+
+    func cancelReprocessing() {
+        guard reprocessingTask != nil else { return }
+        reprocessingTask?.cancel()
+        Task { await meetingReprocessor.cancel(meetingId: meeting.id) }
+    }
+
+    func dismissReprocessingResult() {
+        guard !isReprocessing else { return }
+        reprocessingState = .idle
+    }
+
+    private func reprocessingErrorMessage(_ error: any Error) -> String {
+        let locale = LocalizationManager.shared.resolvedLocale
+        func localized(_ key: String) -> String {
+            String(localized: String.LocalizationValue(key), table: "Reprocessing", locale: locale)
+        }
+        switch error {
+        case MeetingReprocessingConflict.recordingInProgress:
+            return localized("Stop recording before reprocessing.")
+        case MeetingReprocessingConflict.anotherMeetingInProgress,
+             MeetingReprocessingError.alreadyRunning:
+            return localized("Another meeting is already being reprocessed.")
+        case MeetingReprocessingError.missingASRModel,
+             MeetingReprocessingError.missingDiarizationModel:
+            return localized("Required models are not installed.")
+        case MeetingReprocessingError.noSpeechDetected:
+            return localized("No speech was detected. The current transcript was kept.")
+        case MeetingReprocessingError.transcriptionFailed(let detail):
+            return "\(localized("Transcription failed.")) \(detail)"
+        case MeetingReprocessingError.speakerDetectionFailed(let detail):
+            return "\(localized("Speaker detection failed.")) \(detail)"
+        case MeetingReprocessingError.speakerIdentificationFailed(let detail):
+            return "\(localized("Known-speaker identification failed.")) \(detail)"
+        default:
+            return error.localizedDescription
+        }
     }
 
     @discardableResult

@@ -13,6 +13,8 @@ struct MeetingDetailView: View {
     @State private var isEngineeringDetailPresented = false
     @State private var isInsightsPresented = false
     @State private var isMeetingRenamePresented = false
+    @State private var isReprocessingConfirmationPresented = false
+    @State private var isReprocessingPresented = false
     @State private var meetingRenameText = ""
     @State private var renameText = ""
     @Environment(\.dismiss) private var dismiss
@@ -70,6 +72,9 @@ struct MeetingDetailView: View {
                 playbackProgress: model.playback.progress
             )
         }
+        .sheet(isPresented: $isReprocessingPresented) {
+            MeetingReprocessingSheet(model: model, isPresented: $isReprocessingPresented)
+        }
         .alert(
             "重命名",
             isPresented: Binding(
@@ -97,11 +102,23 @@ struct MeetingDetailView: View {
             }
             .disabled(meetingRenameText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
+        .alert(reprocessingText("Reprocess"), isPresented: $isReprocessingConfirmationPresented) {
+            Button(reprocessingText("Cancel"), role: .cancel) {}
+            Button(reprocessingText("Reprocess")) {
+                isReprocessingPresented = true
+                model.startReprocessing()
+            }
+        } message: {
+            Text(reprocessingText("The current transcript stays unchanged unless reprocessing finishes successfully."))
+        }
         .onChange(of: model.renamingSpeakerId) { _, speakerId in
             renameText = speakerId.flatMap { model.speakersById[$0]?.resolvedName } ?? ""
         }
         .task { await model.load() }
-        .onDisappear { model.playback.stop() }
+        .onDisappear {
+            model.playback.stop()
+            model.cancelReprocessing()
+        }
     }
 
     /// Resolved eagerly (not via a `LocalizedStringKey` literal) because it mixes a
@@ -145,8 +162,30 @@ struct MeetingDetailView: View {
                     meetingRenameText = model.meeting.title
                     isMeetingRenamePresented = true
                 }
-                Button("Speaker Insights", systemImage: "chart.bar.xaxis") {
-                    isInsightsPresented = true
+                if model.hasLocalAudioForReprocessing {
+                    Button {
+                        if case .failed = model.reprocessingState {
+                            isReprocessingPresented = true
+                        } else {
+                            isReprocessingConfirmationPresented = true
+                        }
+                    } label: {
+                        Label(
+                            reprocessingText(model.isReprocessing ? "Reprocessing…" : "Reprocess"),
+                            systemImage: "arrow.trianglehead.2.clockwise.rotate.90"
+                        )
+                    }
+                    .disabled(model.isReprocessing)
+                }
+                if !model.participants.isEmpty {
+                    Button {
+                        withAnimation { isParticipantsExpanded = true }
+                    } label: {
+                        Label(reprocessingText("Name Speakers"), systemImage: "person.2")
+                    }
+                    Button("Speaker Insights", systemImage: "chart.bar.xaxis") {
+                        isInsightsPresented = true
+                    }
                 }
                 Button("Details", systemImage: "info.circle") {
                     isEngineeringDetailPresented = true
@@ -168,6 +207,14 @@ struct MeetingDetailView: View {
         let date = Format.date(model.meeting.startedAt)
         guard let locale = model.meeting.localeIdentifier, !locale.isEmpty else { return date }
         return "\(date) · \(Locale.current.localizedString(forIdentifier: locale) ?? locale)"
+    }
+
+    private func reprocessingText(_ key: String) -> String {
+        String(
+            localized: String.LocalizationValue(key),
+            table: "Reprocessing",
+            locale: LocalizationManager.shared.resolvedLocale
+        )
     }
 
     private var participantsHeader: some View {
@@ -236,6 +283,120 @@ struct MeetingDetailView: View {
                 }
             }
         }
+    }
+}
+
+private struct MeetingReprocessingSheet: View {
+    let model: MeetingDetailModel
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 22) {
+                Spacer()
+                content
+                    .frame(maxWidth: 420)
+                Spacer()
+            }
+            .padding(24)
+            .navigationTitle(text("Reprocess"))
+            .navigationBarTitleDisplayMode(.inline)
+        }
+        .interactiveDismissDisabled(model.isReprocessing)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch model.reprocessingState {
+        case .idle:
+            ProgressView()
+                .onAppear { model.startReprocessing() }
+        case .running(let progress):
+            Image(systemName: "waveform.badge.magnifyingglass")
+                .font(.system(size: 38))
+                .foregroundStyle(.red)
+            Text(stageText(progress.stage))
+                .font(.headline)
+            ProgressView(value: progress.fractionCompleted)
+                .tint(.red)
+            Text(text("The current transcript remains available until the new result is complete."))
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button(text("Cancel Reprocessing"), role: .destructive) {
+                model.cancelReprocessing()
+                isPresented = false
+            }
+            .buttonStyle(.bordered)
+        case .succeeded(let summary):
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 42))
+                .foregroundStyle(.green)
+            Text(text("Reprocessing Complete"))
+                .font(.headline)
+            resultRow(text("Utterances"), value: summary.utteranceCount)
+            resultRow(text("Detected speakers"), value: summary.speakerCount)
+            resultRow(text("Known voiceprint matches"), value: summary.identifiedSpeakerCount)
+            Text(summary.usedVoiceprintIdentification
+                 ? text("Speaker detection and known-voiceprint identification both ran.")
+                 : text("Speakers were detected, but known-voiceprint identification was unavailable."))
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Button(text("Done")) {
+                model.dismissReprocessingResult()
+                isPresented = false
+            }
+            .buttonStyle(.borderedProminent)
+        case .failed(let message):
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 38))
+                .foregroundStyle(.orange)
+            Text(text("Reprocessing Failed"))
+                .font(.headline)
+            Text(message)
+                .font(.footnote)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            Text(text("The current transcript was not changed."))
+                .font(.footnote.weight(.semibold))
+            HStack {
+                Button(text("Done")) {
+                    model.dismissReprocessingResult()
+                    isPresented = false
+                }
+                .buttonStyle(.bordered)
+                Button(text("Retry")) { model.startReprocessing() }
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+    }
+
+    private func resultRow(_ title: String, value: Int) -> some View {
+        HStack {
+            Text(title)
+            Spacer()
+            Text("\(value)").monospacedDigit()
+        }
+        .font(.subheadline)
+    }
+
+    private func stageText(_ stage: MeetingReprocessingStage) -> String {
+        switch stage {
+        case .loadingAudio: text("Loading audio…")
+        case .transcribing: text("Transcribing with Nemotron…")
+        case .detectingSpeakers: text("Detecting speakers with Sortformer…")
+        case .identifyingSpeakers: text("Checking known voiceprints…")
+        case .saving: text("Saving new transcript…")
+        }
+    }
+
+    private func text(_ key: String) -> String {
+        String(
+            localized: String.LocalizationValue(key),
+            table: "Reprocessing",
+            locale: LocalizationManager.shared.resolvedLocale
+        )
     }
 }
 
