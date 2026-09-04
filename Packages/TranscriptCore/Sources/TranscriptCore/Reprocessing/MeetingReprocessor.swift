@@ -284,7 +284,6 @@ public actor MeetingReprocessor {
 
         do {
             let embedder = CampPlusEmbedder(models: try CampPlusModels.load(from: directory))
-            let speakers = SpeakerRepository(database)
             var drafts: [ReprocessedSpeakerDraft] = []
             for (offset, index) in indexes.enumerated() {
                 try Task.checkCancellation()
@@ -304,16 +303,11 @@ public actor MeetingReprocessor {
                     continue
                 }
                 let embedding = try await embedder.embed(audio: slotSamples)
-                let voiceprintMatch = confirmedSpeakerId == nil
-                    ? try await speakers.findNearestSpeaker(
-                        embedding: embedding, threshold: voiceprintMatchThreshold
-                    )
-                    : nil
                 drafts.append(ReprocessedSpeakerDraft(
                     speakerIndex: index,
-                    existingSpeakerId: confirmedSpeakerId ?? voiceprintMatch?.speakerId,
+                    existingSpeakerId: confirmedSpeakerId,
                     embedding: embedding,
-                    wasVoiceprintMatch: voiceprintMatch != nil
+                    wasVoiceprintMatch: false
                 ))
                 let fraction = Double(offset + 1) / Double(max(1, indexes.count))
                 await progress(.init(
@@ -342,7 +336,7 @@ public actor MeetingReprocessor {
         }
     }
 
-    private nonisolated static func samples(
+    nonisolated static func samples(
         forSpeakerIndex index: Int,
         from samples: [Float],
         segments: [DiarizerSegment]
@@ -352,7 +346,25 @@ public actor MeetingReprocessor {
         for segment in segments where segment.speakerIndex == index {
             let lower = min(samples.count, max(0, Int(Double(segment.startTime) * sampleRate)))
             let upper = min(samples.count, max(lower, Int(Double(segment.endTime) * sampleRate)))
-            result.append(contentsOf: samples[lower..<upper])
+            var cursor = lower
+            let overlaps = segments
+                .filter { $0.speakerIndex != index }
+                .map { other in
+                    let overlapLower = min(samples.count, max(lower, Int(Double(other.startTime) * sampleRate)))
+                    let overlapUpper = min(samples.count, min(upper, Int(Double(other.endTime) * sampleRate)))
+                    return overlapLower..<max(overlapLower, overlapUpper)
+                }
+                .filter { !$0.isEmpty }
+                .sorted { $0.lowerBound < $1.lowerBound }
+            for overlap in overlaps {
+                if cursor < overlap.lowerBound {
+                    result.append(contentsOf: samples[cursor..<overlap.lowerBound])
+                }
+                cursor = max(cursor, overlap.upperBound)
+            }
+            if cursor < upper {
+                result.append(contentsOf: samples[cursor..<upper])
+            }
         }
         return result
     }

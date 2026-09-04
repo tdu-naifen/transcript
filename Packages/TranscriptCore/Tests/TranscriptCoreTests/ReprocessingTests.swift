@@ -1,8 +1,16 @@
 import Foundation
+import FluidAudio
 import Testing
 @testable import TranscriptCore
 
 @Suite struct ReprocessingTests {
+    private func segment(_ speakerIndex: Int, _ startFrame: Int, _ endFrame: Int) -> DiarizerSegment {
+        DiarizerSegment(
+            speakerIndex: speakerIndex, startFrame: startFrame, endFrame: endFrame,
+            frameDurationSeconds: 1.0
+        )
+    }
+
     @Test func zeroTranscriptCanBeAtomicallyReprocessedWithoutChangingRecordingIdentity() async throws {
         let database = try AppDatabase.inMemory()
         let meetings = MeetingRepository(database)
@@ -121,5 +129,19 @@ import Testing
         #expect(restored.speakerId == oldSpeaker.id)
         #expect(try await speakers.speakers(inMeeting: meeting.id).map(\.speaker.id) == [oldSpeaker.id])
         #expect(try await speakers.fetch(id: oldSpeaker.id)?.displayName == "Confirmed name")
+    }
+
+    @Test func voiceprintSamplesExcludeOverlappingSpeech() {
+        let samples = (0..<(4 * 16_000)).map(Float.init)
+        let clean = MeetingReprocessor.samples(
+            forSpeakerIndex: 0,
+            from: samples,
+            segments: [segment(0, 0, 4), segment(1, 1, 3)]
+        )
+
+        #expect(clean.count == 2 * 16_000)
+        #expect(clean.first == 0)
+        #expect(clean[16_000] == Float(3 * 16_000))
+        #expect(clean.last == Float(4 * 16_000 - 1))
     }
 }
