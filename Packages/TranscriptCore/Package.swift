@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "TranscriptCore",
+    defaultLocalization: "en",
     platforms: [
         .iOS(.v26),
         .macOS(.v26)
@@ -22,6 +23,9 @@ let package = Package(
             dependencies: [
                 .product(name: "GRDB", package: "GRDB.swift"),
                 .product(name: "FluidAudio", package: "FluidAudio")
+            ],
+            resources: [
+                .process("Resources")
             ],
             swiftSettings: [
                 .swiftLanguageMode(.v6),

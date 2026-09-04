@@ -1,0 +1,2 @@
+/* Sub-minute duration label, e.g. "5s" (DurationFormat.label). */
+"duration_seconds" = "%llds";

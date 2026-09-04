@@ -1,0 +1,2 @@
+/* 五秒以内的时长标签，如 "5秒"（DurationFormat.label）。 */
+"duration_seconds" = "%lld秒";
