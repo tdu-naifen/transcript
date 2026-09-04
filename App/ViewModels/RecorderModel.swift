@@ -13,12 +13,39 @@ final class RecorderModel {
         case stopping
     }
 
+    /// Interruption / route notices (UI.md), kept as data rather than pre-formatted
+    /// text so the displayed string re-localizes if the app language changes while a
+    /// notice is showing.
+    enum Notice: Equatable {
+        case recovered(count: Int)
+        case pausedByOtherApp
+        case interrupted
+        case inputSwitched(name: String)
+
+        @MainActor
+        var text: String {
+            let locale = LocalizationManager.shared.resolvedLocale
+            switch self {
+            case .recovered(let count):
+                return count == 1
+                    ? String(localized: "Recovered 1 interrupted recording.", locale: locale)
+                    : String(localized: "Recovered \(count) interrupted recordings.", locale: locale)
+            case .pausedByOtherApp:
+                return String(localized: "Paused by another app. Your recording is safe.", locale: locale)
+            case .interrupted:
+                return String(localized: "Interrupted. Tap resume to continue.", locale: locale)
+            case .inputSwitched(let name):
+                return String(localized: "Input switched to \(name).", locale: locale)
+            }
+        }
+    }
+
     private(set) var phase: Phase = .idle
     private(set) var level: AudioLevel = .silence
     private(set) var elapsed: TimeInterval = 0
     private(set) var permission: MicrophonePermission.Status = .undetermined
-    /// Interruption / route messages, so the user knows why the meter went quiet.
-    private(set) var notice: String?
+    private(set) var noticeKind: Notice?
+    var notice: String? { noticeKind?.text }
     var errorMessage: String?
 
     private let services: AppServices
@@ -27,6 +54,8 @@ final class RecorderModel {
     private var levelTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
     private var tickTask: Task<Void, Never>?
+    private let activityController = RecordingActivityController()
+    private var lastActivitySecond = -1
     private var startedAt: Date?
     private var accumulated: TimeInterval = 0
     private var didSalvage = false
@@ -42,12 +71,13 @@ final class RecorderModel {
     var isActive: Bool { phase == .recording || phase == .paused }
 
     var stateLabel: String {
+        let locale = LocalizationManager.shared.resolvedLocale
         switch phase {
-        case .idle: "Ready"
-        case .starting: "Starting"
-        case .recording: "Recording"
-        case .paused: "Paused"
-        case .stopping: "Sealing"
+        case .idle: return String(localized: "Ready", locale: locale)
+        case .starting: return String(localized: "Starting", locale: locale)
+        case .recording: return String(localized: "Recording", locale: locale)
+        case .paused: return String(localized: "Paused", locale: locale)
+        case .stopping: return String(localized: "Sealing", locale: locale)
         }
     }
 
@@ -59,7 +89,7 @@ final class RecorderModel {
         didSalvage = true
         let salvaged = await services.salvageCrashedRecordings()
         if salvaged > 0 {
-            notice = "Recovered \(salvaged) interrupted recording\(salvaged == 1 ? "" : "s")."
+            noticeKind = .recovered(count: salvaged)
         }
         await library.reload()
     }
@@ -94,7 +124,7 @@ final class RecorderModel {
     }
 
     func dismissNotice() {
-        notice = nil
+        noticeKind = nil
     }
 
     // MARK: - Private
@@ -108,13 +138,20 @@ final class RecorderModel {
             // Subscribed before capture starts, so no chunk is lost while the model
             // loads; the broadcast stream buffers until inference catches up.
             let chunks = services.session.chunks()
+            let diarizationChunks = services.session.chunks()
             let meeting = try await services.session.start(title: Self.defaultTitle())
-            transcription.start(meetingId: meeting.id, chunks: chunks)
+            transcription.start(
+                meetingId: meeting.id,
+                chunks: chunks,
+                diarizationChunks: diarizationChunks
+            )
             accumulated = 0
             elapsed = 0
+            lastActivitySecond = -1
             startedAt = Date()
             phase = .recording
             startTicking()
+            await activityController.start(meetingId: meeting.id)
         } catch {
             phase = .idle
             errorMessage = String(describing: error)
@@ -131,6 +168,7 @@ final class RecorderModel {
             errorMessage = String(describing: error)
         }
         transcription.stop()
+        await activityController.end()
         startedAt = nil
         accumulated = 0
         elapsed = 0
@@ -149,6 +187,19 @@ final class RecorderModel {
                     elapsed = accumulated + Date().timeIntervalSince(startedAt)
                 } else {
                     elapsed = accumulated
+                }
+                if RecordingActivityCommunication.consumeStopRequest(), isActive {
+                    await stop()
+                    return
+                }
+                let activitySecond = Int(elapsed)
+                if activitySecond != lastActivitySecond {
+                    lastActivitySecond = activitySecond
+                    await activityController.update(
+                        elapsed: elapsed,
+                        recentTranscriptLines: transcription.lines.prefix(3).map(\.text),
+                        isPaused: phase == .paused
+                    )
                 }
             }
         }
@@ -182,18 +233,18 @@ final class RecorderModel {
             level = .silence
             accumulated += Date().timeIntervalSince(startedAt ?? Date())
             startedAt = nil
-            notice = "Paused by another app. Your recording is safe."
+            noticeKind = .pausedByOtherApp
         case .interruptionEnded(let resumed):
             if resumed {
                 startedAt = Date()
                 phase = .recording
-                notice = nil
+                noticeKind = nil
             } else {
-                notice = "Interrupted. Tap resume to continue."
+                noticeKind = .interrupted
             }
         case .routeChanged(_, let inputName):
             guard isActive else { return }
-            notice = inputName.map { "Input switched to \($0)." }
+            noticeKind = inputName.map { .inputSwitched(name: $0) }
         case .failed(let message):
             errorMessage = message
         case .started, .paused, .resumed, .stopped:

@@ -28,25 +28,69 @@ targets:
         product: TranscriptCore
       - package: FluidAudio
         product: FluidAudio
+      - target: TranscriptRecordingWidget
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.transcript.Transcript
         PRODUCT_NAME: Transcript
         INFOPLIST_FILE: App/Info.plist
         CODE_SIGN_ENTITLEMENTS: App/Transcript.entitlements
-        CODE_SIGN_IDENTITY: ""
-        CODE_SIGN_STYLE: Manual
+        # Automatic + a team, so device builds get a real signature. The empty
+        # manual identity that was here only ever worked on the Simulator.
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: YUU54K6BSS
         GENERATE_INFOPLIST_FILE: NO
         TARGETED_DEVICE_FAMILY: "1"
         ENABLE_USER_SCRIPT_SANDBOXING: YES
         SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY: YES
+
+  TranscriptRecordingWidget:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: WidgetExtension
+      - path: App/Support/RecordingActivityAttributes.swift
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.transcript.Transcript.RecordingWidget
+        PRODUCT_NAME: TranscriptRecordingWidget
+        INFOPLIST_FILE: WidgetExtension/Info.plist
+        CODE_SIGN_ENTITLEMENTS: WidgetExtension/TranscriptRecordingWidget.entitlements
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: YUU54K6BSS
+        GENERATE_INFOPLIST_FILE: NO
+        TARGETED_DEVICE_FAMILY: "1"
+        APPLICATION_EXTENSION_API_ONLY: YES
+        SKIP_INSTALL: YES
+        SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY: YES
+
+  TranscriptUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    sources:
+      - path: TranscriptUITests
+    dependencies:
+      - target: Transcript
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.transcript.TranscriptUITests
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: YUU54K6BSS
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1"
 
 schemes:
   Transcript:
     build:
       targets:
         Transcript: all
+        TranscriptRecordingWidget: all
+        TranscriptUITests: [test]
     run:
       config: Debug
+    test:
+      config: Debug
+      targets:
+        - TranscriptUITests
     archive:
       config: Release
