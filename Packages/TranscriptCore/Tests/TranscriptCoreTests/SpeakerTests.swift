@@ -273,19 +273,29 @@ import Testing
     }
 
     @Test func avoidsUsedNames() {
-        #expect(AnonymousNameGenerator.nextName(usedNames: []) == "Hippo")
-        #expect(AnonymousNameGenerator.nextName(usedNames: ["Hippo"]) == "Otter")
-        #expect(AnonymousNameGenerator.nextName(usedNames: ["Hippo", "Otter"]) == "Badger")
+        #expect(AnonymousNameGenerator.pool.contains(AnonymousNameGenerator.nextName(usedNames: [])))
+        let used = ["Hippo", "Otter"]
+        let next = AnonymousNameGenerator.nextName(usedNames: used)
+        #expect(!used.contains(next))
+        #expect(AnonymousNameGenerator.pool.contains(next))
     }
 
-    @Test func skipsHolesInTheMiddle() {
-        #expect(AnonymousNameGenerator.nextName(usedNames: ["Otter"]) == "Hippo")
+    /// PLAN §4.1: assignment is random, not "first free slot", so repeated draws against
+    /// the same used set should not always land on the same remaining name.
+    @Test func choosesFromAnyUnusedSlotNotJustTheFirst() {
+        let used = ["Otter"]
+        let seen = Set((0..<40).map { _ in AnonymousNameGenerator.nextName(usedNames: used) })
+        #expect(!seen.contains("Otter"))
+        #expect(seen.count > 1)
     }
 
     @Test func numericSuffixOnlyAfterWholePoolIsExhausted() {
         let almost = AnonymousNameGenerator.pool.dropLast()
         #expect(AnonymousNameGenerator.nextName(usedNames: almost) == AnonymousNameGenerator.pool.last)
-        #expect(AnonymousNameGenerator.nextName(usedNames: AnonymousNameGenerator.pool) == "Hippo 2")
+
+        let afterFullPool = AnonymousNameGenerator.nextName(usedNames: AnonymousNameGenerator.pool)
+        #expect(afterFullPool.hasSuffix(" 2"))
+        #expect(AnonymousNameGenerator.pool.contains(String(afterFullPool.dropLast(2))))
     }
 
     @Test func repositoryNeverCollides() async throws {
@@ -296,8 +306,7 @@ import Testing
             names.append(try await repo.createAnonymousSpeaker(deviceId: testiPhoneId).anonymousName)
         }
         #expect(Set(names).count == names.count)
-        #expect(names.first == "Hippo")
-        #expect(names.last == "Badger 2")
+        for name in names.suffix(3) { #expect(name.hasSuffix(" 2")) }
     }
 }
 

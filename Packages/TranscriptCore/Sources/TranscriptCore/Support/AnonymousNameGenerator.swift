@@ -24,16 +24,17 @@ public enum AnonymousNameGenerator {
         "Wombat", "Woodpecker", "Wren"
     ]
 
-    /// First unused pool name; only once the whole pool is exhausted does it fall
-    /// back to a numeric suffix ("Hippo 2").
+    /// A random unused pool name (PLAN §4.1: sequential assignment made the first
+    /// meeting always Hippo/Otter/Badger); only once the whole pool is exhausted does
+    /// it fall back to a numeric suffix ("Hippo 2").
     public static func nextName(usedNames: some Sequence<String>) -> String {
         let used = Set(usedNames)
         var round = 1
         while true {
-            for name in pool {
-                let candidate = round == 1 ? name : "\(name) \(round)"
-                if !used.contains(candidate) { return candidate }
-            }
+            let candidates = pool
+                .map { round == 1 ? $0 : "\($0) \(round)" }
+                .filter { !used.contains($0) }
+            if let candidate = candidates.randomElement() { return candidate }
             round += 1
         }
     }
