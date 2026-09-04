@@ -12,6 +12,7 @@ let package = Package(
         .library(name: "TranscriptCore", targets: ["TranscriptCore"]),
         .executable(name: "asr-bench", targets: ["ASRBenchmarkTool"]),
         .executable(name: "diarize-bench", targets: ["DiarizeBenchTool"]),
+        .executable(name: "reprocess-check", targets: ["ReprocessCheckTool"]),
         .executable(name: "model-install-smoke", targets: ["ModelInstallSmokeTool"])
     ],
     dependencies: [
@@ -49,6 +50,15 @@ let package = Package(
                 "TranscriptCore",
                 .product(name: "FluidAudio", package: "FluidAudio")
             ],
+            swiftSettings: [
+                .swiftLanguageMode(.v6),
+                .enableUpcomingFeature("ExistentialAny"),
+                .unsafeFlags(["-strict-concurrency=complete"])
+            ]
+        ),
+        .executableTarget(
+            name: "ReprocessCheckTool",
+            dependencies: ["TranscriptCore"],
             swiftSettings: [
                 .swiftLanguageMode(.v6),
                 .enableUpcomingFeature("ExistentialAny"),
