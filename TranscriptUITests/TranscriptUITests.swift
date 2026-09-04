@@ -65,4 +65,63 @@ final class TranscriptUITests: XCTestCase {
         settingsTab.tap()
         XCTAssertTrue(app.descendants(matching: .any)["appLanguagePicker"].waitForExistence(timeout: 3))
     }
+
+    func testAcousticAcceptance() {
+        let app = XCUIApplication()
+        app.launch()
+
+        let recordButton = app.buttons["globalRecordButton"]
+        XCTAssertTrue(recordButton.waitForExistence(timeout: 120))
+        recordButton.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["collapseRecordingButton"].waitForExistence(timeout: 10))
+        attachScreenshot(of: app, name: "acoustic-recording-started")
+
+        NSLog("ACOUSTIC_PLAYBACK_READY")
+
+        app.buttons["collapseRecordingButton"].tap()
+        XCTAssertTrue(app.buttons["recordingMiniBar"].waitForExistence(timeout: 3))
+
+        let settingsTab = app.tabBars.buttons["Settings"].exists
+            ? app.tabBars.buttons["Settings"]
+            : app.tabBars.buttons["设置"]
+        settingsTab.tap()
+        XCTAssertTrue(app.buttons["recordingMiniBar"].waitForExistence(timeout: 3))
+        attachScreenshot(of: app, name: "acoustic-recording-mini-bar")
+
+        app.buttons["recordingMiniBar"].tap()
+        XCTAssertTrue(app.descendants(matching: .any)["collapseRecordingButton"].waitForExistence(timeout: 3))
+        app.buttons["collapseRecordingButton"].tap()
+
+        let playbackFinished = expectation(description: "Host acoustic playback completed")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 56) {
+            playbackFinished.fulfill()
+        }
+        wait(for: [playbackFinished], timeout: 58)
+
+        app.buttons["miniStopButton"].tap()
+        let nameField = app.textFields["meetingNameField"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 120))
+        XCTAssertFalse((nameField.value as? String ?? "").isEmpty)
+        replaceText(in: nameField, with: "Acoustic Acceptance 2026-09-04")
+        attachScreenshot(of: app, name: "acoustic-naming-popup")
+        app.buttons["meetingNameSaveButton"].tap()
+
+        XCTAssertTrue(recordButton.waitForExistence(timeout: 120))
+        XCTAssertTrue(app.staticTexts["Acoustic Acceptance 2026-09-04"].waitForExistence(timeout: 20))
+        attachScreenshot(of: app, name: "acoustic-saved-recording")
+    }
+
+    private func replaceText(in field: XCUIElement, with text: String) {
+        field.tap()
+        let currentValue = field.value as? String ?? ""
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentValue.count))
+        field.typeText(text)
+    }
+
+    private func attachScreenshot(of app: XCUIApplication, name: String) {
+        let attachment = XCTAttachment(screenshot: app.screenshot())
+        attachment.name = name
+        attachment.lifetime = .keepAlways
+        add(attachment)
+    }
 }
