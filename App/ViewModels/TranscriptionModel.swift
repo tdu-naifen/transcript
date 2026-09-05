@@ -14,7 +14,6 @@ final class TranscriptionModel {
         case requiredModelsMissing
         case processingNotRunning
         case noTranscriptProduced
-        case incompleteSpeakerAssignments(count: Int)
     }
 
     enum Status: Equatable {
@@ -41,9 +40,26 @@ final class TranscriptionModel {
     private var currentMeetingId: String?
     private var diarizationTimeline = DiarizationTimelineAccumulator()
     private var processingFailure: String?
+    private var injectedFinishOperations: (
+        asr: @Sendable () async throws -> Void,
+        diarization: @Sendable () async throws -> Void
+    )?
 
     init(services: AppServices) {
         self.services = services
+        self.injectedFinishOperations = nil
+        status = services.areRecordingModelsInstalled ? .idle : .modelMissing
+    }
+
+    init(
+        services: AppServices,
+        meetingId: String,
+        asrFinish: @escaping @Sendable () async throws -> Void,
+        diarizationFinish: @escaping @Sendable () async throws -> Void
+    ) {
+        self.services = services
+        self.injectedFinishOperations = (asr: asrFinish, diarization: diarizationFinish)
+        self.currentMeetingId = meetingId
         status = services.areRecordingModelsInstalled ? .idle : .modelMissing
     }
 
@@ -98,12 +114,25 @@ final class TranscriptionModel {
     }
 
     func finish() async throws {
-        guard let transcriber, let diarizer else { throw RecordingError.processingNotRunning }
         var failure: (any Error)?
-        do {
-            try await LiveRecordingDrain.wait(
+        let finishOperations: (
+            asr: @Sendable () async throws -> Void,
+            diarization: @Sendable () async throws -> Void
+        )
+        if let transcriber, let diarizer {
+            finishOperations = (
                 asr: { try await transcriber.finishAndWait() },
                 diarization: { try await diarizer.finishAndWait() }
+            )
+        } else if let injectedFinishOperations {
+            finishOperations = injectedFinishOperations
+        } else {
+            throw RecordingError.processingNotRunning
+        }
+        do {
+            try await LiveRecordingDrain.wait(
+                asr: finishOperations.asr,
+                diarization: finishOperations.diarization
             )
         } catch {
             failure = error
@@ -115,7 +144,7 @@ final class TranscriptionModel {
         }
         do {
             try await reconcileSpeakerAssignments()
-            try await requireCompleteSpeakerAssignments()
+            try await requireTranscriptProduced()
         } catch {
             if failure == nil { failure = error }
             errorMessageForDiarization(String(describing: error))
@@ -124,6 +153,7 @@ final class TranscriptionModel {
         diarizationTask = nil
         self.transcriber = nil
         self.diarizer = nil
+        injectedFinishOperations = nil
         currentMeetingId = nil
         if let failure {
             status = .failed(String(describing: failure))
@@ -179,6 +209,12 @@ final class TranscriptionModel {
         case .finished:
             if status == .running || status == .preparing { status = .idle }
         }
+    }
+
+    private func requireTranscriptProduced() async throws {
+        guard let meetingId = currentMeetingId else { return }
+        let utterances = try await UtteranceRepository(services.database).fetch(meetingId: meetingId)
+        guard !utterances.isEmpty else { throw RecordingError.noTranscriptProduced }
     }
 
     private func startDiarization(
@@ -255,14 +291,6 @@ final class TranscriptionModel {
                 deviceId: services.deviceId
             )
         }
-    }
-
-    private func requireCompleteSpeakerAssignments() async throws {
-        guard let meetingId = currentMeetingId else { return }
-        let utterances = try await UtteranceRepository(services.database).fetch(meetingId: meetingId)
-        guard !utterances.isEmpty else { throw RecordingError.noTranscriptProduced }
-        let count = SpeakerOverlapAssigner.unassignedCount(in: utterances)
-        guard count == 0 else { throw RecordingError.incompleteSpeakerAssignments(count: count) }
     }
 
     private func errorMessageForDiarization(_ message: String) {

@@ -78,13 +78,35 @@ targets:
         DEVELOPMENT_TEAM: YUU54K6BSS
         GENERATE_INFOPLIST_FILE: YES
         TARGETED_DEVICE_FAMILY: "1"
+  TranscriptTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: AppTests
+    dependencies:
+      - target: Transcript
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.transcript.TranscriptTests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1"
 
 schemes:
+  TranscriptTests:
+    build:
+      targets:
+        Transcript: all
+        TranscriptTests: [test]
+    test:
+      config: Debug
+      targets:
+        - TranscriptTests
   Transcript:
     build:
       targets:
         Transcript: all
         TranscriptRecordingWidget: all
+        TranscriptTests: [test]
         TranscriptUITests: [test]
     run:
       config: Debug
@@ -92,5 +114,6 @@ schemes:
       config: Debug
       targets:
         - TranscriptUITests
+        - TranscriptTests
     archive:
       config: Release
