@@ -5,11 +5,14 @@ struct RecordView: View {
     @Bindable var model: RecorderModel
     let onCollapse: () -> Void
     let onStop: () -> Void
+    var onStart: (() -> Void)? = nil
+    var isStartingRecording = false
+    @State private var isStarting = false
 
     var body: some View {
         ZStack {
             LinearGradient(
-                colors: [Color(red: 1, green: 0.72, blue: 0.7), Color(red: 0.97, green: 0.97, blue: 0.965)],
+                colors: [FloatingRecordButton.accent.opacity(0.12), Color(uiColor: .systemGroupedBackground)],
                 startPoint: .top,
                 endPoint: .bottom
             )
@@ -22,8 +25,8 @@ struct RecordView: View {
                             Image(systemName: "chevron.down")
                                 .font(.subheadline.weight(.bold))
                                 .foregroundStyle(.primary)
-                                .frame(width: 38, height: 38)
-                                .background(Color.black.opacity(0.045), in: Circle())
+                                .frame(width: 44, height: 44)
+                                .background(Color.secondary.opacity(0.1), in: Circle())
                         }
                         .accessibilityLabel("Collapse recording")
                         .accessibilityIdentifier("collapseRecordingButton")
@@ -31,7 +34,7 @@ struct RecordView: View {
                     }
 
                     Text(Format.clock(model.elapsed))
-                        .font(.system(size: 50, weight: .bold, design: .rounded))
+                        .font(.largeTitle.weight(.bold).monospacedDigit())
                         .contentTransition(.numericText())
                         .monospacedDigit()
                         .padding(.bottom, 8)
@@ -41,7 +44,7 @@ struct RecordView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
-                .background(.white.opacity(0.96), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
                 .shadow(color: .black.opacity(0.06), radius: 18, y: 8)
 
                 Group {

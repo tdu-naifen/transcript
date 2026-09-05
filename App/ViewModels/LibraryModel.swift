@@ -6,15 +6,31 @@ import TranscriptCore
 @Observable
 final class LibraryModel {
     private(set) var meetings: [Meeting] = []
-    /// `Speaker.colorIndex` per meeting, in `displayIndex` order, for the recordings-list
-    /// color dots (UI.md §4.4 — color is stable across meetings, name is not).
-    private(set) var speakerColorIndexes: [String: [Int]] = [:]
+    /// Persisted speaker identity supplies both the current name and stable color.
+    private(set) var participants: [String: [Speaker]] = [:]
     private(set) var isLoading = false
+    private(set) var hasLoaded = false
+    private(set) var deletingIDs: Set<String> = []
     private(set) var errorMessage: String?
+    private(set) var errorTitleKey = "library.load_failed"
+
+    var speakerColorIndexes: [String: [Int]] {
+        participants.mapValues { $0.map(\.colorIndex) }
+    }
+
+    var availableSpeakers: [Speaker] {
+        var byID: [String: Speaker] = [:]
+        for speaker in participants.values.joined() { byID[speaker.id] = speaker }
+        return byID.values.sorted {
+            let order = $0.resolvedName.localizedStandardCompare($1.resolvedName)
+            return order == .orderedSame ? $0.id < $1.id : order == .orderedAscending
+        }
+    }
 
     private let repository: MeetingRepository
     private let speakerRepository: SpeakerRepository
     private let store: AudioFileStore
+    private var reloadID = UUID()
     let database: AppDatabase
 
     init(services: AppServices) {
@@ -25,20 +41,32 @@ final class LibraryModel {
     }
 
     func reload() async {
+        let requestID = UUID()
+        reloadID = requestID
         isLoading = true
-        defer { isLoading = false }
+        defer { if reloadID == requestID { isLoading = false } }
         do {
             let fetched = try await repository.fetchAll()
-            var colors: [String: [Int]] = [:]
+            var speakersByMeeting: [String: [Speaker]] = [:]
             for meeting in fetched {
+                try Task.checkCancellation()
                 let speakers = try await speakerRepository.speakers(inMeeting: meeting.id)
-                colors[meeting.id] = speakers.map(\.speaker.colorIndex)
+                speakersByMeeting[meeting.id] = speakers.map(\.speaker)
             }
-            meetings = fetched
-            speakerColorIndexes = colors
+            try Task.checkCancellation()
+            guard reloadID == requestID else { return }
+            meetings = fetched.sorted {
+                $0.startedAt == $1.startedAt ? $0.id > $1.id : $0.startedAt > $1.startedAt
+            }
+            participants = speakersByMeeting
+            hasLoaded = true
             errorMessage = nil
+        } catch is CancellationError {
+            // Leaving a screen is not a failed database load.
         } catch {
-            errorMessage = String(describing: error)
+            guard reloadID == requestID else { return }
+            errorTitleKey = "library.load_failed"
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -47,18 +75,29 @@ final class LibraryModel {
         return try? store.url(forFileName: fileName)
     }
 
-    /// Removes both the DB row and the audio file on disk (PLAN §9.4.1: previously only
-    /// the row was ever removed, leaking the file).
+    /// Existing local deletion only. Never emits a cross-device delete or purges
+    /// audio independently of the meeting. Keep audio intact if the DB delete fails.
     func delete(_ meeting: Meeting) async {
-        if let fileName = meeting.audioFileName {
-            try? store.remove(fileName: fileName)
-        }
+        guard deletingIDs.insert(meeting.id).inserted else { return }
+        defer { deletingIDs.remove(meeting.id) }
         do {
             try await repository.delete(id: meeting.id)
-            meetings.removeAll { $0.id == meeting.id }
-            speakerColorIndexes.removeValue(forKey: meeting.id)
         } catch {
-            errorMessage = String(describing: error)
+            errorTitleKey = "library.delete_failed"
+            errorMessage = error.localizedDescription
+            return
+        }
+        // An older snapshot must not resurrect the deleted row in either tab.
+        reloadID = UUID()
+        isLoading = false
+        meetings.removeAll { $0.id == meeting.id }
+        participants.removeValue(forKey: meeting.id)
+        errorMessage = nil
+        do {
+            if let fileName = meeting.audioFileName { try store.remove(fileName: fileName) }
+        } catch {
+            errorTitleKey = "library.audio_cleanup_failed"
+            errorMessage = error.localizedDescription
         }
     }
 }

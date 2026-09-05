@@ -1,78 +1,77 @@
 import SwiftUI
 
-/// Player pinned at the bottom of `MeetingDetailView` (UI.md §3a). Degrades to a
-/// disabled scaffold with an explanation instead of a broken player when
-/// `playback.availability` is `.unavailable`.
+/// Playback controls inside the detail screen's bottom safe-area inset.
 struct AudioPlayerBar: View {
     let playback: AudioPlaybackModel
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    private var isReady: Bool { playback.availability == .ready }
+    private let accent = Color(red: 6 / 255, green: 34 / 255, blue: 158 / 255)
 
     var body: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 8) {
             if case .unavailable(let reason) = playback.availability {
                 Label(reason.text, systemImage: "waveform.slash")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-            }
+                    .accessibilityIdentifier("audioUnavailableReason")
+            } else {
+                AudioWaveformScrubber(playback: playback, accent: accent)
+                    .frame(height: dynamicTypeSize.isAccessibilitySize ? 24 : 40)
 
-            if isReady {
-                AudioWaveformScrubber(playback: playback)
-                    .frame(height: 54)
-            }
+                HStack {
+                    Text(Format.clock(Double(playback.currentTimeMs) / 1_000))
+                    Spacer()
+                    Text(Format.clock(Double(playback.durationMs) / 1_000))
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
 
-            HStack {
-                Text(Format.clock(Double(playback.currentTimeMs) / 1_000))
-                Spacer()
-                Text(Format.clock(Double(playback.durationMs) / 1_000))
+                HStack(spacing: 12) {
+                    Button { playback.skip(-5) } label: {
+                        Image(systemName: "gobackward.5")
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("Skip back 5 seconds")
+                    Spacer(minLength: 0)
+                    Button { playback.togglePlayPause() } label: {
+                        Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
+                            .font(.title3.weight(.bold))
+                            .foregroundStyle(.white)
+                            .frame(minWidth: 48, minHeight: 48)
+                            .background(accent, in: Circle())
+                    }
+                    .accessibilityLabel(playback.isPlaying ? Text("Pause audio") : Text("Play audio"))
+                    .accessibilityIdentifier("audioPlayPauseButton")
+                    Spacer(minLength: 0)
+                    Button { playback.skip(5) } label: {
+                        Image(systemName: "goforward.5")
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("Skip forward 5 seconds")
+                    Spacer(minLength: 0)
+                    Button { playback.cycleSpeed() } label: {
+                        Text(playback.speed.label)
+                            .font(.footnote.weight(.semibold))
+                            .frame(minWidth: 44, minHeight: 44)
+                    }
+                    .accessibilityLabel("Playback speed")
+                    .accessibilityValue(playback.speed.label)
+                    .accessibilityIdentifier("audioSpeedButton")
+                }
+                .font(.title3)
+                .foregroundStyle(.primary)
+                .buttonStyle(.plain)
             }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
-
-            HStack {
-                Button { playback.skip(-5) } label: {
-                    Image(systemName: "gobackward.5")
-                        .frame(width: 42, height: 42)
-                        .background(.white.opacity(0.72), in: Circle())
-                }
-                Spacer()
-                Button { playback.togglePlayPause() } label: {
-                    Image(systemName: playback.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title3.weight(.bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 52, height: 52)
-                        .background(Color(red: 0.94, green: 0.29, blue: 0.25), in: Circle())
-                }
-                .accessibilityIdentifier("audioPlayPauseButton")
-                Spacer()
-                Button { playback.skip(5) } label: {
-                    Image(systemName: "goforward.5")
-                        .frame(width: 42, height: 42)
-                        .background(.white.opacity(0.72), in: Circle())
-                }
-                Spacer()
-                Button { playback.cycleSpeed() } label: {
-                    Text(playback.speed.label)
-                        .font(.footnote.weight(.semibold))
-                        .frame(width: 42, height: 42)
-                        .background(.white.opacity(0.72), in: Circle())
-                }
-                .accessibilityIdentifier("audioSpeedButton")
-            }
-            .font(.title3)
-            .disabled(!isReady)
         }
-        .padding()
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
-        .shadow(color: .black.opacity(0.08), radius: 18, y: 8)
         .padding(.horizontal)
-        .padding(.bottom, 8)
     }
 }
 
 private struct AudioWaveformScrubber: View {
     let playback: AudioPlaybackModel
+    let accent: Color
 
     var body: some View {
         GeometryReader { proxy in
@@ -82,26 +81,23 @@ private struct AudioWaveformScrubber: View {
                     ForEach(Array(playback.waveform.enumerated()), id: \.offset) { index, amplitude in
                         Capsule()
                             .fill(Double(index) / Double(max(1, playback.waveform.count - 1)) <= playback.progress
-                                ? Color.red : Color.secondary.opacity(0.28))
+                                ? accent : Color.secondary.opacity(0.28))
                             .frame(maxWidth: .infinity)
                             .frame(height: max(4, CGFloat(amplitude) * proxy.size.height))
                     }
                 }
-
                 if !playback.waveform.isEmpty {
                     Rectangle()
-                        .fill(.red)
-                        .frame(width: 1, height: proxy.size.height)
+                        .fill(accent)
+                        .frame(width: 2, height: proxy.size.height)
                         .offset(x: progressX)
-                    Circle()
-                        .fill(.red)
-                        .frame(width: 7, height: 7)
-                        .offset(x: progressX - 3.5)
                 } else {
-                    ProgressView()
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    // Seeking remains available even if waveform extraction fails.
+                    Capsule().fill(Color.secondary.opacity(0.28)).frame(height: 4)
+                    Circle().fill(accent).frame(width: 8, height: 8).offset(x: progressX - 4)
                 }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 0)
@@ -111,8 +107,16 @@ private struct AudioWaveformScrubber: View {
                     }
             )
         }
+        .accessibilityElement(children: .ignore)
         .accessibilityLabel("Audio waveform")
-        .accessibilityValue("\(Int(playback.progress * 100)) percent")
+        .accessibilityValue(Text(playback.progress, format: .percent.precision(.fractionLength(0))))
+        .accessibilityAdjustableAction { direction in
+            switch direction {
+            case .increment: playback.skip(5)
+            case .decrement: playback.skip(-5)
+            @unknown default: break
+            }
+        }
         .accessibilityIdentifier("audioWaveformScrubber")
     }
 }

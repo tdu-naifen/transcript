@@ -7,6 +7,8 @@ struct MeetingDetailView: View {
     let meeting: Meeting
     let audioURL: URL?
     let onMeetingRenamed: () -> Void
+    let onProcessByMac: (() -> Void)?
+    let macUnavailableReason: String?
 
     @State private var model: MeetingDetailModel
     @State private var isParticipantsExpanded = Self.debugStartExpanded
@@ -17,7 +19,9 @@ struct MeetingDetailView: View {
     @State private var isReprocessingPresented = false
     @State private var meetingRenameText = ""
     @State private var renameText = ""
-    @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+
+    private let accent = Color(red: 6 / 255, green: 34 / 255, blue: 158 / 255)
 
     /// Screenshot verification aid (see `RecordingsListView.openFixtureMeetingIfRequested`):
     /// `-uiFixtureExpandParticipants 1` starts the header expanded since there's no way
@@ -36,30 +40,39 @@ struct MeetingDetailView: View {
         audioURL: URL?,
         services: AppServices,
         isRecordingActive: Bool = false,
+        onProcessByMac: (() -> Void)? = nil,
+        macUnavailableReason: String? = nil,
+        initialSeekMs: Int? = nil,
         onMeetingRenamed: @escaping () -> Void = {}
     ) {
         self.meeting = meeting
         self.audioURL = audioURL
         self.onMeetingRenamed = onMeetingRenamed
+        self.onProcessByMac = onProcessByMac
+        self.macUnavailableReason = macUnavailableReason
         _model = State(initialValue: MeetingDetailModel(
             meeting: meeting,
             audioURL: audioURL,
             services: services,
-            isRecordingActive: isRecordingActive
+            isRecordingActive: isRecordingActive,
+            initialSeekMs: initialSeekMs
         ))
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            topBar
-            participantsHeader
-            transcript
+        transcript
+        .background(Color(uiColor: .systemBackground))
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            bottomActions
         }
-        .background(Color(red: 0.975, green: 0.97, blue: 0.96))
-        .safeAreaInset(edge: .bottom) {
-            AudioPlayerBar(playback: model.playback)
+        .navigationTitle(model.meeting.title)
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar(.visible, for: .navigationBar)
+        .toolbar(.hidden, for: .tabBar)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { meetingOptions }
         }
-        .toolbar(.hidden, for: .navigationBar)
+        .tint(accent)
         .sheet(isPresented: $isEngineeringDetailPresented) {
             EngineeringDetailSheet(meeting: model.meeting, audioURL: audioURL)
         }
@@ -128,74 +141,95 @@ struct MeetingDetailView: View {
         return "\(peopleText) · \(Format.duration(milliseconds: model.meeting.durationMs))"
     }
 
-    private var topBar: some View {
-        HStack {
-            Button { dismiss() } label: {
-                Image(systemName: "chevron.left")
-                    .font(.headline)
-                    .frame(width: 42, height: 42)
-                    .background(.white, in: Circle())
+    private var meetingOptions: some View {
+        Menu {
+            Button("重命名", systemImage: "pencil") {
+                meetingRenameText = model.meeting.title
+                isMeetingRenamePresented = true
             }
-            .accessibilityLabel("Back")
-            .accessibilityIdentifier("meetingBackButton")
+            if !model.participants.isEmpty {
+                Button {
+                    withAnimation { isParticipantsExpanded = true }
+                } label: {
+                    Label(reprocessingText("Name Speakers"), systemImage: "person.2")
+                }
+                Button(acceptanceText("Speaker Insights"), systemImage: "chart.bar.xaxis") {
+                    isInsightsPresented = true
+                }
+                .accessibilityIdentifier("speakerInsightsMenuItem")
+            }
+            Button("Details", systemImage: "info.circle") {
+                isEngineeringDetailPresented = true
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .frame(minWidth: 44, minHeight: 44)
+        }
+        .accessibilityLabel("Meeting options")
+        .accessibilityIdentifier("meetingOptionsButton")
+    }
 
-            Spacer()
-            VStack(spacing: 2) {
-                Text(model.meeting.title)
-                    .font(.headline)
-                    .lineLimit(1)
-                Text(headerMetadata)
+    private var bottomActions: some View {
+        VStack(spacing: 8) {
+            AudioPlayerBar(playback: model.playback)
+            let layout = dynamicTypeSize.isAccessibilitySize
+                ? AnyLayout(VStackLayout(spacing: 8))
+                : AnyLayout(HStackLayout(spacing: 10))
+            layout {
+                Button {
+                    switch model.reprocessingState {
+                    case .idle: isReprocessingConfirmationPresented = true
+                    case .running, .succeeded, .failed: isReprocessingPresented = true
+                    }
+                } label: {
+                    Label {
+                        Text("Reprocessing")
+                    } icon: {
+                        if model.isReprocessing {
+                            ProgressView().tint(.primary)
+                        } else {
+                            Image(systemName: "arrow.trianglehead.2.clockwise.rotate.90")
+                        }
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 44)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+                .buttonStyle(.bordered)
+                .tint(.primary)
+                .disabled(!model.hasLocalAudioForReprocessing && !model.isReprocessing)
+                .accessibilityIdentifier("meetingReprocessingButton")
+
+                Button { onProcessByMac?() } label: {
+                    Label("Process by Mac", systemImage: "desktopcomputer")
+                        .frame(maxWidth: .infinity, minHeight: 44)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(onProcessByMac == nil || macUnavailableReason != nil
+                          || !model.hasLocalAudioForReprocessing || model.isReprocessing)
+                .accessibilityIdentifier("meetingProcessByMacButton")
+            }
+            .font(.subheadline.weight(.semibold))
+            .padding(.horizontal)
+
+            if let macUnavailableReason {
+                Text(verbatim: macUnavailableReason)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+                    .accessibilityIdentifier("meetingMacUnavailableReason")
+            } else if onProcessByMac == nil {
+                Label("Mac is not connected.", systemImage: "desktopcomputer.trianglebadge.exclamationmark")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal)
+                    .accessibilityIdentifier("meetingMacUnavailableReason")
             }
-            .frame(maxWidth: .infinity)
-            Spacer()
-
-            Menu {
-                Button("重命名", systemImage: "pencil") {
-                    meetingRenameText = model.meeting.title
-                    isMeetingRenamePresented = true
-                }
-                if model.hasLocalAudioForReprocessing {
-                    Button {
-                        if case .failed = model.reprocessingState {
-                            isReprocessingPresented = true
-                        } else {
-                            isReprocessingConfirmationPresented = true
-                        }
-                    } label: {
-                        Label(
-                            reprocessingText(model.isReprocessing ? "Reprocessing…" : "Reprocess"),
-                            systemImage: "arrow.trianglehead.2.clockwise.rotate.90"
-                        )
-                    }
-                    .disabled(model.isReprocessing)
-                }
-                if !model.participants.isEmpty {
-                    Button {
-                        withAnimation { isParticipantsExpanded = true }
-                    } label: {
-                        Label(reprocessingText("Name Speakers"), systemImage: "person.2")
-                    }
-                    Button(acceptanceText("Speaker Insights"), systemImage: "chart.bar.xaxis") {
-                        isInsightsPresented = true
-                    }
-                    .accessibilityIdentifier("speakerInsightsMenuItem")
-                }
-                Button("Details", systemImage: "info.circle") {
-                    isEngineeringDetailPresented = true
-                }
-            } label: {
-                Image(systemName: "ellipsis")
-                    .font(.headline)
-                    .frame(width: 42, height: 42)
-                    .background(.white, in: Circle())
-            }
-            .accessibilityLabel("Meeting options")
-            .accessibilityIdentifier("meetingOptionsButton")
         }
-        .padding(.horizontal, 14)
         .padding(.vertical, 8)
+        .frame(maxWidth: .infinity)
+        .background(.regularMaterial)
+        .accessibilityIdentifier("meetingBottomActions")
     }
 
     private var headerMetadata: String {
@@ -247,47 +281,66 @@ struct MeetingDetailView: View {
         .padding(.bottom, isParticipantsExpanded ? 10 : 6)
     }
 
-    @ViewBuilder
     private var transcript: some View {
-        if let loadFailure = model.loadFailure {
-            ContentUnavailableView(
-                "无法加载转写", systemImage: "exclamationmark.triangle", description: Text(loadFailure)
-            )
-        } else if model.utterances.isEmpty {
-            ContentUnavailableView {
-                Label(acceptanceText("No transcript"), systemImage: "text.bubble")
-            } description: {
-                Text(acceptanceText("Reprocess the original audio to create a transcript."))
-            } actions: {
-                if model.hasLocalAudioForReprocessing {
-                    Button(acceptanceText("Reprocess")) {
-                        isReprocessingConfirmationPresented = true
+        ScrollViewReader { proxy in
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(model.meeting.title)
+                            .font(.title2.weight(.bold))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .accessibilityAddTraits(.isHeader)
+                        Text(headerMetadata)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .accessibilityIdentifier("emptyTranscriptReprocessButton")
-                }
-            }
-        } else {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 14) {
-                        ForEach(model.utterances) { utterance in
-                            TranscriptRow(
-                                utterance: utterance,
-                                speaker: utterance.speakerId.flatMap { model.speakersById[$0] },
-                                isCurrent: utterance.id == model.currentUtteranceId,
-                                onTapLine: { model.seek(to: utterance) },
-                                onTapName: { model.beginRename(speakerId: $0) }
-                            )
-                            .id(utterance.id)
+                    .padding(.horizontal)
+                    participantsHeader
+
+                    if let loadFailure = model.loadFailure {
+                        ContentUnavailableView(
+                            "无法加载转写", systemImage: "exclamationmark.triangle", description: Text(loadFailure)
+                        )
+                        Button("Retry") { Task { await model.load() } }
+                            .frame(maxWidth: .infinity)
+                    } else if model.utterances.isEmpty {
+                        ContentUnavailableView {
+                            Label(acceptanceText("No transcript"), systemImage: "text.bubble")
+                        } description: {
+                            Text(acceptanceText("Reprocess the original audio to create a transcript."))
+                        } actions: {
+                            if model.hasLocalAudioForReprocessing {
+                                Button(acceptanceText("Reprocess")) {
+                                    isReprocessingConfirmationPresented = true
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(model.isReprocessing)
+                                .accessibilityIdentifier("emptyTranscriptReprocessButton")
+                            }
                         }
+                    } else {
+                        LazyVStack(alignment: .leading, spacing: 14) {
+                            ForEach(model.utterances) { utterance in
+                                TranscriptRow(
+                                    utterance: utterance,
+                                    speaker: utterance.speakerId.flatMap { model.speakersById[$0] },
+                                    isCurrent: utterance.id == model.currentUtteranceId,
+                                    onTapLine: { model.seek(to: utterance) },
+                                    onTapName: { model.beginRename(speakerId: $0) }
+                                )
+                                .id(utterance.id)
+                            }
+                        }
+                        .padding(.horizontal)
                     }
-                    .padding()
                 }
-                .onChange(of: model.currentUtteranceId) { _, newValue in
-                    guard let newValue else { return }
-                    withAnimation { proxy.scrollTo(newValue, anchor: .center) }
-                }
+                .padding(.top, 12)
+                .padding(.bottom, 24)
+            }
+            .accessibilityIdentifier("meetingTranscriptScrollView")
+            .onChange(of: model.currentUtteranceId, initial: true) { _, newValue in
+                guard let newValue else { return }
+                withAnimation { proxy.scrollTo(newValue, anchor: .center) }
             }
         }
     }
@@ -307,13 +360,14 @@ private struct MeetingReprocessingSheet: View {
 
     var body: some View {
         NavigationStack {
-            VStack(spacing: 22) {
-                Spacer()
-                content
-                    .frame(maxWidth: 420)
-                Spacer()
+            ScrollView {
+                VStack(spacing: 22) {
+                    content
+                }
+                .frame(maxWidth: 420)
+                .frame(maxWidth: .infinity)
+                .padding(24)
             }
-            .padding(24)
             .navigationTitle(text("Reprocess"))
             .navigationBarTitleDisplayMode(.inline)
         }
@@ -329,11 +383,11 @@ private struct MeetingReprocessingSheet: View {
         case .running(let progress):
             Image(systemName: "waveform.badge.magnifyingglass")
                 .font(.system(size: 38))
-                .foregroundStyle(.red)
+                .foregroundStyle(.primary)
             Text(stageText(progress.stage))
                 .font(.headline)
             ProgressView(value: progress.fractionCompleted)
-                .tint(.red)
+                .tint(Color(red: 6 / 255, green: 34 / 255, blue: 158 / 255))
             Text(text("The current transcript remains available until the new result is complete."))
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -457,46 +511,59 @@ private struct TranscriptRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                if let speaker {
-                    Circle()
-                        .fill(Color.speaker(colorIndex: speaker.colorIndex))
-                        .frame(width: 8, height: 8)
-                    Text(speaker.resolvedName)
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(Color.speaker(colorIndex: speaker.colorIndex))
-                        .contentShape(Rectangle())
-                        .onTapGesture { onTapName(speaker.id) }
-                } else {
-                    Text(acceptanceText("Unknown speaker"))
-                        .font(.subheadline.weight(.bold))
-                        .foregroundStyle(.secondary)
+            if let speaker {
+                Button { onTapName(speaker.id) } label: {
+                    HStack(spacing: 6) {
+                        Circle()
+                            .fill(Color.speaker(colorIndex: speaker.colorIndex))
+                            .frame(width: 8, height: 8)
+                            .accessibilityHidden(true)
+                        Text(speaker.resolvedName)
+                            .font(.subheadline.weight(.semibold))
+                            .foregroundStyle(.primary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .frame(minHeight: 44, alignment: .leading)
+                    .contentShape(Rectangle())
                 }
-                Text(Format.duration(milliseconds: utterance.startMs))
-                    .font(.caption.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.orange)
-                Spacer()
-                if isCurrent {
-                    Image(systemName: "waveform")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(speaker.map { Color.speaker(colorIndex: $0.colorIndex) } ?? .red)
-                        .symbolEffect(.variableColor.iterative)
-                }
+                .buttonStyle(.plain)
+                .accessibilityHint(Text(acceptanceText("Edit speaker name")))
+            } else {
+                Text(acceptanceText("Unknown speaker"))
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
             }
-            Text(utterance.text)
-                .font(.system(size: 18))
-                .lineSpacing(2)
+            Button(action: onTapLine) {
+                VStack(alignment: .leading, spacing: 7) {
+                    HStack {
+                        Text(Format.duration(milliseconds: utterance.startMs))
+                            .font(.caption.monospacedDigit())
+                        if isCurrent {
+                            Image(systemName: "waveform")
+                                .font(.caption)
+                                .accessibilityHidden(true)
+                        }
+                    }
+                    .foregroundStyle(.secondary)
+                    Text(utterance.text)
+                        .font(.body)
+                        .foregroundStyle(.primary)
+                        .lineSpacing(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, minHeight: 44, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Play audio from this segment")
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            isCurrent
-                ? (speaker.map { Color.speaker(colorIndex: $0.colorIndex).opacity(0.1) } ?? Color.red.opacity(0.08))
-                : Color.clear,
+            isCurrent ? Color(uiColor: .secondarySystemBackground) : Color.clear,
             in: RoundedRectangle(cornerRadius: 14, style: .continuous)
         )
-        .contentShape(Rectangle())
-        .onTapGesture(perform: onTapLine)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("meetingTranscriptRow")
     }
 

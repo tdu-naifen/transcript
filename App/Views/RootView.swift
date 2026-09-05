@@ -24,12 +24,12 @@ struct RootView: View {
         // `Text`/`Label` (via `LocalizedStringKey`) re-renders in the new language the
         // instant Settings changes it — no app restart needed.
         .environment(\.locale, localization.language.locale ?? .autoupdatingCurrent)
-        .preferredColorScheme(.light)
+        .tint(FloatingRecordButton.accent)
     }
 }
 
-/// Geometry of the floating record button (UI.md §1), shared with `RecordingsListView`
-/// so its list can reserve enough bottom inset to never be occluded by the button.
+/// Default button clearance, shared with the top-level lists.
+/// The tab content supplies its safe area, so no tab-bar height is hard-coded.
 enum FloatingRecordButtonMetrics {
     static let diameter: CGFloat = 64
     static let bottomPadding: CGFloat = 58
@@ -37,28 +37,38 @@ enum FloatingRecordButtonMetrics {
     static let listBottomClearance: CGFloat = bottomPadding + diameter + 16
 }
 
-/// The recordings list is the home screen (UI.md §1): two tabs plus a record button that
-/// belongs to neither and floats above the tab bar.
+/// Each tab keeps its own navigation history; the recorder belongs to the app, not a tab.
 private struct ReadyView: View {
     let services: AppServices
     let library: LibraryModel
     let recorder: RecorderModel
     @State private var isRecordingExpanded = Self.debugRecordingExpanded
     @State private var selectedTab: AppTab = Self.debugInitialTab
+    @State private var homePath = NavigationPath()
     @State private var recordingsPath = NavigationPath()
+    @State private var settingsPath = NavigationPath()
+    @State private var isStartingRecording = false
+    @State private var isStoppingRecording = false
+    @State private var namingError: String?
     @State private var activeMeeting: Meeting?
     @State private var namingMeetingId: String?
+    @State private var lastNamedMeetingId: String?
     @State private var meetingName = ""
     @State private var defaultMeetingName = ""
     @State private var isMeetingNamingPresented = false
 
-    /// Screenshot verification aid, same pattern as `-uiFixtureOpenMeetingId`: the
-    /// simulator has no scripted-tap path to the Settings tab in this environment.
     private static var debugInitialTab: AppTab {
         #if DEBUG
-        UserDefaults.standard.string(forKey: "uiFixtureSelectedTab") == "settings" ? .settings : .recordings
+        switch UserDefaults.standard.string(forKey: "uiFixtureSelectedTab") {
+        case "settings": return .settings
+        case "recordings", "meetings": return .meetings
+        case "home": return .home
+        default:
+            // Preserve existing detail-fixture launch arguments while Home is the default.
+            return UserDefaults.standard.string(forKey: "uiFixtureOpenMeetingId") == nil ? .home : .meetings
+        }
         #else
-        .recordings
+        return .home
         #endif
     }
 
@@ -70,26 +80,39 @@ private struct ReadyView: View {
         #endif
     }
 
-    /// The record button only makes sense on the recordings list and settings tabs
-    /// (UI.md §1); on the meeting detail screen it's semantically wrong (that screen is
-    /// for replaying a past meeting) and visually overlaps the audio player's controls.
     private var isFloatingButtonHidden: Bool {
-        selectedTab == .recordings && !recordingsPath.isEmpty
+        switch selectedTab {
+        case .home: !homePath.isEmpty
+        case .meetings: !recordingsPath.isEmpty
+        case .settings: !settingsPath.isEmpty
+        }
+    }
+
+    private var hasRecordingSession: Bool {
+        recorder.phase != .idle || isStartingRecording
     }
 
     var body: some View {
         ZStack {
             TabView(selection: $selectedTab) {
-                Tab("录音", systemImage: "list.bullet", value: AppTab.recordings) {
+                Tab("Home", systemImage: "house", value: AppTab.home) {
+                    HomeView(
+                        services: services,
+                        library: library,
+                        path: $homePath,
+                        isRecordingActive: { hasRecordingSession }
+                    )
+                }
+                Tab("Meetings", systemImage: "list.bullet", value: AppTab.meetings) {
                     RecordingsListView(
                         model: library,
                         services: services,
                         path: $recordingsPath,
-                        isRecordingActive: { recorder.isActive }
+                        isRecordingActive: { hasRecordingSession }
                     )
                 }
-                Tab("设置", systemImage: "gearshape", value: AppTab.settings) {
-                    SettingsView(services: services)
+                Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
+                    SettingsView(services: services, path: $settingsPath)
                 }
             }
 
@@ -97,14 +120,15 @@ private struct ReadyView: View {
                 RecordView(
                     model: recorder,
                     onCollapse: { withAnimation(.snappy) { isRecordingExpanded = false } },
-                    onStop: requestStop
+                    onStop: requestStop,
+                    onStart: startRecording
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .zIndex(2)
             }
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            if recorder.isActive && !isRecordingExpanded {
+            if hasRecordingSession && !isRecordingExpanded {
                 RecordingMiniBar(
                     model: recorder,
                     onExpand: { withAnimation(.snappy) { isRecordingExpanded = true } },
@@ -112,26 +136,9 @@ private struct ReadyView: View {
                 )
             }
         }
-        .overlay(alignment: .bottomTrailing) {
-            if !isFloatingButtonHidden && !recorder.isActive && !isRecordingExpanded {
-                Button {
-                    isRecordingExpanded = true
-                    Task {
-                        await recorder.onAppear()
-                        await recorder.toggleRecording()
-                    }
-                } label: {
-                    Image(systemName: "waveform")
-                        .font(.system(size: 25, weight: .semibold))
-                        .foregroundStyle(.red)
-                        .frame(width: FloatingRecordButtonMetrics.diameter, height: FloatingRecordButtonMetrics.diameter)
-                        .background(.regularMaterial, in: Circle())
-                        .shadow(color: .black.opacity(0.12), radius: 12, y: 5)
-                }
-                .padding(.trailing, 20)
-                .padding(.bottom, FloatingRecordButtonMetrics.bottomPadding)
-                .accessibilityLabel("Record")
-                .accessibilityIdentifier("globalRecordButton")
+        .overlay {
+            if !isFloatingButtonHidden && !hasRecordingSession && !isRecordingExpanded && !isMeetingNamingPresented {
+                FloatingRecordButton(action: startRecording)
             }
         }
         .alert(acceptanceText("Confirm meeting name"), isPresented: $isMeetingNamingPresented) {
@@ -143,6 +150,23 @@ private struct ReadyView: View {
         } message: {
             Text(acceptanceText("Enter or confirm a name for this meeting."))
         }
+        .alert("Could not save meeting name", isPresented: Binding(
+            get: { namingError != nil },
+            set: { if !$0 { namingError = nil } }
+        )) {
+            Button("Retry") { saveMeetingName() }
+            Button("Cancel", role: .cancel) { namingError = nil }
+        } message: {
+            Text(namingError ?? "")
+        }
+        .alert("Recording problem", isPresented: Binding(
+            get: { !isRecordingExpanded && recorder.errorMessage != nil },
+            set: { if !$0 { recorder.errorMessage = nil } }
+        )) {
+            Button("OK", role: .cancel) { recorder.errorMessage = nil }
+        } message: {
+            Text(recorder.errorMessage ?? "")
+        }
         .onChange(of: recorder.phase) { oldPhase, newPhase in
             if newPhase == .recording || newPhase == .paused {
                 Task { await captureActiveMeeting() }
@@ -152,21 +176,38 @@ private struct ReadyView: View {
                     presentMeetingNaming()
                 }
             } else if newPhase == .idle && oldPhase == .stopping {
+                withAnimation(.snappy) { isRecordingExpanded = false }
                 Task { await library.reload() }
             }
         }
     }
 
+    private func startRecording() {
+        // Permission and startup both suspend before the model necessarily becomes busy.
+        // Lock the root entry synchronously so a second tap cannot toggle the new session off.
+        guard recorder.phase == .idle, !isStartingRecording, !isStoppingRecording else { return }
+        isStartingRecording = true
+        activeMeeting = nil
+        isRecordingExpanded = true
+        Task {
+            defer { isStartingRecording = false }
+            await recorder.onAppear()
+            guard recorder.phase == .idle else { return }
+            await recorder.toggleRecording()
+            await captureActiveMeeting()
+        }
+    }
+
     private func requestStop() {
-        if activeMeeting != nil {
+        guard recorder.isActive, !isStoppingRecording else { return }
+        isStoppingRecording = true
+        Task {
+            defer { isStoppingRecording = false }
+            if activeMeeting == nil { await captureActiveMeeting() }
+            // Capture must stop regardless of whether the naming alert is completed.
+            guard recorder.isActive else { return }
+            await recorder.toggleRecording()
             presentMeetingNaming()
-            Task { await recorder.toggleRecording() }
-        } else {
-            Task {
-                await captureActiveMeeting()
-                presentMeetingNaming()
-                await recorder.toggleRecording()
-            }
         }
     }
 
@@ -176,7 +217,8 @@ private struct ReadyView: View {
     }
 
     private func presentMeetingNaming() {
-        guard !isMeetingNamingPresented, let meeting = activeMeeting else { return }
+        guard !isMeetingNamingPresented, let meeting = activeMeeting, lastNamedMeetingId != meeting.id else { return }
+        lastNamedMeetingId = meeting.id
         namingMeetingId = meeting.id
         defaultMeetingName = meeting.title
         meetingName = meeting.title
@@ -186,11 +228,16 @@ private struct ReadyView: View {
     private func saveMeetingName() {
         guard let id = namingMeetingId else { return }
         let title = MeetingTitle.confirmedTitle(meetingName, defaultTitle: defaultMeetingName)
+        namingError = nil
         Task {
-            _ = try? await MeetingRepository(services.database).rename(
-                id: id, title: title, deviceId: services.deviceId
-            )
-            await library.reload()
+            do {
+                _ = try await MeetingRepository(services.database).rename(
+                    id: id, title: title, deviceId: services.deviceId
+                )
+                await library.reload()
+            } catch {
+                namingError = String(describing: error)
+            }
         }
     }
 
@@ -209,40 +256,54 @@ private struct RecordingMiniBar: View {
     let onStop: () -> Void
 
     var body: some View {
-        Button(action: onExpand) {
-            HStack(spacing: 12) {
-                Circle()
-                    .fill(model.phase == .paused ? Color.secondary : Color.red)
-                    .frame(width: 8, height: 8)
-                Text(Format.clock(model.elapsed))
-                    .font(.subheadline.monospacedDigit().weight(.semibold))
-                    .foregroundStyle(.primary)
-                LevelMeterView(level: model.level, isActive: model.phase == .recording)
-                    .frame(maxWidth: .infinity)
-                Button(action: onStop) {
-                    Image(systemName: "stop.fill")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(.white)
-                        .frame(width: 34, height: 34)
-                        .background(.red, in: Circle())
+        HStack(spacing: 12) {
+            Button(action: onExpand) {
+                HStack(spacing: 12) {
+                    Circle()
+                        .fill(model.isActive && model.phase != .paused ? Color.red : Color.secondary)
+                        .frame(width: 8, height: 8)
+                    Text(Format.clock(model.elapsed))
+                        .font(.subheadline.monospacedDigit().weight(.semibold))
+                    if model.isBusy {
+                        ProgressView()
+                        Text(model.stateLabel).font(.caption)
+                    } else {
+                        LevelMeterView(level: model.level, isActive: model.phase == .recording)
+                            .accessibilityHidden(true)
+                    }
+                    Spacer(minLength: 0)
                 }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Stop recording")
-                .accessibilityIdentifier("miniStopButton")
+                .foregroundStyle(.primary)
+                .frame(maxWidth: .infinity, minHeight: 44)
+                .contentShape(Rectangle())
             }
-            .padding(.horizontal, 14)
-            .frame(height: 58)
-            .background(.regularMaterial)
-            .contentShape(Rectangle())
+            .accessibilityLabel("Expand recording")
+            .accessibilityValue("\(model.stateLabel), \(Format.clock(model.elapsed))")
+            .accessibilityIdentifier("recordingMiniBar")
+
+            Button(action: onStop) {
+                Image(systemName: "stop.fill")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(.red, in: Circle())
+                    .frame(width: 44, height: 44)
+                    .contentShape(Rectangle())
+            }
+            .disabled(!model.isActive)
+            .accessibilityLabel("Stop recording")
+            .accessibilityIdentifier("miniStopButton")
         }
         .buttonStyle(.plain)
-        .accessibilityLabel("Expand recording")
-        .accessibilityIdentifier("recordingMiniBar")
+        .padding(.horizontal, 14)
+        .padding(.vertical, 7)
+        .background(.regularMaterial)
     }
 }
 
 private enum AppTab: Hashable {
-    case recordings
+    case home
+    case meetings
     case settings
 }
 
