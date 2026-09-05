@@ -141,6 +141,7 @@ import Testing
             speakerSlot: 0,
             generation: 1,
             outcome: .embedded(embedding),
+            match: nil,
             evidence: .init(ranges: [0..<32_000], cleanFrameCount: 32_000, sampleRate: 16_000)
         )
     }

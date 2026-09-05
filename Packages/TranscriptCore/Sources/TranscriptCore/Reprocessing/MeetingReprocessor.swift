@@ -452,7 +452,7 @@ public actor MeetingReprocessor {
         guard activeRunId == runId else { return }
         activeRunCancellation?.cancel()
         let handles = Array(activeVoiceprintHandles.values)
-        for handle in handles { await handle.cancel() }
+        for handle in handles { await handle.cancelAndWait() }
         await activeTranscriber?.cancelAndWait()
         await activeDiarizer?.cancelAndWait()
     }
