@@ -196,6 +196,7 @@ private actor VoiceprintInferenceWorker {
       )
     } catch let error as VoiceprintSampleSelectionError {
       if case .insufficientCleanAudio(_, let availableFrames) = error {
+        scheduleIdleUnload(after: generation)
         return VoiceprintProcessingResult(
           meetingId: request.meetingId,
           speakerSlot: request.speakerSlot,
@@ -207,6 +208,7 @@ private actor VoiceprintInferenceWorker {
           )
         )
       }
+      scheduleIdleUnload(after: generation)
       throw error
     }
 
@@ -491,7 +493,6 @@ public actor VoiceprintProcessor {
     result: Result<VoiceprintProcessingResult, any Error>
   ) async {
     guard active?.id == job.id else { return }
-    active = nil
     outstandingFrames -= job.request.audio.count
     let key = evidenceKey(for: job.request)
     activeEvidence.remove(key)
@@ -500,6 +501,7 @@ public actor VoiceprintProcessor {
       await job.result.finish(result)
     }
     await job.result.finishPhysical()
+    active = nil
     startNextIfNeeded()
     finishDrainIfNeeded()
   }
