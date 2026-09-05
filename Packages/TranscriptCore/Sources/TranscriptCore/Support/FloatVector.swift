@@ -1,8 +1,34 @@
+import Accelerate
 import Foundation
 
 /// Conversion between `[Float]` and raw little-endian Float32 `Data`,
 /// plus brute-force cosine similarity (PLAN §4.4 — no vector index).
 public enum FloatVector {
+    public static func normalized(_ floats: [Float]) -> [Float]? {
+        guard !floats.isEmpty, floats.allSatisfy(\.isFinite) else { return nil }
+        var norm: Float = 0
+        vDSP_svesq(floats, 1, &norm, vDSP_Length(floats.count))
+        let magnitude = norm.squareRoot()
+        guard magnitude.isFinite, magnitude > 0 else { return nil }
+        var result = Array(repeating: Float.zero, count: floats.count)
+        var divisor = magnitude
+        vDSP_vsdiv(floats, 1, &divisor, &result, 1, vDSP_Length(floats.count))
+        return result
+    }
+
+    public static func dot(
+        _ lhs: UnsafeBufferPointer<Float>,
+        _ rhs: UnsafeBufferPointer<Float>
+    ) -> Float {
+        guard lhs.count == rhs.count else { return .nan }
+        var result: Float = 0
+        vDSP_dotpr(lhs.baseAddress!, 1, rhs.baseAddress!, 1, &result, vDSP_Length(lhs.count))
+        return result
+    }
+
+    public static func isValidStorage(_ data: Data, dimension: Int) -> Bool {
+        dimension > 0 && data.count == dimension * MemoryLayout<Float>.size
+    }
     public static func data(from floats: [Float]) -> Data {
         var out = Data(capacity: floats.count * 4)
         for value in floats {

@@ -209,6 +209,35 @@ import Testing
         #expect(stored.dimension == 192)
         #expect(stored.floats == vector)
     }
+
+    @Test func bindingExpectationRejectsEmptySlotABA() async throws {
+        let db = try AppDatabase.inMemory()
+        let meetings = MeetingRepository(db)
+        let speakers = SpeakerRepository(db)
+        let meeting = makeTestMeeting()
+        try await meetings.insert(meeting)
+        let first = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
+        let second = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
+        let empty = try await speakers.bindingExpectation(meetingId: meeting.id, speakerIndex: 0)
+        try await speakers.assignDisplayIndex(
+            meetingId: meeting.id, speakerId: first.id, displayIndex: 0, deviceId: testiPhoneId
+        )
+        try await db.writer.write { db in
+            try db.execute(
+                sql: "DELETE FROM meetingSpeaker WHERE meetingId = ? AND displayIndex = ?",
+                arguments: [meeting.id, 0]
+            )
+        }
+        let restoredEmpty = try await speakers.bindingExpectation(meetingId: meeting.id, speakerIndex: 0)
+        #expect(restoredEmpty.speakerId == nil)
+        #expect(restoredEmpty.slotRevision > empty.slotRevision)
+        await #expect(throws: VoiceprintBindingError.staleExpectation) {
+            try await VoiceprintBinder(speakers: speakers).bindSelectedIdentity(
+                speakerId: second.id, meetingId: meeting.id, speakerIndex: 0,
+                expectation: empty, deviceId: testiPhoneId
+            )
+        }
+    }
 }
 
 /// `CampPlusEmbedder.cosine` is a `nonisolated static` pure function — no model load

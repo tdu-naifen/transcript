@@ -15,6 +15,9 @@ public struct SpeakerEmbedding: Codable, Identifiable, Hashable, Sendable {
     public var updatedAt: Date
     /// Reserved for a future HLC retrofit (PLAN §9.3). `mergeSpeakers` mutates this row.
     public var originDeviceId: String
+    /// Exact embedding artifact revision. Legacy rows remain nil and are excluded from
+    /// matching unless the caller explicitly opts in.
+    public var modelIdentifier: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -24,7 +27,8 @@ public struct SpeakerEmbedding: Codable, Identifiable, Hashable, Sendable {
         sampleCount: Int = 1,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        originDeviceId: String
+        originDeviceId: String,
+        modelIdentifier: String? = nil
     ) {
         self.id = id
         self.speakerId = speakerId
@@ -34,6 +38,7 @@ public struct SpeakerEmbedding: Codable, Identifiable, Hashable, Sendable {
         self.createdAt = createdAt
         self.updatedAt = updatedAt
         self.originDeviceId = originDeviceId
+        self.modelIdentifier = modelIdentifier
     }
 
     public init(
@@ -43,7 +48,8 @@ public struct SpeakerEmbedding: Codable, Identifiable, Hashable, Sendable {
         sampleCount: Int = 1,
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
-        originDeviceId: String
+        originDeviceId: String,
+        modelIdentifier: String? = nil
     ) {
         self.init(
             id: id,
@@ -53,7 +59,8 @@ public struct SpeakerEmbedding: Codable, Identifiable, Hashable, Sendable {
             sampleCount: sampleCount,
             createdAt: createdAt,
             updatedAt: updatedAt,
-            originDeviceId: originDeviceId
+            originDeviceId: originDeviceId,
+            modelIdentifier: modelIdentifier
         )
     }
 
@@ -66,5 +73,6 @@ extension SpeakerEmbedding: FetchableRecord, PersistableRecord {
     public enum Columns {
         public static let id = Column("id")
         public static let speakerId = Column("speakerId")
+        public static let modelIdentifier = Column("modelIdentifier")
     }
 }
