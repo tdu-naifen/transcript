@@ -13,5 +13,6 @@ public enum RepositoryError: Error, Sendable, Equatable {
     /// `displayIndex` is a user-facing "Speaker N" label and must be non-negative;
     /// negative values are reserved for parking rows mid-remap.
     case negativeDisplayIndex(meetingId: String, displayIndex: Int)
+    case speakerAlreadyLinkedInMeeting(meetingId: String, speakerId: String, displayIndex: Int)
     case unknownAnalysisKind(rawValue: String)
 }

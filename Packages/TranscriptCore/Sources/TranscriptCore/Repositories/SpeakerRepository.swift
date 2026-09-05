@@ -548,7 +548,10 @@ public struct SpeakerRepository: Sendable {
         deviceId: String,
         now: Date
     ) async throws -> Speaker {
-        try await database.writer.write { db in
+        guard speakerIndex >= 0 else {
+            throw RepositoryError.negativeDisplayIndex(meetingId: meetingId, displayIndex: speakerIndex)
+        }
+        return try await database.writer.write { db in
             if let expectedVoiceprintGeneration {
                 let currentGeneration = try Int.fetchOne(
                     db, sql: "SELECT revision FROM voiceprintGeneration WHERE id = 1"
@@ -572,6 +575,14 @@ public struct SpeakerRepository: Sendable {
                   currentUpdatedAt == expectation.updatedAt,
                   currentRevision == expectation.slotRevision else {
                 throw VoiceprintBindingError.staleExpectation
+            }
+            if let linked = try Row.fetchOne(db, sql: """
+                SELECT displayIndex FROM meetingSpeaker
+                WHERE meetingId = ? AND speakerId = ? AND displayIndex <> ?
+                """, arguments: [meetingId, speakerId, speakerIndex]) {
+                throw RepositoryError.speakerAlreadyLinkedInMeeting(
+                    meetingId: meetingId, speakerId: speakerId, displayIndex: linked["displayIndex"]
+                )
             }
             if let current, current != speakerId {
                 let named = try String.fetchOne(
@@ -602,7 +613,10 @@ public struct SpeakerRepository: Sendable {
         deviceId: String,
         now: Date
     ) async throws -> Speaker {
-        try await database.writer.write { db in
+        guard speakerIndex >= 0 else {
+            throw RepositoryError.negativeDisplayIndex(meetingId: meetingId, displayIndex: speakerIndex)
+        }
+        return try await database.writer.write { db in
             let currentRow = try Row.fetchOne(db, sql: """
                 SELECT speakerId, updatedAt FROM meetingSpeaker WHERE meetingId = ? AND displayIndex = ?
                 """, arguments: [meetingId, speakerIndex])
