@@ -90,6 +90,19 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.transcript.TranscriptTests
         GENERATE_INFOPLIST_FILE: YES
         TARGETED_DEVICE_FAMILY: "1"
+  TranscriptCoreTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Packages/TranscriptCore/Tests/TranscriptCoreTests
+    dependencies:
+      - package: TranscriptCore
+        product: TranscriptCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.transcript.TranscriptCoreTests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1"
 
 schemes:
   TranscriptTests:
@@ -101,6 +114,14 @@ schemes:
       config: Debug
       targets:
         - TranscriptTests
+  TranscriptCore:
+    build:
+      targets:
+        TranscriptCoreTests: [test]
+    test:
+      config: Debug
+      targets:
+        - TranscriptCoreTests
   Transcript:
     build:
       targets:
