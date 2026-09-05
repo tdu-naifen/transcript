@@ -7,7 +7,7 @@ struct HomeView: View {
     @Binding var path: NavigationPath
     let isRecordingActive: () -> Bool
     let macConnection: MacConnectionModel
-    @State private var model = HomeModel()
+    @State private var model: HomeModel
     @State private var showsSpeakers = false
     @State private var showsDates = false
     @State private var showsConnection = false
@@ -25,6 +25,11 @@ struct HomeView: View {
         _path = path
         self.isRecordingActive = isRecordingActive
         self.macConnection = macConnection
+        _model = State(initialValue: HomeModel(
+            searchHandler: { query in
+                try await SearchRepository(services.database).search(query)
+            }
+        ))
     }
 
     var body: some View {
@@ -55,12 +60,49 @@ struct HomeView: View {
                                 description: Text("home.dates.invalid.description")
                             )
                             Button("home.dates.edit") { showsDates = true }
-                        } else {
+                        } else if model.isLoading && model.results.isEmpty {
+                            ProgressView("library.loading")
+                        } else if let error = model.errorMessage {
                             ContentUnavailableView(
-                                "home.search.unavailable.title", systemImage: "magnifyingglass",
-                                description: Text("home.search.unavailable.description")
+                                "home.search.failed.title", systemImage: "exclamationmark.triangle",
+                                description: Text(error)
                             )
-                            .accessibilityIdentifier("homeSearchUnavailable")
+                            .accessibilityIdentifier("homeSearchError")
+                        } else if model.results.isEmpty && model.hasLoaded {
+                            ContentUnavailableView(
+                                "home.search.empty.title", systemImage: "magnifyingglass",
+                                description: Text("home.search.empty.description")
+                            )
+                            .accessibilityIdentifier("homeSearchEmpty")
+                        } else {
+                            ForEach(model.results, id: \.meeting.id) { result in
+                                Section {
+                                    NavigationLink(value: result.meeting) {
+                                        MeetingRow(
+                                            meeting: result.meeting,
+                                            participants: result.participants.map(\.speaker)
+                                        )
+                                    }
+                                    if result.titleMatched {
+                                        Label("home.search.titleMatched", systemImage: "textformat")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    ForEach(result.hits, id: \.utteranceId) { hit in
+                                        NavigationLink {
+                                            meetingDetail(result.meeting, initialSeekMs: hit.startMs)
+                                        } label: {
+                                            hitLabel(hit)
+                                        }
+
+                                        .accessibilityIdentifier("homeSearchHit")
+                                    }
+                                }
+                            }
+                            if model.nextCursor != nil {
+                                Button("home.search.loadMore") { model.loadMore() }
+                                    .disabled(model.isLoading)
+                            }
                         }
                     }
                 } else {
@@ -141,9 +183,44 @@ struct HomeView: View {
             .fullScreenCover(item: $macSubmissionMeeting) { meeting in
                 MacSubmissionView(meeting: meeting, model: macConnection)
             }
-            .refreshable { await library.reload() }
+            .refreshable {
+                await library.reload()
+                if model.hasSearchConditions { model.resetAndSearch() }
+            }
             .task { await library.reload() }
+            .onChange(of: model.query) { _, _ in model.filtersChanged() }
+            .onChange(of: model.speakerIDs) { _, _ in model.filtersChanged() }
+            .onChange(of: model.usesDateRange) { _, _ in model.filtersChanged() }
+            .onChange(of: model.startDate) { _, _ in
+                if model.usesDateRange { model.filtersChanged() }
+            }
+            .onChange(of: model.endDate) { _, _ in
+                if model.usesDateRange { model.filtersChanged() }
+            }
         }
+    }
+
+    @ViewBuilder
+    private func hitLabel(_ hit: SearchTextHit) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(verbatim: hit.text).lineLimit(2)
+            Text(verbatim: Format.clock(Double(hit.startMs) / 1000))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func meetingDetail(_ meeting: Meeting, initialSeekMs: Int? = nil) -> some View {
+            MeetingDetailView(
+                meeting: meeting,
+                audioURL: library.audioURL(for: meeting),
+                services: services,
+                isRecordingActive: isRecordingActive(),
+                onProcessByMac: { macSubmissionMeeting = meeting },
+                macUnavailableReason: macConnection.submissionBlockReason(meetingID: meeting.id),
+                initialSeekMs: initialSeekMs,
+                onMeetingRenamed: { Task { await library.reload() } }
+            )
     }
 
     private var searchField: some View {
