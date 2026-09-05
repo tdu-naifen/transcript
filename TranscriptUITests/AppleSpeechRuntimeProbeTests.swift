@@ -11,8 +11,9 @@ final class AppleSpeechRuntimeProbeTests: XCTestCase {
         let installed = await SpeechTranscriber.installedLocales
 
         for locale in requested {
+            let supportedLocale = await SpeechTranscriber.supportedLocale(equivalentTo: locale)
             let matched = try XCTUnwrap(
-                await SpeechTranscriber.supportedLocale(equivalentTo: locale),
+                supportedLocale,
                 "No SpeechTranscriber locale equivalent to \(locale.identifier)"
             )
             let transcriber = SpeechTranscriber(locale: matched, preset: .timeIndexedProgressiveTranscription)
