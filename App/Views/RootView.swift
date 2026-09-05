@@ -47,6 +47,7 @@ private struct ReadyView: View {
     @State private var homePath = NavigationPath()
     @State private var recordingsPath = NavigationPath()
     @State private var settingsPath = NavigationPath()
+    @State private var macConnection = MacConnectionModel()
     @State private var isStartingRecording = false
     @State private var isStoppingRecording = false
     @State private var namingError: String?
@@ -100,7 +101,8 @@ private struct ReadyView: View {
                         services: services,
                         library: library,
                         path: $homePath,
-                        isRecordingActive: { hasRecordingSession }
+                        isRecordingActive: { hasRecordingSession },
+                        macConnection: macConnection
                     )
                 }
                 Tab("Meetings", systemImage: "list.bullet", value: AppTab.meetings) {

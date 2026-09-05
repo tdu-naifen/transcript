@@ -6,20 +6,25 @@ struct HomeView: View {
     let library: LibraryModel
     @Binding var path: NavigationPath
     let isRecordingActive: () -> Bool
+    let macConnection: MacConnectionModel
     @State private var model = HomeModel()
     @State private var showsSpeakers = false
     @State private var showsDates = false
+    @State private var showsConnection = false
+    @State private var macSubmissionMeeting: Meeting?
 
     init(
         services: AppServices,
         library: LibraryModel,
         path: Binding<NavigationPath>,
-        isRecordingActive: @escaping () -> Bool
+        isRecordingActive: @escaping () -> Bool,
+        macConnection: MacConnectionModel
     ) {
         self.services = services
         self.library = library
         _path = path
         self.isRecordingActive = isRecordingActive
+        self.macConnection = macConnection
     }
 
     var body: some View {
@@ -95,6 +100,16 @@ struct HomeView: View {
                 Color.clear.frame(height: FloatingRecordButtonMetrics.listBottomClearance)
             }
             .navigationTitle("home.title")
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showsConnection = true
+                    } label: {
+                        Label("Connect to Mac", systemImage: "desktopcomputer")
+                    }
+                    .accessibilityIdentifier("homeConnectionButton")
+                }
+            }
             .navigationDestination(for: Meeting.self) { meeting in
                 // A meeting-title tap never requests playback. Search-hit routing is
                 // added only once SearchRepository's result contract is frozen.
@@ -103,11 +118,29 @@ struct HomeView: View {
                     audioURL: library.audioURL(for: meeting),
                     services: services,
                     isRecordingActive: isRecordingActive(),
+                    onProcessByMac: {
+                        macSubmissionMeeting = meeting
+                    },
+                    macUnavailableReason: macConnection.submissionBlockReason(meetingID: meeting.id),
                     onMeetingRenamed: { Task { await library.reload() } }
                 )
             }
             .sheet(isPresented: $showsSpeakers) { speakerPicker }
             .sheet(isPresented: $showsDates) { datePicker }
+            .sheet(isPresented: $showsConnection) {
+                NavigationStack {
+                    ConnectionView(model: macConnection)
+                        .navigationTitle("Connect to Mac")
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("common.done") { showsConnection = false }
+                            }
+                        }
+                }
+            }
+            .fullScreenCover(item: $macSubmissionMeeting) { meeting in
+                MacSubmissionView(meeting: meeting, model: macConnection)
+            }
             .refreshable { await library.reload() }
             .task { await library.reload() }
         }
