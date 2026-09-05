@@ -34,6 +34,9 @@ struct RecordingsListView: View {
                                         participants: model.participants[meeting.id] ?? []
                                     )
                                 }
+                                .onAppear {
+                                    loadMoreIfNeeded(meeting)
+                                }
                                 .disabled(model.deletingIDs.contains(meeting.id))
                                 .swipeActions(allowsFullSwipe: false) {
                                     Button(role: .destructive) { pendingDeletion = meeting } label: {
@@ -139,6 +142,11 @@ struct RecordingsListView: View {
               let meeting = model.meetings.first(where: { $0.id == id }) else { return }
         path.append(meeting)
         #endif
+    }
+
+    private func loadMoreIfNeeded(_ meeting: Meeting) {
+        guard meeting.id == model.meetings.last?.id else { return }
+        Task { await model.loadMore() }
     }
 }
 
