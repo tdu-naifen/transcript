@@ -2,83 +2,179 @@
   "sourceLanguage" : "en",
   "strings" : {
     "Cancel" : {
+      "extractionState" : "stale",
       "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "取消" } }
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消"
+          }
+        }
       }
     },
     "Confirm meeting name" : {
+      "extractionState" : "stale",
       "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "确认会议名称" } }
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "确认会议名称"
+          }
+        }
       }
     },
     "Done" : {
+      "extractionState" : "stale",
       "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "完成" } }
-      }
-    },
-    "Enter or confirm a name for this meeting." : {
-      "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请输入或确认这场会议的名称。" } }
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成"
+          }
+        }
       }
     },
     "Edit speaker name" : {
+      "extractionState" : "stale",
       "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "编辑说话人姓名" } }
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "编辑说话人姓名"
+          }
+        }
+      }
+    },
+    "Enter or confirm a name for this meeting." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请输入或确认这场会议的名称。"
+          }
+        }
       }
     },
     "Identifying speaker…" : {
+      "extractionState" : "stale",
       "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在识别说话人…" } }
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在识别说话人…"
+          }
+        }
       }
     },
     "Keep Default" : {
+      "extractionState" : "stale",
       "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "保留默认名称" } }
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保留默认名称"
+          }
+        }
       }
     },
     "Meeting name" : {
+      "extractionState" : "stale",
       "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "会议名称" } }
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会议名称"
+          }
+        }
       }
     },
     "No transcript" : {
+      "extractionState" : "stale",
       "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "没有转写内容" } }
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "没有转写内容"
+          }
+        }
       }
     },
     "Reprocess" : {
+      "extractionState" : "stale",
       "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新处理" } }
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新处理"
+          }
+        }
       }
     },
     "Reprocess the original audio to create a transcript." : {
+      "extractionState" : "stale",
       "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "使用原始音频重新处理并生成转写。" } }
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "使用原始音频重新处理并生成转写。"
+          }
+        }
       }
     },
     "Save" : {
+      "extractionState" : "stale",
       "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "保存" } }
-      }
-    },
-    "Speaker name" : {
-      "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "说话人姓名" } }
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "保存"
+          }
+        }
       }
     },
     "Speaker Insights" : {
+      "extractionState" : "stale",
       "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "说话人洞察" } }
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "说话人洞察"
+          }
+        }
+      }
+    },
+    "Speaker name" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "说话人姓名"
+          }
+        }
       }
     },
     "This name is used for this speaker in every meeting." : {
+      "extractionState" : "stale",
       "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此姓名会用于所有会议中的同一说话人。" } }
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此姓名会用于所有会议中的同一说话人。"
+          }
+        }
       }
     },
     "Unknown speaker" : {
+      "extractionState" : "stale",
       "localizations" : {
-        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未知说话人" } }
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未知说话人"
+          }
+        }
       }
     }
   },

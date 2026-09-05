@@ -1,0 +1,52 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "CFBundleName" : {
+      "comment" : "Bundle name",
+      "extractionState" : "extracted_with_value",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "Transcript"
+          }
+        }
+      }
+    },
+    "NSLocalNetworkUsageDescription" : {
+      "comment" : "Privacy - Local Network Usage Description",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transcript uses the local network to discover your own Mac so recordings and transcripts can be synced directly between your devices, without any server in between."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transcript 使用本地网络来发现你自己的 Mac，以便录音和转写可以在你的设备之间直接同步，不经过任何服务器。"
+          }
+        }
+      }
+    },
+    "NSMicrophoneUsageDescription" : {
+      "comment" : "Privacy - Microphone Usage Description",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transcript uses the microphone to record meetings and transcribe them entirely on this device. Audio never leaves your iPhone unless you choose to sync it to your own Mac."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Transcript 使用麦克风录制会议，并完全在本设备上进行转写。除非你选择同步到自己的 Mac，音频不会离开你的 iPhone。"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

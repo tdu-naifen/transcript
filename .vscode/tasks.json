@@ -1,0 +1,80 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"label": "Focused Stop Name Acceptance",
+			"type": "shell",
+			"command": "/usr/bin/xcodebuild",
+			"args": [
+				"-project",
+				"Transcript.xcodeproj",
+				"-scheme",
+				"Transcript",
+				"-destination",
+				"platform=iOS Simulator,id=48540309-C15F-4F0C-83EF-C0F096D1B542",
+				"-derivedDataPath",
+				"DerivedData",
+				"-resultBundlePath",
+				"DerivedData/TestResults/StopNameAcceptance.xcresult",
+				"-only-testing:TranscriptUITests/TranscriptUITests/testRecordingExpandsCollapsesAndStops",
+				"test"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Boot Acceptance Simulator",
+			"type": "shell",
+			"command": "/usr/bin/xcrun",
+			"args": [
+				"simctl",
+				"boot",
+				"48540309-C15F-4F0C-83EF-C0F096D1B542"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "test"
+		},
+		{
+			"label": "Commit Mandatory Meeting Name Confirmation",
+			"type": "shell",
+			"command": "/usr/bin/git",
+			"args": [
+				"commit",
+				"-m",
+				"Require explicit nonblank meeting name confirmation",
+				"--",
+				"App/Views/RootView.swift",
+				"TranscriptUITests/TranscriptUITests.swift"
+			],
+			"isBackground": false,
+			"problemMatcher": [],
+			"group": "build"
+		},
+		{
+			"label": "Apple Speech Runtime Probe",
+			"type": "shell",
+			"command": "/usr/bin/xcodebuild",
+			"args": [
+				"-project",
+				"Transcript.xcodeproj",
+				"-scheme",
+				"Transcript",
+				"-destination",
+				"platform=iOS Simulator,id=48540309-C15F-4F0C-83EF-C0F096D1B542",
+				"-derivedDataPath",
+				"DerivedData",
+				"-resultBundlePath",
+				"DerivedData/TestResults/AppleSpeechProbe.xcresult",
+				"-only-testing:TranscriptUITests/AppleSpeechRuntimeProbeTests/testEnglishAndChineseSystemASRAvailability",
+				"test"
+			],
+			"isBackground": false,
+			"problemMatcher": [
+				"$msCompile"
+			],
+			"group": "test"
+		}
+	]
+}

@@ -31,9 +31,15 @@ final class TranscriptUITests: XCTestCase {
         app.buttons["collapseRecordingButton"].tap()
 
         app.buttons["miniStopButton"].tap()
-        XCTAssertTrue(app.textFields["meetingNameField"].waitForExistence(timeout: 3))
-        XCTAssertFalse(app.textFields["meetingNameField"].value as? String == "")
-        app.buttons["meetingNameSaveButton"].tap()
+        let nameField = app.textFields["meetingNameField"]
+        let saveButton = app.buttons["meetingNameSaveButton"]
+        XCTAssertTrue(nameField.waitForExistence(timeout: 3))
+        XCTAssertFalse(nameField.value as? String == "")
+        replaceText(in: nameField, with: "")
+        XCTAssertFalse(saveButton.isEnabled)
+        nameField.typeText("Confirmed Recording")
+        XCTAssertTrue(saveButton.isEnabled)
+        saveButton.tap()
         XCTAssertTrue(app.buttons["globalRecordButton"].waitForExistence(timeout: 5))
     }
 

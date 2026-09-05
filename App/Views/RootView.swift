@@ -24,6 +24,7 @@ struct RootView: View {
         // `Text`/`Label` (via `LocalizedStringKey`) re-renders in the new language the
         // instant Settings changes it — no app restart needed.
         .environment(\.locale, localization.language.locale ?? .autoupdatingCurrent)
+        .preferredColorScheme(.light)
     }
 }
 
@@ -136,9 +137,9 @@ private struct ReadyView: View {
         .alert(acceptanceText("Confirm meeting name"), isPresented: $isMeetingNamingPresented) {
             TextField(acceptanceText("Meeting name"), text: $meetingName)
                 .accessibilityIdentifier("meetingNameField")
-            Button(acceptanceText("Keep Default"), role: .cancel) {}
             Button(acceptanceText("Save")) { saveMeetingName() }
                 .accessibilityIdentifier("meetingNameSaveButton")
+                .disabled(meetingName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         } message: {
             Text(acceptanceText("Enter or confirm a name for this meeting."))
         }

@@ -1,0 +1,134 @@
+{"type":"server-started","port":55917,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:55917/?key=0f07159dac4d06925d63766eb1d1c8ad77106c8d58ec8a4c064cf242fa9203d0","screen_dir":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content","state_dir":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/state","idle_timeout_ms":14400000}
+{"type":"screen-added","file":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content/ios-mac-handoff.html"}
+{"source":"user-event","type":"choice","value":"toggleConnection","prototype":true,"timestamp":1788628219661}
+{"source":"user-event","type":"choice","value":"toggleConnection","prototype":true,"timestamp":1788628222223}
+{"source":"user-event","type":"choice","value":"toggleConnection","prototype":true,"timestamp":1788628222669}
+{"source":"user-event","type":"choice","value":"toggleConnection","prototype":true,"timestamp":1788628224624}
+{"source":"user-event","type":"choice","value":"detail","prototype":true,"timestamp":1788628226340}
+{"source":"user-event","type":"click","text":"产品设计周会● ●Alex, Otter · 32:18","choice":"open-meeting","id":null,"timestamp":1788628226340}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788628230081}
+{"source":"user-event","type":"choice","value":"scope-enhance","prototype":true,"timestamp":1788628236861}
+{"source":"user-event","type":"choice","value":"detail","prototype":true,"timestamp":1788628237936}
+{"source":"user-event","type":"click","text":"产品设计周会● ●Alex, Otter · 32:18","choice":"open-meeting","id":null,"timestamp":1788628237936}
+{"source":"user-event","type":"choice","value":"toggleConnection","prototype":true,"timestamp":1788628240087}
+{"source":"user-event","type":"click","text":"Process by Mac","choice":"open-process-card","id":"processButton","timestamp":1788628245785}
+{"source":"user-event","type":"choice","value":"submit","prototype":true,"timestamp":1788628247875}
+{"source":"user-event","type":"choice","value":"next","prototype":true,"timestamp":1788628250234}
+{"source":"user-event","type":"choice","value":"next","prototype":true,"timestamp":1788628251920}
+{"source":"user-event","type":"choice","value":"next","prototype":true,"timestamp":1788628253050}
+{"source":"user-event","type":"choice","value":"next","prototype":true,"timestamp":1788628253904}
+{"source":"user-event","type":"choice","value":"next","prototype":true,"timestamp":1788628260467}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788628400831}
+{"source":"user-event","type":"choice","value":"detail","prototype":true,"timestamp":1788628658808}
+{"source":"user-event","type":"click","text":"产品设计周会● ●Alex, Otter · 32:18","choice":"open-meeting","id":null,"timestamp":1788628658808}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788628660114}
+{"source":"user-event","type":"choice","value":"scope-enhance","prototype":true,"timestamp":1788628921875}
+{"source":"user-event","type":"choice","value":"toggleConnection","prototype":true,"timestamp":1788628923244}
+{"source":"user-event","type":"choice","value":"toggleConnection","prototype":true,"timestamp":1788628924655}
+{"source":"user-event","type":"choice","value":"toggleConnection","prototype":true,"timestamp":1788628925812}
+{"source":"user-event","type":"choice","value":"toggleConnection","prototype":true,"timestamp":1788628928215}
+{"source":"user-event","type":"choice","value":"scope-analysis","prototype":true,"timestamp":1788628929963}
+{"source":"user-event","type":"choice","value":"detail","prototype":true,"timestamp":1788628932863}
+{"source":"user-event","type":"click","text":"产品设计周会● ●Alex, Otter · 32:18","choice":"open-meeting","id":null,"timestamp":1788628932863}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788628936099}
+{"source":"user-event","type":"click","text":"⌘Connect to Mac连接你的 Mac，开始深度处理›","choice":"open-connection","id":null,"timestamp":1788628936848}
+{"source":"user-event","type":"choice","value":"connect","prototype":true,"timestamp":1788628938725}
+{"source":"user-event","type":"choice","value":"detail","prototype":true,"timestamp":1788628939792}
+{"source":"user-event","type":"click","text":"产品设计周会● ●Alex, Otter · 32:18","choice":"open-meeting","id":null,"timestamp":1788628939792}
+{"source":"user-event","type":"click","text":"Process by Mac","choice":"open-process-card","id":"processButton","timestamp":1788628941708}
+{"source":"user-event","type":"choice","value":"submit","prototype":true,"timestamp":1788628942566}
+{"source":"user-event","type":"choice","value":"next","prototype":true,"timestamp":1788628947767}
+{"source":"user-event","type":"choice","value":"next","prototype":true,"timestamp":1788628950459}
+{"source":"user-event","type":"choice","value":"next","prototype":true,"timestamp":1788628951601}
+{"source":"user-event","type":"choice","value":"next","prototype":true,"timestamp":1788628953835}
+{"source":"user-event","type":"choice","value":"next","prototype":true,"timestamp":1788628954828}
+{"type":"screen-added","file":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content/blue-swipe-review-v2.html"}
+{"source":"user-event","type":"choice","value":"submit","prototype":true,"timestamp":1788629021603}
+{"source":"user-event","type":"choice","value":"ack","prototype":true,"timestamp":1788629022704}
+{"source":"user-event","type":"choice","value":"detail","prototype":true,"timestamp":1788629022936}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788629026698}
+{"source":"user-event","type":"choice","value":"detail","prototype":true,"timestamp":1788629027766}
+{"source":"user-event","type":"choice","value":"submit","prototype":true,"timestamp":1788629047086}
+{"source":"user-event","type":"choice","value":"ack","prototype":true,"timestamp":1788629048188}
+{"source":"user-event","type":"choice","value":"detail","prototype":true,"timestamp":1788629048420}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629048453}
+{"source":"user-event","type":"choice","value":"finish","prototype":true,"timestamp":1788629048485}
+{"source":"user-event","type":"choice","value":"receipt","prototype":true,"timestamp":1788629048519}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629048552}
+{"source":"user-event","type":"choice","value":"preview-review","prototype":true,"timestamp":1788629048586}
+{"source":"user-event","type":"click","text":"01 确认页","choice":"preview-review","id":null,"timestamp":1788629048586}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629048619}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629048652}
+{"source":"user-event","type":"choice","value":"submit","prototype":true,"timestamp":1788629048655}
+{"source":"user-event","type":"choice","value":"ack","prototype":true,"timestamp":1788629049756}
+{"source":"user-event","type":"choice","value":"preview-review","prototype":true,"timestamp":1788629049802}
+{"source":"user-event","type":"click","text":"01 确认页","choice":"preview-review","id":null,"timestamp":1788629049802}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788629059908}
+{"source":"user-event","type":"choice","value":"preview-detail","prototype":true,"timestamp":1788629067993}
+{"source":"user-event","type":"click","text":"回到会议详情","choice":"preview-detail","id":null,"timestamp":1788629067993}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788629069374}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629071217}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629073077}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629074192}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629074599}
+{"source":"user-event","type":"choice","value":"preview-detail","prototype":true,"timestamp":1788629077784}
+{"source":"user-event","type":"click","text":"回到会议详情","choice":"preview-detail","id":null,"timestamp":1788629077784}
+{"source":"user-event","type":"choice","value":"preview-review","prototype":true,"timestamp":1788629078500}
+{"source":"user-event","type":"click","text":"01 确认页","choice":"preview-review","id":null,"timestamp":1788629078500}
+{"source":"user-event","type":"choice","value":"detail","prototype":true,"timestamp":1788629079561}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788629080751}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629082022}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629083189}
+{"source":"user-event","type":"choice","value":"detail","prototype":true,"timestamp":1788629089869}
+{"type":"screen-added","file":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content/blue-swipe-review-v3.html"}
+{"source":"user-event","type":"choice","value":"submit","prototype":true,"timestamp":1788629095338}
+{"source":"user-event","type":"choice","value":"ack","prototype":true,"timestamp":1788629096439}
+{"source":"user-event","type":"choice","value":"detail","prototype":true,"timestamp":1788629100655}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788629102668}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788629104844}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788629106727}
+{"type":"screen-updated","file":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content/blue-swipe-review-v3.html"}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629108578}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629109589}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629110498}
+{"source":"user-event","type":"choice","value":"detail","prototype":true,"timestamp":1788629122279}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788629123303}
+{"source":"user-event","type":"choice","value":"detail","prototype":true,"timestamp":1788629127513}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788629138299}
+{"type":"screen-updated","file":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content/blue-swipe-review-v3.html"}
+{"source":"user-event","type":"choice","value":"preview-detail","prototype":true,"timestamp":1788629142287}
+{"source":"user-event","type":"click","text":"回到会议详情","choice":"preview-detail","id":null,"timestamp":1788629142287}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788629144352}
+{"type":"screen-updated","file":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content/blue-swipe-review-v3.html"}
+{"type":"screen-updated","file":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content/blue-swipe-review-v3.html"}
+{"type":"screen-updated","file":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content/blue-swipe-review-v3.html"}
+{"type":"screen-updated","file":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content/blue-swipe-review-v3.html"}
+{"type":"screen-updated","file":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content/blue-swipe-review-v3.html"}
+{"type":"screen-updated","file":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content/blue-swipe-review-v3.html"}
+{"source":"user-event","type":"choice","value":"submit","prototype":true,"timestamp":1788629186955}
+{"source":"user-event","type":"choice","value":"ack","prototype":true,"timestamp":1788629188057}
+{"source":"user-event","type":"choice","value":"detail","prototype":true,"timestamp":1788629188154}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629188186}
+{"source":"user-event","type":"choice","value":"finish","prototype":true,"timestamp":1788629188219}
+{"source":"user-event","type":"choice","value":"receipt","prototype":true,"timestamp":1788629188253}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629188286}
+{"source":"user-event","type":"choice","value":"preview-review","prototype":true,"timestamp":1788629188319}
+{"source":"user-event","type":"click","text":"01 确认页","choice":"preview-review","id":null,"timestamp":1788629188319}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629188353}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629188386}
+{"source":"user-event","type":"choice","value":"submit","prototype":true,"timestamp":1788629188389}
+{"source":"user-event","type":"choice","value":"ack","prototype":true,"timestamp":1788629189491}
+{"source":"user-event","type":"choice","value":"preview-review","prototype":true,"timestamp":1788629189537}
+{"source":"user-event","type":"click","text":"01 确认页","choice":"preview-review","id":null,"timestamp":1788629189537}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629203026}
+{"source":"user-event","type":"choice","value":"toggle","prototype":true,"timestamp":1788629203778}
+{"source":"user-event","type":"choice","value":"preview-detail","prototype":true,"timestamp":1788629204995}
+{"source":"user-event","type":"click","text":"回到会议详情","choice":"preview-detail","id":null,"timestamp":1788629204995}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788629230562}
+{"source":"user-event","type":"choice","value":"preview-detail","prototype":true,"timestamp":1788629982552}
+{"source":"user-event","type":"click","text":"回到会议详情","choice":"preview-detail","id":null,"timestamp":1788629982552}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788629983790}
+{"source":"user-event","type":"choice","value":"home","prototype":true,"timestamp":1788630155438}
+{"type":"screen-added","file":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content/home-search-connect-v4.html"}
+{"type":"screen-updated","file":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content/home-search-connect-v4.html"}
+{"type":"screen-added","file":"/Users/tingzhen/Desktop/transcript/.superpowers/brainstorm/18066-1788628090/content/async-sync-v5.html"}

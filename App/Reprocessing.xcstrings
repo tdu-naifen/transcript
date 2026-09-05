@@ -1,35 +1,325 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "Another meeting is already being reprocessed." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "另一场会议正在重新处理中。" } } } },
-    "Cancel" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "取消" } } } },
-    "Cancel Reprocessing" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "取消重新处理" } } } },
-    "Checking known voiceprints…" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在检查已知声纹…" } } } },
-    "Detected speakers" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "检测到的说话人" } } } },
-    "Detecting speakers with Sortformer…" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在使用 Sortformer 检测说话人…" } } } },
-    "Done" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "完成" } } } },
-    "Known voiceprint matches" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已知声纹匹配" } } } },
-    "Known-speaker identification failed." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已知说话人识别失败。" } } } },
-    "Loading audio…" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在加载音频…" } } } },
-    "Name Speakers" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "为说话人命名" } } } },
-    "No speech was detected. The current transcript was kept." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未检测到语音，当前转写已保留。" } } } },
-    "Reprocess" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新处理" } } } },
-    "Reprocessing Complete" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新处理完成" } } } },
-    "Reprocessing Failed" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新处理失败" } } } },
-    "Reprocessing…" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在重新处理…" } } } },
-    "Required models are not installed." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "所需模型尚未安装。" } } } },
-    "Retry" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重试" } } } },
-    "Saving new transcript…" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在保存新转写…" } } } },
-    "Speaker detection and known-voiceprint identification both ran." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "说话人检测与已知声纹识别均已运行。" } } } },
-    "Speaker detection failed." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "说话人检测失败。" } } } },
-    "Speakers were detected, but known-voiceprint identification was unavailable." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已检测说话人，但已知声纹识别不可用。" } } } },
-    "Stop recording before reprocessing." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请先停止录音，再重新处理。" } } } },
-    "The current transcript remains available until the new result is complete." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "新结果完成前，当前转写会保持可用。" } } } },
-    "The current transcript stays unchanged unless reprocessing finishes successfully." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "只有重新处理成功完成后，当前转写才会被替换。" } } } },
-    "The current transcript was not changed." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "当前转写未被更改。" } } } },
-    "Transcribing with Nemotron…" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在使用 Nemotron 转写…" } } } },
-    "Transcription failed." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "转写失败。" } } } },
-    "Utterances" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "转写段落" } } } }
+    "Another meeting is already being reprocessed." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "另一场会议正在重新处理中。"
+          }
+        }
+      }
+    },
+    "Cancel" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消"
+          }
+        }
+      }
+    },
+    "Cancel Reprocessing" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "取消重新处理"
+          }
+        }
+      }
+    },
+    "Checking known voiceprints…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在检查已知声纹…"
+          }
+        }
+      }
+    },
+    "Detected speakers" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "检测到的说话人"
+          }
+        }
+      }
+    },
+    "Detecting speakers with Sortformer…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在使用 Sortformer 检测说话人…"
+          }
+        }
+      }
+    },
+    "Done" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "完成"
+          }
+        }
+      }
+    },
+    "Known voiceprint matches" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已知声纹匹配"
+          }
+        }
+      }
+    },
+    "Known-speaker identification failed." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已知说话人识别失败。"
+          }
+        }
+      }
+    },
+    "Loading audio…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在加载音频…"
+          }
+        }
+      }
+    },
+    "Name Speakers" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "为说话人命名"
+          }
+        }
+      }
+    },
+    "No speech was detected. The current transcript was kept." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未检测到语音，当前转写已保留。"
+          }
+        }
+      }
+    },
+    "Reprocess" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新处理"
+          }
+        }
+      }
+    },
+    "Reprocessing Complete" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新处理完成"
+          }
+        }
+      }
+    },
+    "Reprocessing Failed" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重新处理失败"
+          }
+        }
+      }
+    },
+    "Reprocessing…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在重新处理…"
+          }
+        }
+      }
+    },
+    "Required models are not installed." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "所需模型尚未安装。"
+          }
+        }
+      }
+    },
+    "Retry" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重试"
+          }
+        }
+      }
+    },
+    "Saving new transcript…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在保存新转写…"
+          }
+        }
+      }
+    },
+    "Speaker detection and known-voiceprint identification both ran." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "说话人检测与已知声纹识别均已运行。"
+          }
+        }
+      }
+    },
+    "Speaker detection failed." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "说话人检测失败。"
+          }
+        }
+      }
+    },
+    "Speakers were detected, but known-voiceprint identification was unavailable." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已检测说话人，但已知声纹识别不可用。"
+          }
+        }
+      }
+    },
+    "Stop recording before reprocessing." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请先停止录音，再重新处理。"
+          }
+        }
+      }
+    },
+    "The current transcript remains available until the new result is complete." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "新结果完成前，当前转写会保持可用。"
+          }
+        }
+      }
+    },
+    "The current transcript stays unchanged unless reprocessing finishes successfully." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "只有重新处理成功完成后，当前转写才会被替换。"
+          }
+        }
+      }
+    },
+    "The current transcript was not changed." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "当前转写未被更改。"
+          }
+        }
+      }
+    },
+    "Transcribing with Nemotron…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在使用 Nemotron 转写…"
+          }
+        }
+      }
+    },
+    "Transcription failed." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "转写失败。"
+          }
+        }
+      }
+    },
+    "Utterances" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "转写段落"
+          }
+        }
+      }
+    }
   },
   "version" : "1.1"
 }

@@ -13,6 +13,8 @@ final class TranscriptionModel {
     enum RecordingError: Error {
         case requiredModelsMissing
         case processingNotRunning
+        case noTranscriptProduced
+        case incompleteSpeakerAssignments(count: Int)
     }
 
     enum Status: Equatable {
@@ -113,6 +115,7 @@ final class TranscriptionModel {
         }
         do {
             try await reconcileSpeakerAssignments()
+            try await requireCompleteSpeakerAssignments()
         } catch {
             if failure == nil { failure = error }
             errorMessageForDiarization(String(describing: error))
@@ -252,6 +255,14 @@ final class TranscriptionModel {
                 deviceId: services.deviceId
             )
         }
+    }
+
+    private func requireCompleteSpeakerAssignments() async throws {
+        guard let meetingId = currentMeetingId else { return }
+        let utterances = try await UtteranceRepository(services.database).fetch(meetingId: meetingId)
+        guard !utterances.isEmpty else { throw RecordingError.noTranscriptProduced }
+        let count = SpeakerOverlapAssigner.unassignedCount(in: utterances)
+        guard count == 0 else { throw RecordingError.incompleteSpeakerAssignments(count: count) }
     }
 
     private func errorMessageForDiarization(_ message: String) {

@@ -1,0 +1,45 @@
+const assert = require('node:assert/strict');
+const { chromium } = require('/Users/tingzhen/.npm/_npx/e41f203b7505f1fb/node_modules/playwright');
+(async () => {
+ const browser = await chromium.launch({headless:true, executablePath:'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome'});
+ try {
+ const page = await browser.newPage({viewport:{width:1360,height:1120}});
+ const errors=[]; page.on('pageerror',e=>errors.push(e.message));
+ await page.goto('http://localhost:55917/?key=0f07159dac4d06925d63766eb1d1c8ad77106c8d58ec8a4c064cf242fa9203d0');
+ await page.waitForSelector('#cardGrip');
+ assert.equal(await page.locator('#review').isVisible(),true);
+ const grip=await page.locator('#cardGrip').boundingBox();
+ const x=grip.x+grip.width/2,y=grip.y+grip.height/2;
+ await page.mouse.move(x,y); await page.mouse.down(); await page.mouse.move(x,y-45,{steps:5});
+ assert.match(await page.locator('#reviewCard').getAttribute('style'),/45px/);
+ await page.mouse.up(); await page.waitForTimeout(400);
+ assert.equal(await page.locator('#review').isVisible(),true,'Short drag must bounce back');
+ await page.mouse.move(x,y); await page.mouse.down(); await page.mouse.move(x,y-120,{steps:8});
+ assert.equal(await page.locator('#swipeText').textContent(),'Release to Submit');
+ await page.mouse.up();
+ assert.equal(await page.locator('#receiptStatus').textContent(),'Sending');
+ await page.waitForFunction(()=>document.getElementById('receiptStatus').textContent==='Received by Mac');
+ await page.screenshot({path:__dirname+'/blue-receipt-desktop.png',fullPage:true});
+ await page.locator('#doneButton').click();
+ assert.equal(await page.locator('#detail').isVisible(),true);
+ await page.locator('#connectionToggle').click();
+ await page.getByRole('button',{name:'模拟 Mac 处理完成',exact:true}).click();
+ await page.locator('#processButton').click();
+ assert.equal(await page.locator('#receiptStatus').textContent(),'Received by Mac','Offline phone keeps last received status');
+ await page.locator('#connectionToggle').click();
+ assert.equal(await page.locator('#receiptStatus').textContent(),'Completed');
+ await page.getByRole('button',{name:'01 确认页',exact:true}).click();
+ await page.locator('#connectionToggle').click();
+ await page.locator('#swipeZone').focus(); await page.keyboard.press('Enter');
+ assert.equal(await page.locator('#review').isVisible(),true,'Offline submit blocked');
+ await page.locator('#connectionToggle').click();
+ await page.locator('#swipeZone').focus(); await page.keyboard.press('Enter');
+ await page.waitForFunction(()=>document.getElementById('receiptStatus').textContent==='Received by Mac');
+ await page.getByRole('button',{name:'01 确认页',exact:true}).click();
+ await page.setViewportSize({width:390,height:844});
+ assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true,'No narrow screen horizontal overflow');
+ await page.screenshot({path:__dirname+'/blue-review-mobile.png',fullPage:true});
+ assert.deepEqual(errors,[]);
+ console.log('PASS: browser drag following; short-drag reset; swipe submission; receipt; offline guards; result sync; keyboard submission; responsive width; no JS errors.');
+ } finally {await browser.close();}
+})().catch(e=>{console.error(e);process.exitCode=1;});

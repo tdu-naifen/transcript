@@ -42,14 +42,12 @@ import Testing
         #expect(index == nil)
     }
 
-    @Test func utteranceSpanningTwoSpeakersPicksTheLargerOverlap() {
-        // Utterance [0, 3000)ms; speaker 0 covers [0,2)s (2s overlap), speaker 1
-        // covers [2,3)s (1s overlap) — speaker 0 wins.
+    @Test func utteranceSpanningTwoSpeakersRemainsUnassigned() {
         let segments = [segment(0, 0, 2), segment(1, 2, 3)]
         let index = SpeakerOverlapAssigner.speakerIndex(
             utteranceStartMs: 0, utteranceEndMs: 3000, segments: segments
         )
-        #expect(index == 0)
+        #expect(index == nil)
     }
 
     @Test func tiesRemainUnassignedRegardlessOfOrder() {
@@ -72,6 +70,20 @@ import Testing
             utteranceStartMs: 0, utteranceEndMs: 3000, segments: segments
         )
         #expect(index == 1)
+    }
+
+    @Test func incompleteAssignmentsAreDetectedBeforePublication() {
+        let assigned = Utterance(
+            meetingId: "meeting", speakerId: "speaker", startMs: 0, endMs: 500,
+            text: "Assigned", originDeviceId: testiPhoneId
+        )
+        let unassigned = Utterance(
+            meetingId: "meeting", startMs: 500, endMs: 1_000,
+            text: "Pending", originDeviceId: testiPhoneId
+        )
+
+        #expect(SpeakerOverlapAssigner.unassignedCount(in: [assigned, unassigned]) == 1)
+        #expect(SpeakerOverlapAssigner.unassignedCount(in: [assigned]) == 0)
     }
 }
 

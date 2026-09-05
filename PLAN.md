@@ -1,6 +1,7 @@
 # 个人会议知识库 — 产品与工程计划
 
-> iPhone 采集 + Mac 知识层。最后更新：2026-09-04
+> iPhone 采集 + Mac 知识层。最后更新：2026-09-05
+> 本轮已确认迁移到 Apple 系统转写；以下新增要求是待实施、待验收计划，不代表功能已完成。历史完成标记不代替本轮验收。
 
 ---
 
@@ -25,12 +26,12 @@
 ## 2. 职责划分
 
 ```
-iPhone  →  录音 + Nemotron CoreML 转写 + on-device 实时 diarization (Speaker N)
+iPhone  →  录音 + Apple SpeechTranscriber 转写 + on-device 实时 diarization
            纯采集设备，不做 analysis
            【音频 / transcript / speaker 命名的唯一 truth】
 
-Mac     →  被动接收同步 + 会后全局重聚类 + 跨会议 identity 关联
-           + LLM metadata 自动打标 + hybrid RAG + audio clip 播放
+Mac     →  被动接收同步 + LLM metadata 自动打标 + hybrid RAG + audio clip 播放
+           （会后全局重聚类与跨会议 identity 关联仍在未来范围）
            【分析结果的唯一 truth，iPhone 只读】
 
 iCloud  →  CloudKit private DB 同步 speaker 库（alias 明文 + embedding E2EE）
@@ -68,7 +69,7 @@ iCloud  →  CloudKit private DB 同步 speaker 库（alias 明文 + embedding E
 `speaker.id` 是跨会议稳定的。用户把某个 speaker 命名为「John」，**所有会议里引用该
 `speakerId` 的地方全部变成 John**，不需要逐场改。
 
-**声纹相同即同一人。** 若 diarization 错误地把同一个人拆成了两个 speaker：
+**声纹相似度是身份匹配证据，不是同一人的保证。** 匿名 diarization 槽位也不等于已确认身份。若 diarization 错误地把同一个人拆成了两个 speaker：
 
 - 提供 **merge 操作**（`mergeSpeakers(keep:absorb:)`）：重指全部 `utterance.speakerId`、
   合并 embedding、清理 `meetingSpeaker`，**整个过程在一个事务内**
@@ -90,12 +91,13 @@ iCloud  →  CloudKit private DB 同步 speaker 库（alias 明文 + embedding E
 
 ### 3.2.1 状态机（无终态，全部可恢复）
 
-**录音与转写是同一个状态**。Nemotron 是实时流式引擎，边录边出字边分 speaker，
-不存在「录完了再转写」的阶段。
+**录音与实时转写属于同一工作流**，不要求用户录完后另行启动转写。
+采集不能等待模型：先可靠保存音频，模型就绪后按同一音频时间线追赶，不丢帧、不重复。
+停止采集与推理收尾必须区分；收尾期间不再显示正在录音，也不能取消尚未落库的结果。
 
 ```
 recording ──▶ recorded ──▶ audioSynced ──▶ queued ──▶ analyzing ──▶ analyzed
-（录音+转写）    （转写已完成）                    ▲                            │
+（录音+转写）    （音频已保存）                    ▲                            │
                                                 └──────────────────────────┘
                                                  重新分析（重打标 / 换模型）
 
@@ -103,7 +105,9 @@ recording ──▶ recorded ──▶ audioSynced ──▶ queued ──▶ an
 ```
 
 - `recording` —— 录音 + 实时转写 + 实时 diarization 同时进行
-- `recorded` —— 停止录音，**转写已完成**（无独立的 transcribing 阶段）
+- `recorded` —— 音频已保存；另行记录转写/说话人处理的完成、部分完成或失败状态，不能仅凭 meeting 状态宣称转写完整。具体字段与迁移需实现时确定
+- 正常停止等待 ASR、diarization 和数据库写入收尾；准备期间停止也必须保留音频与已有结果
+- 部分 speaker 无法归属不是整场录音失败；保留 Unknown，允许命名和保存。采集/存储失败与可恢复的识别问题必须区分
 - **没有任何终态**。`analyzed` 可回 `queued`（Layer E “派生、可重算”）；
   `failed` 可重试
 
@@ -172,30 +176,30 @@ Layer A “sealed 后 immutable” 的 seal 发生在 **`recording → recorded`
 
 ---
 
-## 4. 技术选型（已核实，2026-09）
+## 4. 技术选型（2026-09-05 更新）
 
-### 4.1 ASR
+### 4.1 ASR：迁移到 Apple 系统模型
 
-- **模型**：`nvidia/nemotron-3.5-asr-streaming-0.6b`
-  600M，FastConformer-CacheAware-RNNT，40 语言，OpenMDW-1.1 **可商用**
-- **CoreML 移植**：`FluidInference/Nemotron-3.5-ASR-Streaming-Multilingual-0.6b-CoreML`
-- **参考实现**：`github.com/lbj96347/nemotron-3.5-asr-ios`（MIT）
-  - 实时麦克风流式转写**已在真机验证**
-  - offline RTF ≈ 0.14（Simulator CPU/GPU；ANE 更好）
-  - 模型包 **~634MB**，iOS 17+，需 iPhone 15 Pro+
-  - chunk tier = **2240ms**（model card 有 80–1120ms，此移植只有 2240ms）
-  - ⚠️ **精度未验证**（repo 的 WER baseline 未完成）
+- **已确定方向**：iOS 26 的 `SpeechAnalyzer` + `SpeechTranscriber`，替换 Nemotron，覆盖实时转写与保存音频的重新处理。不是 Apple Intelligence 文本模型，也不是 Core AI 社区模型。
+- 先在当前 Simulator 检查运行时可用性、中英文支持与语言资源安装；不支持则明确报告阻塞，不暗中改用真机、Mac 原生或云端结果。
+- 通过 `AssetInventory` 管理语言资源；首次可能下载，离线能力必须在资源就绪后验证。界面语言不决定 ASR 语言，中英混说/语言选择策略需要验证 API 后确定，不能假设自动检测可用。
+- 使用 `prepareToAnalyze` 预热，评估模型复用和驻留；分别测量下载、冷加载、热启动、首个 partial、final 延迟与内存。不能宣称换成 Apple 一定更快。
+- 迁移期间保留旧引擎作回归对照；新流程验收后才删除无调用的 Nemotron 引擎、专属下载逻辑及依赖，不保留未经约定的生产 fallback。
+- 参考：[SpeechAnalyzer 官方介绍](https://developer.apple.com/videos/play/wwdc2025/277/)、[预热 API](https://developer.apple.com/documentation/speech/speechanalyzer/preparetoanalyze(in:))。Apple 研究论文中的模型和准确率不能直接视为公开 API 的性能保证。
 
 ### 4.2 Diarization
 
-Nemotron ASR **本身不做 diarization**，需独立模型。CoreML 移植已成熟：
+保留 **FluidAudio + Sortformer** 判断谁在什么时候说话，以及 **CAM++** 声纹提取/身份匹配。两者与 ASR 独立，不随转写引擎一起删除。
 
-- `FluidInference/nemotron-3-diarization-coreml`（2026-08 底发布）
-- `FluidInference/speaker-diarization-coreml`（17.5k 下载）
-- `aufklarer/Sortformer-Diarization-CoreML`
-- Swift 库 **`github.com/FluidInference/FluidAudio`**
+- 排查模型重复加载、输入积压、每条更新全量查库/对齐的成本；优先复用模型与增量处理。
+- 保留 finalized 时间段，只替换 tentative 尾部；实时页和历史页共享一致的 speaker 映射与音频时间基准。
+- 长文本跨过多个人发言时，结合可靠时间戳细分；证据不足保留未知，不把整段强行归给最大重叠者。
+- 发言时长基于 diarization 音频区间，不能用 ASR 长段长度代替。静音、多人重叠、未确定时段和百分比分母必须明确定义并用标注时间线验证，具体展示口径见 UI §4.5。
+- CAM++ 只使用足够干净的非重叠语音，匹配阈值需验证；不能通过降低阈值制造看似完整的身份识别。
 
 > ⚠️ Apple Speech 框架只有 `SpeechTranscriber` / `DictationTranscriber` / `SpeechDetector`(纯 VAD)，**无 speaker 分离能力**。
+
+截至本轮查阅，[Core AI 官方目录](https://github.com/apple/coreai-models)没有现成 diarization 模型，且要求 Xcode/iOS 27；不纳入当前 iOS 26 迁移。重叠活动检测也不等于把同时说话的两个人分别转写，本轮不承诺后者。
 
 ### 4.3 Mac 端 LLM
 
@@ -225,7 +229,7 @@ Nemotron ASR **本身不做 diarization**，需独立模型。CoreML 移植已�
 
 > 🔴 **不可逆**：Apple 规定更新只能放宽不能收紧 capability。**必须第一版就加**，漏了就永远补不上（除非换 bundle ID 重发）。
 
-**不做 Apple SpeechTranscriber 兜底。**
+Apple SpeechTranscriber 改为主转写方案，而非旧设备兜底。迁移不自动改变现有 capability、签名或 deployment target；设备门槛需结合保留的 diarization 模型另行评估。
 
 ### 5.2 内存与后台
 
@@ -305,13 +309,13 @@ Nemotron ASR **本身不做 diarization**，需独立模型。CoreML 移植已�
 
 ### Phase 1 — iPhone 采集端（独立可用的完整产品）
 - `1a` 🔴 Info.plist 加 `UIRequiredDeviceCapabilities = [iphone-performance-gaming-tier]`（**第一版必须加**）
-- `1b` 移植 `lbj96347/nemotron-3.5-asr-ios` CoreML 推理管线（MIT）
-- `1c` On-Demand Resources 下载 634MB 模型（**不能塞进 IPA**）
+- `1b` 将实时与重新处理的 ASR 迁移到 Apple SpeechAnalyzer / SpeechTranscriber（§4.1）
+- `1c` 分别管理 Apple 语言资源和 Sortformer / CAM++ 模型，不再以 Nemotron 安装完成作为录音门槛
 - `1d` `increased-memory-limit` entitlement + `os_proc_available_memory()` 检测
 - `1e` 集成 diarization（FluidAudio / nemotron-3-diarization-coreml），实时 Speaker N
 - `1f` retro-relabel 策略：**stable ID / display index 分离** + 过渡动画
-- `1g` UI 参考现有截图（Record/Translate tab、Live Activity、PiP）
-- `1h` UI 明示实时字幕延迟（2240ms chunk）
+- `1g` UI 按 UI.md：两个 tab、全局录音浮层、Live Activity；无 Translate tab
+- `1h` 用 partial/准备状态表达转写进度，不显示固定 2240ms 或工程参数
 
 ### Phase 2 — Speaker 库与 iCloud 同步
 *依赖 Phase 1*
@@ -359,14 +363,31 @@ Nemotron ASR **本身不做 diarization**，需独立模型。CoreML 移植已�
 
 | ID | 内容 | 优先级 |
 |---|---|---|
-| **S1** | 真机 ANE 上 **ASR + diarization 同时运行**的 RTF、内存峰值、**90 分钟长会议热降频**。PoC 只验证了单跑 ASR | **最高** |
-| **S2** | diarization 模型选型（DER + 是否与 ASR 抢 ANE 资源） | 高 |
+| **S1** | 仅在 Simulator 验证 Apple ASR 可用性，并测量 ASR + diarization 并行的冷/热启动、延迟、RTF、积压和内存 | **最高** |
+| **S2** | Simulator 中分开测量 Sortformer 和 CAM++ 的加载/推理耗时，以及双人标注音频的归属与发言时长误差 | 高 |
 | **S3** | Gemma 4 12B/26B MLX Swift 在目标 Mac 的可行性与速度（含最低配置要求） | 中 |
 | **S4** | hybrid retrieval 质量评估（FTS5+向量 vs 纯向量），用真实会议数据 | 中 |
 | **S5** | CloudKit `encryptedValues` 同步 embedding 的实际延迟与配额 | 低 |
 | **S6** | Network framework peer-to-peer 离网实测吞吐（音频同步场景） | 低 |
 
 ---
+
+### 8.1 本轮修复与最终验收（全部待验收）
+
+**只用 Simulator，不安排真机测试。** 记录宿主机、Xcode、runtime、模型/语言资源版本和重复运行结果；模拟器结果不能证明 iPhone 的 ANE、耗电、发热或性能。
+
+1. Apple 模型实际加载和转写：中文、英文、中英混说；分别报告可用性、准确率和冷/热启动结果。
+2. 点击录音立即采集，模型准备时不中断音频；用主持机扬声器播放双人会议，经真实麦克风进入 Simulator。确认非零输入、实时文本、不同说话人；文件输入和 fixture 不能冒充麦克风 E2E，路由不可用需报告阻塞。
+3. 修复 `incompleteSpeakerAssignments` 阻止保存；未知/重叠允许存在，但不可隐藏实际处理或存储失败。验证短录音、准备中停止、最终 chunk 与数据库收尾。
+4. 核对 finalized diarization 历史、每段 speaker/时间戳、实时/历史映射一致性，以及基于标注音频的发言比例。检测到三个槽位不等于验证了三个人。
+5. 停止后展示日期时间预填的命名弹窗；名字不能为空，允许之后修改。原始音频不依赖弹窗确认才保存；本轮不实现自动 LLM 命名。
+6. `⋯ → Speaker Insights` 可改名；离开重进、终止重启后 transcript、speaker 名字和标题仍保留；播放与定位正常。
+7. 停止后锁屏/Dynamic Island 不再显示 still recording：停止采集就结束录音计时与状态，不等识别完成；覆盖 App 内停止、锁屏停止、失败收尾和重启清理遗留 Activity。
+8. 空 transcript 的旧录音可重新处理；成功时原子替换派生结果，失败/取消保留旧结果，音频、会议 ID、用户标题与确认过的名字不被破坏。
+9. Settings 语言下拉菜单与系统语言标签按 UI §5.2 验收；在浅色/深色外观检查截图中的颜色、材料、可读性、控件遮挡问题，不预设真机颜色问题根因。
+10. 功能验证后才清理无用代码：核对调用、重新处理、测试与 widget 依赖，保留仍使用的 FluidAudio 和有效回归工具。清理后重跑相关测试、App/widget build 和 Simulator 流程。
+
+每个逻辑改动独立 git commit，说明改动便于回滚；只暂存自己的文件/改动，保留已有签名、配置、数据库、录音和未提交工作。不新增无关 Markdown 报告；在本计划中区分通过、失败和未验证，build 成功不算功能验收。
 
 ## 9. TODO / Future
 
@@ -457,7 +478,7 @@ embedding 和 utterance 引用转移到另一个 speaker。
 
 - `eraseDatabaseOnSchemaChange` 目前是 DEBUG-only，任何 schema 修改会**静默清库**。
   真机上有真实用户数据前必须复审
-- Nemotron CoreML 更低延迟 tier（当前只有 2240ms，model card 有 80–1120ms）→ 需自行转换
+- Core AI 后端转换留待未来评估，不作为本轮迁移依赖；不再投入 Nemotron 更低延迟 tier 的转换
 - Mac 端 Sparkle 更新机制
 - 付费/授权系统
 
@@ -467,7 +488,7 @@ embedding 和 utterance 引用转移到另一个 speaker。
 ## 10. 明确排除
 
 - ❌ iPhone 端做 analysis / RAG
-- ❌ Apple `SpeechTranscriber` 兜底（改为不支持老设备）
+- ❌ 自动切换云端或旧 ASR 兜底；Apple `SpeechTranscriber` 已改为本轮主方案
 - ❌ 自建中继服务器 / 云端推理
 - ❌ **Mac app 嵌 Python runtime**
 - ❌ 用 CloudKit 同步 meeting 音频/transcript（只同步 speaker 库）
