@@ -1,0 +1,36 @@
+DB-IMPLEMENT-01 implementation record
+
+Workspace: /Users/tingzhen/Desktop/transcript.worktrees/local-agent-functionality
+Starting HEAD: be767563f4ebf13d885511a87a2e9727ff043fc4
+Checkpoint commit: 879c167 feat(db): add search and monotonic binding revisions
+Final dirty diff: clean after checkpoint (report file is intentionally uncommitted).
+
+Imported approved source blobs (source SHA -> resulting file SHA-1):
+0c8ffff494f55b24175de77f61f42715a551af06 -> AppDatabase+Migrations.swift (64e1126989d417ecdaffb21a6ef38bd1f3dea320)
+02c57b24146c54c6695dc0a051201e8d7dfc666d -> SearchRepository.swift (9b0b8f13040664ea9f6bfe77edfe7a6e1ba785f0)
+98529e1bc1e83ee4a97cc8045a509ed38ccab24f -> MigrationTests.swift (c74f87bc0d087502fe16d8c37d7f33175e7f06ff)
+41f421027532344436b6de235f8eca825b85d879 -> SearchRepositoryTests.swift (8e218a5d6072462abfe9fb85c9fb5b70eac7265e)
+234579e8efc87984480143a99441dfe9b54eeee3 -> SpeakerRepository.swift (included, then amended for v3)
+517443ce66712c767170b6da544feacccc800fdd -> SpeakerEmbedding.swift (included)
+9c1de5500764d69b969b0431723fba8b7471414c -> VoiceprintBinder.swift (included, then amended for v3)
+50c9c87a5879649380feee0000975522d4cf7907 -> VoiceprintMatcher.swift (included)
+
+Changes:
+- Added search repository and frozen migration/search integration tests.
+- Added v3 persistent meeting-speaker slot revisions and insert/update/delete triggers.
+- Binding expectations now validate (speakerId, updatedAt, slotRevision) in the write transaction.
+- Added vDSP/typed FloatVector normalization, dot product, and storage validation.
+- Added explicit empty-slot ABA coverage; enrollment remains explicit.
+
+Verification (exit 0):
+GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=safe.bareRepository GIT_CONFIG_VALUE_0=all swift test --package-path Packages/TranscriptCore --filter 'MigrationTests|SearchRepositoryTests|VoiceprintBinderTests' --scratch-path .build/db-derived
+Result: 40 tests passed, runtime about 0.061s; build succeeded.
+Initial unconfigured dependency fetch exited 1 because safe.bareRepository was explicit; rerun used only the approved per-command config.
+Earlier broader filter exposed one unrelated pre-existing DiarizationTimeline expectation failure; it was not changed.
+
+Artifacts:
+- .build/db-test.log records the targeted run.
+- No iOS Simulator/E2E, model, microphone, or long benchmark run was performed.
+- No xcresult was produced by the Swift package test run.
+
+Pending: independent review/QA, simulator runner validation, and approved performance baseline/worker batch.
