@@ -72,6 +72,64 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any)["appLanguagePicker"].waitForExistence(timeout: 3))
     }
 
+    func testHomeMeetingsSettingsTabsAndSearchHitReturn() {
+        let app = launchFixture()
+        let homeTab = app.tabBars.buttons["Home"].exists ? app.tabBars.buttons["Home"] : app.tabBars.buttons["主页"]
+        let meetingsTab = app.tabBars.buttons["Meetings"].exists ? app.tabBars.buttons["Meetings"] : app.tabBars.buttons["会议"]
+        let settingsTab = app.tabBars.buttons["Settings"].exists ? app.tabBars.buttons["Settings"] : app.tabBars.buttons["设置"]
+        XCTAssertTrue(homeTab.waitForExistence(timeout: 5))
+        XCTAssertTrue(meetingsTab.exists)
+        XCTAssertTrue(settingsTab.exists)
+
+        let search = app.textFields["homeSearchField"]
+        search.tap()
+        search.typeText("latency")
+        let hit = app.buttons["homeSearchHit"].firstMatch
+        XCTAssertTrue(hit.waitForExistence(timeout: 5))
+        hit.tap()
+        XCTAssertTrue(app.buttons["meetingBackButton"].waitForExistence(timeout: 5))
+        app.buttons["meetingBackButton"].tap()
+        XCTAssertEqual(search.value as? String, "latency")
+        attachScreenshot(of: app, name: "home-search-hit-return")
+    }
+
+    func testHomeSpeakerAndDateFiltersAndLanguageSettings() {
+        let app = launchFixture()
+        let speakerFilter = app.buttons["homeSpeakerFilter"]
+        XCTAssertTrue(speakerFilter.waitForExistence(timeout: 5))
+        speakerFilter.tap()
+        let speaker = app.switches["homeSpeaker-fixture-speaker-alexandra"]
+        XCTAssertTrue(speaker.waitForExistence(timeout: 3))
+        speaker.tap()
+        tapDone(in: app)
+
+        app.buttons["homeDateFilter"].tap()
+        let enabled = app.switches["homeDateRangeEnabled"]
+        XCTAssertTrue(enabled.waitForExistence(timeout: 3))
+        enabled.tap()
+        tapDone(in: app)
+
+        let settings = app.tabBars.buttons["Settings"].exists ? app.tabBars.buttons["Settings"] : app.tabBars.buttons["设置"]
+        settings.tap()
+        XCTAssertTrue(app.descendants(matching: .any)["appLanguagePicker"].waitForExistence(timeout: 3))
+        attachScreenshot(of: app, name: "settings-language-picker")
+    }
+
+    func testFloatingDragDoesNotRecordAndSettingsResetIsReachable() {
+        let app = launchFixture()
+        let record = app.buttons["globalRecordButton"]
+        XCTAssertTrue(record.waitForExistence(timeout: 5))
+        record.press(forDuration: 0.4, thenDragTo: app.tabBars.firstMatch)
+        XCTAssertFalse(app.buttons["collapseRecordingButton"].exists)
+
+        let settings = app.tabBars.buttons["Settings"].exists ? app.tabBars.buttons["Settings"] : app.tabBars.buttons["设置"]
+        settings.tap()
+        let reset = app.buttons["resetFloatingRecordButton"]
+        XCTAssertTrue(reset.waitForExistence(timeout: 3))
+        reset.tap()
+        XCTAssertTrue(record.exists)
+    }
+
     func testAcousticAcceptance() {
         let app = XCUIApplication()
         app.launch()
@@ -131,5 +189,20 @@ final class TranscriptUITests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    private func launchFixture() -> XCUIApplication {
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiFixture", "1", "-uiFixtureSelectedTab", "home"]
+        app.launch()
+        return app
+    }
+
+    private func tapDone(in app: XCUIApplication) {
+        let done = ["Done", "完成", "确定", "common.done"]
+            .map { app.buttons[$0] }
+            .first { $0.exists } ?? app.navigationBars.buttons.element(boundBy: 0)
+        XCTAssertTrue(done.waitForExistence(timeout: 2))
+        done.tap()
     }
 }

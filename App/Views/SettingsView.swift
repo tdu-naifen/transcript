@@ -38,6 +38,13 @@ struct SettingsView: View {
                         .truncationMode(.middle)
                     LabeledContent("Audio folder", value: services.store.directory.lastPathComponent)
                 }
+
+                Section("Recording button") {
+                    Button("Reset recording button position") {
+                        FloatingRecordButton.resetPosition()
+                    }
+                    .accessibilityIdentifier("resetFloatingRecordButton")
+                }
             }
             .navigationTitle("Settings")
             .scrollContentBackground(.hidden)

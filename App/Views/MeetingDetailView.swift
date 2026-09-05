@@ -4,6 +4,7 @@ import TranscriptCore
 /// Meeting detail screen (UI.md §3): transcript in forward order with tap-to-seek
 /// playback, participants folded into the header, engineering info behind `⋯`.
 struct MeetingDetailView: View {
+    @Environment(\.dismiss) private var dismiss
     let meeting: Meeting
     let audioURL: URL?
     let onMeetingRenamed: () -> Void
@@ -70,6 +71,10 @@ struct MeetingDetailView: View {
         .toolbar(.visible, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Back") { dismiss() }
+                    .accessibilityIdentifier("meetingBackButton")
+            }
             ToolbarItem(placement: .topBarTrailing) { meetingOptions }
         }
         .tint(accent)
