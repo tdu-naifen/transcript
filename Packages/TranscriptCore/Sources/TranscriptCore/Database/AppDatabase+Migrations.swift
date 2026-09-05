@@ -275,6 +275,47 @@ extension AppDatabase {
             """)
         }
 
+        migrator.registerMigration("v4_real_slot_revision_triggers") { db in
+            try db.execute(sql: """
+                DROP TRIGGER meetingSpeaker_slot_revision_ai;
+                DROP TRIGGER meetingSpeaker_slot_revision_au;
+                DROP TRIGGER meetingSpeaker_slot_revision_ad;
+                DELETE FROM meetingSpeakerSlotRevision WHERE displayIndex < 0;
+                CREATE TRIGGER meetingSpeaker_slot_revision_ai
+                AFTER INSERT ON meetingSpeaker
+                WHEN new.displayIndex >= 0 BEGIN
+                    INSERT INTO meetingSpeakerSlotRevision(meetingId, displayIndex, revision)
+                    VALUES (new.meetingId, new.displayIndex, 1)
+                    ON CONFLICT(meetingId, displayIndex)
+                    DO UPDATE SET revision = revision + 1;
+                END;
+                CREATE TRIGGER meetingSpeaker_slot_revision_ad
+                AFTER DELETE ON meetingSpeaker
+                WHEN old.displayIndex >= 0 BEGIN
+                    INSERT INTO meetingSpeakerSlotRevision(meetingId, displayIndex, revision)
+                    VALUES (old.meetingId, old.displayIndex, 1)
+                    ON CONFLICT(meetingId, displayIndex)
+                    DO UPDATE SET revision = revision + 1;
+                END;
+                CREATE TRIGGER meetingSpeaker_slot_revision_au_old
+                AFTER UPDATE OF speakerId, displayIndex, updatedAt ON meetingSpeaker
+                WHEN old.displayIndex >= 0 BEGIN
+                    INSERT INTO meetingSpeakerSlotRevision(meetingId, displayIndex, revision)
+                    VALUES (old.meetingId, old.displayIndex, 1)
+                    ON CONFLICT(meetingId, displayIndex)
+                    DO UPDATE SET revision = revision + 1;
+                END;
+                CREATE TRIGGER meetingSpeaker_slot_revision_au_new
+                AFTER UPDATE OF speakerId, displayIndex, updatedAt ON meetingSpeaker
+                WHEN new.displayIndex >= 0 AND new.displayIndex != old.displayIndex BEGIN
+                    INSERT INTO meetingSpeakerSlotRevision(meetingId, displayIndex, revision)
+                    VALUES (new.meetingId, new.displayIndex, 1)
+                    ON CONFLICT(meetingId, displayIndex)
+                    DO UPDATE SET revision = revision + 1;
+                END;
+            """)
+        }
+
         return migrator
     }
 }
