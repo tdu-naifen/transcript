@@ -6,7 +6,9 @@ struct RecordingsListView: View {
     let services: AppServices
     @Binding var path: NavigationPath
     let isRecordingActive: () -> Bool
+    let macConnection: MacConnectionModel
     @State private var pendingDeletion: Meeting?
+    @State private var macSubmissionMeeting: Meeting?
     @Environment(\.calendar) private var calendar
 
     var body: some View {
@@ -67,10 +69,15 @@ struct RecordingsListView: View {
                     audioURL: model.audioURL(for: meeting),
                     services: services,
                     isRecordingActive: isRecordingActive(),
+                    onProcessByMac: { macSubmissionMeeting = meeting },
+                    macUnavailableReason: macConnection.submissionBlockReason(meetingID: meeting.id),
                     onMeetingRenamed: { Task { await model.reload() } }
                 )
             }
             .navigationTitle("meetings.title")
+            .fullScreenCover(item: $macSubmissionMeeting) { meeting in
+                MacSubmissionView(meeting: meeting, model: macConnection)
+            }
             .confirmationDialog(
                 "meetings.delete_local.title",
                 isPresented: Binding(

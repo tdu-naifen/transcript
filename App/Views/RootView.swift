@@ -110,7 +110,8 @@ private struct ReadyView: View {
                         model: library,
                         services: services,
                         path: $recordingsPath,
-                        isRecordingActive: { hasRecordingSession }
+                        isRecordingActive: { hasRecordingSession },
+                        macConnection: macConnection
                     )
                 }
                 Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
