@@ -310,6 +310,7 @@ public actor VoiceprintProcessor {
 
   private let configuration: Configuration
   private let worker: VoiceprintInferenceWorker
+  private let admissionGate: (@Sendable () async -> Void)?
   private var queued: [Job] = []
   private var active: Job?
   private var cancelled: Set<UUID> = []
@@ -326,6 +327,7 @@ public actor VoiceprintProcessor {
   ) {
     let runtime = CampPlusRuntime(directory: modelDirectory)
     self.configuration = configuration
+    self.admissionGate = nil
     self.worker = Self.makeWorker(
       configuration: configuration,
       inference: VoiceprintInference(
@@ -344,6 +346,7 @@ public actor VoiceprintProcessor {
   ) {
     let runtime = CampPlusRuntime(directory: modelDirectory)
     self.configuration = configuration
+    self.admissionGate = nil
     self.worker = Self.makeWorker(
       configuration: configuration,
       inference: VoiceprintInference(
@@ -358,9 +361,11 @@ public actor VoiceprintProcessor {
   init(
     configuration: Configuration = .init(),
     matcher: VoiceprintMatcher? = nil,
-    inference: VoiceprintInference
+    inference: VoiceprintInference,
+    admissionGate: (@Sendable () async -> Void)? = nil
   ) {
     self.configuration = configuration
+    self.admissionGate = admissionGate
     self.worker = Self.makeWorker(
       configuration: configuration, inference: inference, matcher: matcher
     )
@@ -385,7 +390,10 @@ public actor VoiceprintProcessor {
     )
   }
 
-  public func submit(_ request: VoiceprintRequest) throws -> VoiceprintJobHandle {
+  public func submit(_ request: VoiceprintRequest) async throws -> VoiceprintJobHandle {
+    if let admissionGate {
+      await admissionGate()
+    }
     guard !isShutDown else { throw VoiceprintProcessorError.shutDown }
     let evidenceKey = EvidenceKey(
       meetingId: request.meetingId,

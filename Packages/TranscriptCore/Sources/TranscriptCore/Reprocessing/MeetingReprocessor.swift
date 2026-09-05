@@ -361,17 +361,13 @@ public actor MeetingReprocessor {
                     drafts.append(.init(speakerIndex: index, existingSpeakerId: confirmedSpeakerId))
                     continue
                 }
-                let handle = try await voiceprintProcessor.submit(request)
-                activeVoiceprintHandles[handle.id] = handle
-                let result: VoiceprintProcessingResult
-                do {
-                    result = try await handle.value()
-                } catch {
-                    activeVoiceprintHandles[handle.id] = nil
-                    throw error
-                }
-                activeVoiceprintHandles[handle.id] = nil
-                try ensureActive(runId: runId)
+                let result = try await Self.submitVoiceprintHandle(
+                    processor: voiceprintProcessor,
+                    request: request,
+                    register: { handle in await self.registerVoiceprintHandle(handle) },
+                    unregister: { id in await self.unregisterVoiceprintHandle(id) },
+                    ensureActive: { try await self.ensureActive(runId: runId) }
+                )
 
                 drafts.append(try await Self.speakerDraft(
                     speakerIndex: index,
@@ -396,6 +392,40 @@ public actor MeetingReprocessor {
         try Task.checkCancellation()
         guard activeRunId == runId else { throw CancellationError() }
         try activeRunCancellation?.check()
+    }
+
+    private func registerVoiceprintHandle(_ handle: VoiceprintJobHandle) {
+        activeVoiceprintHandles[handle.id] = handle
+    }
+
+    private func unregisterVoiceprintHandle(_ id: UUID) {
+        activeVoiceprintHandles[id] = nil
+    }
+
+    nonisolated static func submitVoiceprintHandle(
+        processor: VoiceprintProcessor,
+        request: VoiceprintRequest,
+        register: @escaping @Sendable (VoiceprintJobHandle) async -> Void,
+        unregister: @escaping @Sendable (UUID) async -> Void,
+        ensureActive: @escaping @Sendable () async throws -> Void
+    ) async throws -> VoiceprintProcessingResult {
+        let handle = try await processor.submit(request)
+        await register(handle)
+        do {
+            try await ensureActive()
+        } catch {
+            await unregister(handle.id)
+            await handle.cancelAndWait()
+            throw error
+        }
+        do {
+            let result = try await handle.value()
+            await unregister(handle.id)
+            return result
+        } catch {
+            await unregister(handle.id)
+            throw error
+        }
     }
 
     nonisolated static func speakerDraft(
