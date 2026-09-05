@@ -54,16 +54,25 @@ final class RecorderModel {
     private var levelTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
     private var tickTask: Task<Void, Never>?
-    private let activityController = RecordingActivityController()
+    private let activityController: any RecordingActivityControlling
     private var lastActivitySecond = -1
     private var startedAt: Date?
     private var accumulated: TimeInterval = 0
     private var didSalvage = false
+    private var recordingMeetingId: String?
+    private var stopInProgress = false
+    private var captureFailure: String?
 
-    init(services: AppServices, library: LibraryModel) {
+    init(
+        services: AppServices,
+        library: LibraryModel,
+        activityController: any RecordingActivityControlling = RecordingActivityController(),
+        transcription: TranscriptionModel? = nil
+    ) {
         self.services = services
         self.library = library
-        self.transcription = TranscriptionModel(services: services)
+        self.transcription = transcription ?? TranscriptionModel(services: services)
+        self.activityController = activityController
     }
 
     var isBusy: Bool { phase == .starting || phase == .stopping }
@@ -87,6 +96,7 @@ final class RecorderModel {
         observeStreams()
         guard !didSalvage else { return }
         didSalvage = true
+        await activityController.cleanupOrphans()
         let salvaged = await services.salvageCrashedRecordings()
         if salvaged > 0 {
             noticeKind = .recovered(count: salvaged)
@@ -149,13 +159,7 @@ final class RecorderModel {
                 chunks: chunks,
                 diarizationChunks: diarizationChunks
             )
-            accumulated = 0
-            elapsed = 0
-            lastActivitySecond = -1
-            startedAt = Date()
-            phase = .recording
-            startTicking()
-            await activityController.start(meetingId: meeting.id)
+            await recordingDidStart(meetingId: meeting.id)
         } catch {
             _ = try? await services.session.abort()
             await transcription.discard()
@@ -164,20 +168,55 @@ final class RecorderModel {
         }
     }
 
+    func recordingDidStart(meetingId: String) async {
+        accumulated = 0
+        elapsed = 0
+        lastActivitySecond = -1
+        recordingMeetingId = meetingId
+        captureFailure = nil
+        startedAt = Date()
+        phase = .recording
+        startTicking()
+        await activityController.start(meetingId: meetingId)
+    }
+
+    @discardableResult
+    func requestStop() -> Task<Void, Never>? {
+        guard isActive, let meetingId = recordingMeetingId else { return nil }
+        return Task { @MainActor [weak self] in
+            guard let self, recordingMeetingId == meetingId else { return }
+            await stop()
+        }
+    }
+
     private func stop() async {
+        guard !stopInProgress, isActive else { return }
+        guard let meetingId = recordingMeetingId else {
+            errorMessage = String(describing: AudioCaptureError.notRecording)
+            return
+        }
+        stopInProgress = true
+        defer { stopInProgress = false }
         phase = .stopping
         stopTicking()
         var pendingStop: RecordingSession.PendingStop?
         var stopFailure: (any Error)?
+        let activityController = activityController
         do {
-            pendingStop = try await services.session.drainCapture()
+            pendingStop = try await services.session.drainCapture {
+                await activityController.end(meetingId: meetingId)
+            }
         } catch {
             stopFailure = error
+            await activityController.end(meetingId: meetingId)
         }
         do {
             try await transcription.finish()
         } catch {
             if stopFailure == nil { stopFailure = error }
+        }
+        if stopFailure == nil, let captureFailure {
+            stopFailure = LiveRecordingDrainError(failures: [captureFailure])
         }
         if let pendingStop {
             do {
@@ -190,8 +229,9 @@ final class RecorderModel {
             }
         }
         if let stopFailure { errorMessage = String(describing: stopFailure) }
-        await activityController.end()
         startedAt = nil
+        recordingMeetingId = nil
+        captureFailure = nil
         accumulated = 0
         elapsed = 0
         level = .silence
@@ -203,21 +243,27 @@ final class RecorderModel {
         tickTask?.cancel()
         tickTask = Task { [weak self] in
             while !Task.isCancelled {
-                try? await Task.sleep(for: .milliseconds(100))
-                guard let self else { return }
+                do {
+                    try await Task.sleep(for: .milliseconds(100))
+                } catch {
+                    return
+                }
+                guard !Task.isCancelled, let self, isActive else { return }
                 if let startedAt {
                     elapsed = accumulated + Date().timeIntervalSince(startedAt)
                 } else {
                     elapsed = accumulated
                 }
                 if RecordingActivityCommunication.consumeStopRequest(), isActive {
-                    await stop()
+                    requestStop()
                     return
                 }
                 let activitySecond = Int(elapsed)
                 if activitySecond != lastActivitySecond {
                     lastActivitySecond = activitySecond
+                    guard let meetingId = recordingMeetingId else { return }
                     await activityController.update(
+                        meetingId: meetingId,
                         elapsed: elapsed,
                         recentTranscriptLines: transcription.lines.prefix(3).map(\.text),
                         isPaused: phase == .paused
@@ -237,26 +283,30 @@ final class RecorderModel {
         let levels = services.session.levels()
         levelTask = Task { [weak self] in
             for await level in levels {
-                self?.level = level
+                guard let self, isActive else { continue }
+                self.level = level
             }
         }
         let events = services.session.events()
         eventTask = Task { [weak self] in
             for await event in events {
-                self?.handle(event)
+                self?.handleCaptureEvent(event)
             }
         }
     }
 
-    private func handle(_ event: AudioCaptureEvent) {
+    @discardableResult
+    func handleCaptureEvent(_ event: AudioCaptureEvent) -> Task<Void, Never>? {
         switch event {
         case .interrupted:
+            guard isActive else { return nil }
             phase = .paused
             level = .silence
             accumulated += Date().timeIntervalSince(startedAt ?? Date())
             startedAt = nil
             noticeKind = .pausedByOtherApp
         case .interruptionEnded(let resumed):
+            guard isActive else { return nil }
             if resumed {
                 startedAt = Date()
                 phase = .recording
@@ -265,13 +315,19 @@ final class RecorderModel {
                 noticeKind = .interrupted
             }
         case .routeChanged(_, let inputName):
-            guard isActive else { return }
+            guard isActive else { return nil }
             noticeKind = inputName.map { .inputSwitched(name: $0) }
         case .failed(let message):
+            guard isActive || phase == .stopping else { return nil }
             errorMessage = message
-        case .started, .paused, .resumed, .stopped:
+            if captureFailure == nil { captureFailure = message }
+            return requestStop()
+        case .stopped:
+            break
+        case .started, .paused, .resumed:
             break
         }
+        return nil
     }
 
     private static func defaultTitle(at date: Date) -> String {

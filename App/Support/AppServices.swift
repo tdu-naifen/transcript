@@ -20,15 +20,22 @@ final class AppServices {
     /// Its language is set per-run by ``LiveTranscriber``, not baked in at creation.
     private var engine: StreamingNemotronMultilingualAsrManager?
 
-    init() throws {
-        database = try Self.makeDatabase()
-        store = try AudioFileStore.standard()
+    init(
+        database: AppDatabase? = nil,
+        store: AudioFileStore? = nil,
+        captureEngine: (any AudioCaptureControlling)? = nil
+    ) throws {
+        self.database = try database ?? Self.makeDatabase()
+        self.store = try store ?? AudioFileStore.standard()
         deviceId = UIDevice.current.identifierForVendor?.uuidString ?? "unknown-device"
-        session = RecordingSession(database: database, deviceId: deviceId, store: store)
-        recovery = RecordingRecovery(database: database, deviceId: deviceId, store: store)
+        session = RecordingSession(
+            database: self.database, deviceId: deviceId, store: self.store,
+            captureEngine: captureEngine
+        )
+        recovery = RecordingRecovery(database: self.database, deviceId: deviceId, store: self.store)
         modelDownloader = ASRModelDownloader()
         meetingReprocessor = MeetingReprocessingCoordinator(
-            database: database, deviceId: deviceId, recordingSession: session
+            database: self.database, deviceId: deviceId, recordingSession: session
         )
     }
 
