@@ -4,7 +4,6 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 DEVICE_ID="${TRANSCRIPT_SIMULATOR_ID:-48540309-C15F-4F0C-83EF-C0F096D1B542}"
 DERIVED_DATA="${TRANSCRIPT_DERIVED_DATA:-$ROOT/.build/db-simulator-derived}"
-BENCHMARK_ROOT="${TRANSCRIPT_BENCHMARK_ROOT:-$DERIVED_DATA/benchmark-scratch}"
 
 usage() {
     printf '%s\n' \
@@ -40,12 +39,11 @@ runner_environment=(env)
 for name in BACKEND_BENCHMARK_VECTOR_COUNT BACKEND_BENCHMARK_MATCHER_COUNT \
     BACKEND_BENCHMARK_VECTOR_DIMENSION BACKEND_BENCHMARK_ITERATIONS \
     BACKEND_BENCHMARK_MEETING_COUNT BACKEND_BENCHMARK_UTTERANCES_PER_MEETING \
-    BACKEND_REAL_CAMPLUS TRANSCRIPT_BENCHMARK_ROOT; do
+    BACKEND_REAL_CAMPLUS; do
     if [[ -n "${!name:-}" ]]; then
         runner_environment+=("TEST_RUNNER_${name}=${!name}")
     fi
 done
-runner_environment+=("TEST_RUNNER_TRANSCRIPT_BENCHMARK_ROOT=$BENCHMARK_ROOT")
 
 command=(
     xcodebuild
@@ -80,6 +78,11 @@ if [[ -n "${BACKEND_REAL_CAMPLUS:-}" ]]; then
     if [[ "$BACKEND_REAL_CAMPLUS" != 1 ]]; then
         printf 'BACKEND_REAL_CAMPLUS must be 1.\n' >&2
         exit 2
+    fi
+    if ! grep -R -q -E 'struct VoiceprintRuntimeTests|func voiceprintRuntime' \
+        "$ROOT/Packages/TranscriptCore/Tests" 2>/dev/null; then
+        printf 'BACKEND_REAL_CAMPLUS=1 is unsupported: VoiceprintRuntimeTests suite is not present; refusing a 0-test success.\n' >&2
+        exit 4
     fi
     MODEL_SOURCE="$ROOT/Models/campplus-embedder"
     AUDIO_SOURCE="$ROOT/Audio/librispeech-multi"
