@@ -30,7 +30,7 @@ local_agent_takeover:
   branch: "agents/local-agent-functionality"
   baseline_sha: "d0fedeb4069ec71fd9ff74bb801de3ad7ac58577"
   integration_target: "main; local commits are allowed before E2E, final main integration remains required"
-  status: verifying
+  status: reviewing
   state_owner: orchestrator
   historical_state: "The inherited performance section above is not current execution or acceptance evidence."
   dispatch:
@@ -49,8 +49,8 @@ local_agent_takeover:
       - {task: DB-IMPLEMENT-01, worker: db-writer, status: implemented, files: "Packages/TranscriptCore and related DB tests", result: "Migrations v4/search/candidate changes reviewed; actual Simulator 43 tests passed; local commits complete."}
       - {task: DB-REVIEW-QA, worker: db-reviewer/recording-qa, status: implemented, files: none, result: "Review findings closed; backend-service QA 83/83 (81 plus 2 statistics) and annual DB measurement independently reported."}
       - {task: IOS-IMPLEMENT-01, worker: ios-writer, status: implemented, files: "approved iOS UI/search/meetings files", result: "Local commits 296b4d0 through 840fb64; 17 hosted and 3 UI tests passed."}
-      - {task: IOS-REVIEW-01, worker: ios-reviewer, status: verifying, files: none, result: "Independent read-only review is running; no pass claim yet."}
-      - {task: IOS-QA-01, worker: ios-qa, status: verifying, files: none, result: "Independent read-only QA is running; no pass claim yet."}
+      - {task: IOS-REVIEW-01, worker: ios-reviewer, status: reviewing, files: none, result: "Independent read-only review returned three findings requiring iOS fixes: cancel search loading can stick; Detail recording-state initialization snapshot conflicts with playback; new localization keys lack catalog entries. Review not passed."}
+      - {task: IOS-QA-01, worker: ios-qa, status: verifying, files: none, result: "Independent read-only QA remains running; no pass claim yet."}
       - {task: MAC-NEXT, worker: mac-writer, status: pending, files: none, result: "Next phase only; stable-hash copy to an independent tree is authorized while original WIP remains read-only."}
   handoff:
     main_sha: "d0fedeb4069ec71fd9ff74bb801de3ad7ac58577"
@@ -106,7 +106,7 @@ local_agent_takeover:
       implementation: "Speaker repository and live/detail projections"
       owner: orchestrator
       dependencies: ["BUG-001", "identity policy"]
-      status: verifying
+      status: reviewing
       acceptance: "Stable entities across live/detail/restart; global names propagate without fabricated identities."
       evidence: "DB speaker/revision work reviewed and actual Simulator coverage is reported; iOS/main projection integration remains under verification."
       next: "Complete iOS review/QA and target-branch integration."
@@ -270,8 +270,8 @@ local_agent_takeover:
       dependencies: ["UI handoff", "SEARCH", "SYNC-TRANSPORT"]
       status: verifying
       acceptance: "Three tabs with real services, nonblocking submission and localized accessible navigation/state."
-      evidence: "Local iOS commits 296b4d0/f4672ed/a4119c5/7b5d228/4b04afe/840fb64 cover Home, Meetings search/navigation, floating/detail/presentation; writer reports 17 hosted + 3 UI passes. IOS-REVIEW-01 and IOS-QA-01 remain read-only and running."
-      next: "Wait for independent iOS review/QA, then integrate to main without overwriting main WIP."
+      evidence: "Local iOS commits 296b4d0/f4672ed/a4119c5/7b5d228/4b04afe/840fb64 cover Home, Meetings search/navigation, floating/detail/presentation; writer reports 17 hosted + 3 UI passes. IOS-REVIEW-01 returned three unresolved findings: cancel search loading can stick; Detail recording-state initialization snapshot conflicts with playback; new localization keys lack catalog entries. IOS-QA-01 remains read-only and running."
+      next: "iOS writer must fix the three review findings and await independent QA; do not mark complete or integrate as accepted."
   evidence:
     environment: "Xcode 26.6 (17F113); Apple Swift 6.3.3; arm64 macOS 26"
     baseline: "git status --short empty and git diff --check exit 0 before implementation."
@@ -339,7 +339,7 @@ local_agent_takeover:
       ios:
         local_commits: ["296b4d0", "f4672ed", "a4119c5", "7b5d228", "4b04afe", "840fb64"]
         tests: "Writer reports 17 hosted and 3 UI tests passed."
-        review_qa: "IOS-REVIEW-01 and IOS-QA-01 are read-only and verifying; no pass claim yet."
+        review_qa: "IOS-REVIEW-01 returned three findings and is not passed; IOS-QA-01 remains read-only and running. Continue iOS fixes; no completion claim."
       mac:
         status: pending
         next: "Stable-hash copy to an independent tree is authorized; preserve original WIP checkpoint. Safely import uncommitted BM25ChunkRepository.swift, RAGBM25Tests.swift and docs/bm25-report.md before any cleanup."
