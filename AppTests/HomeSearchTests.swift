@@ -9,12 +9,9 @@ final class HomeSearchTests: XCTestCase {
         try await MeetingRepository(database).insert(makeMeeting(id: "slow", title: "slow"))
         try await MeetingRepository(database).insert(makeMeeting(id: "fast", title: "fast"))
         let repository = SearchRepository(database)
+        let gate = RequestGate()
         let model = HomeModel(searchHandler: { query in
-            if query.text == "slow" {
-                try await Task.sleep(for: .milliseconds(150))
-            } else {
-                try await Task.sleep(for: .milliseconds(10))
-            }
+            await gate.wait(query.text)
             return try await repository.search(query)
         })
 
@@ -22,10 +19,37 @@ final class HomeSearchTests: XCTestCase {
         model.filtersChanged()
         model.query = "fast"
         model.filtersChanged()
-        try await Task.sleep(for: .milliseconds(250))
+        await gate.release("fast")
+        try await waitUntil { model.results.map(\.meeting.id) == ["fast"] }
+        await gate.release("slow")
+        await Task.yield()
 
         XCTAssertEqual(model.results.map(\.meeting.id), ["fast"])
         XCTAssertNil(model.errorMessage)
+    }
+
+    func testInvalidDateAndClearCancelGenerationAndStopLoading() async throws {
+        let database = try AppDatabase.inMemory()
+        try await MeetingRepository(database).insert(makeMeeting(id: "slow", title: "slow"))
+        let repository = SearchRepository(database)
+        let gate = RequestGate()
+        let model = HomeModel(searchHandler: { query in
+            await gate.wait(query.text)
+            return try await repository.search(query)
+        })
+        model.query = "slow"
+        model.filtersChanged()
+        model.usesDateRange = true
+        model.startDate = Date(timeIntervalSince1970: 200_000)
+        model.endDate = Date(timeIntervalSince1970: 100_000)
+        model.filtersChanged()
+        XCTAssertFalse(model.isLoading)
+        model.clearFilters()
+        XCTAssertFalse(model.isLoading)
+        await gate.release("slow")
+        await Task.yield()
+        XCTAssertTrue(model.results.isEmpty)
+        XCTAssertFalse(model.isLoading)
     }
 
     func testRealSearchRepositoryReturnsTitleAndTranscriptHit() async throws {
@@ -48,6 +72,26 @@ final class HomeSearchTests: XCTestCase {
         XCTAssertEqual(model.results.map(\.meeting.id), [meeting.id])
         XCTAssertEqual(model.results.first?.hits.map(\.utteranceId), ["real-hit"])
         XCTAssertFalse(model.results.first?.titleMatched ?? true)
+    }
+
+    private actor RequestGate {
+        private var waiters: [String: CheckedContinuation<Void, Never>] = [:]
+        private var released: Set<String> = []
+
+        func wait(_ key: String) async {
+            if released.remove(key) != nil { return }
+            await withCheckedContinuation { continuation in
+                waiters[key] = continuation
+            }
+        }
+
+        func release(_ key: String) {
+            if let waiter = waiters.removeValue(forKey: key) {
+                waiter.resume()
+            } else {
+                released.insert(key)
+            }
+        }
     }
 
     func testInclusiveDateRangeUsesCalendarDayAcrossDST() throws {

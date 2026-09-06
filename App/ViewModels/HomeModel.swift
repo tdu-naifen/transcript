@@ -24,6 +24,7 @@ final class HomeModel {
     private var generation = 0
     private var requestTask: Task<Void, Never>?
     private let searchHandler: SearchHandler?
+    private var loadedMeetingIDs: Set<String> = []
 
     init(searchHandler: SearchHandler? = nil) {
         self.searchHandler = searchHandler
@@ -64,8 +65,10 @@ final class HomeModel {
         requestTask?.cancel()
         nextCursor = nil
         results = []
+        loadedMeetingIDs = []
         errorMessage = nil
         hasLoaded = false
+        isLoading = false
         guard hasSearchConditions, !isDateRangeInvalid, let searchHandler else { return }
         startRequest(handler: searchHandler, cursor: nil, generation: generation)
     }
@@ -90,7 +93,8 @@ final class HomeModel {
                 let page = try await handler(request)
                 guard !Task.isCancelled else { return }
                 guard let self, self.generation == generation else { return }
-                if cursor == nil { self.results = page.results } else { self.results += page.results }
+                let unique = page.results.filter { self.loadedMeetingIDs.insert($0.meeting.id).inserted }
+                if cursor == nil { self.results = unique } else { self.results += unique }
                 self.nextCursor = page.nextCursor
                 self.hasLoaded = true
                 self.errorMessage = nil
