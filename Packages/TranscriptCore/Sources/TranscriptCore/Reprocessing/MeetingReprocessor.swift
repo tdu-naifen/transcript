@@ -41,35 +41,81 @@ public actor MeetingReprocessor {
         public var asrModelDirectory: URL
         public var sortformerModelPath: URL
         public var campPlusDirectory: URL?
+        /// Exact CAM++ artifact revision used by the processor. Leave nil when the
+        /// installed artifact cannot be proven; embedding evidence is still produced,
+        /// but global identity matching is disabled.
+        public var voiceprintModelIdentifier: String?
         public var language: ASRLanguage
 
         public init(
             asrModelDirectory: URL = ASRModelStore.bundle().directory,
             sortformerModelPath: URL = DiarizationModelStore.sortformerMainModelPath(),
             campPlusDirectory: URL? = DiarizationModelStore.campPlusDirectory(),
+            voiceprintModelIdentifier: String? = nil,
             language: ASRLanguage = .auto
         ) {
             self.asrModelDirectory = asrModelDirectory
             self.sortformerModelPath = sortformerModelPath
             self.campPlusDirectory = campPlusDirectory
+            self.voiceprintModelIdentifier = voiceprintModelIdentifier
             self.language = language
         }
     }
 
     public typealias ProgressHandler = @Sendable (MeetingReprocessingProgress) async -> Void
 
+    private final class RunCancellation: @unchecked Sendable {
+        private let lock = NSLock()
+        private var cancelled = false
+
+        func cancel() { lock.withLock { cancelled = true } }
+        func check() throws {
+            if lock.withLock({ cancelled }) { throw CancellationError() }
+        }
+    }
+
     private let database: AppDatabase
     private let deviceId: String
     private let configuration: Configuration
+    private let voiceprintProcessor: VoiceprintProcessor?
+    private let voiceprintMatcher: VoiceprintMatcher?
+    private let canProcessVoiceprints: Bool
     private var isRunning = false
+    private var runGeneration = 0
     private var activeRunId: UUID?
+    private var activeRunCancellation: RunCancellation?
     private var activeTranscriber: LiveTranscriber?
     private var activeDiarizer: SpeakerDiarizer?
+    private var activeVoiceprintHandles: [UUID: VoiceprintJobHandle] = [:]
 
-    public init(database: AppDatabase, deviceId: String, configuration: Configuration) {
+    /// Creates a single-flight reprocessor. Supplying a long-lived processor permits
+    /// model reuse; the matcher must have been created with the exact same nonempty
+    /// model revision. A missing revision deliberately disables global matching.
+    public init(
+        database: AppDatabase,
+        deviceId: String,
+        configuration: Configuration,
+        voiceprintProcessor: VoiceprintProcessor? = nil,
+        voiceprintMatcher: VoiceprintMatcher? = nil
+    ) {
         self.database = database
         self.deviceId = deviceId
         self.configuration = configuration
+        self.canProcessVoiceprints = voiceprintProcessor != nil || configuration.campPlusDirectory.map {
+            DiarizationModelStore.isCampPlusInstalled(at: $0)
+        } == true
+        self.voiceprintProcessor = voiceprintProcessor ?? configuration.campPlusDirectory.flatMap { directory in
+            DiarizationModelStore.isCampPlusInstalled(at: directory)
+                ? VoiceprintProcessor(modelDirectory: directory)
+                : nil
+        }
+        if let identifier = configuration.voiceprintModelIdentifier, !identifier.isEmpty {
+            self.voiceprintMatcher = voiceprintMatcher ?? VoiceprintMatcher(
+                speakers: SpeakerRepository(database), modelIdentifier: identifier
+            )
+        } else {
+            self.voiceprintMatcher = nil
+        }
     }
 
     public func run(
@@ -89,14 +135,20 @@ public actor MeetingReprocessor {
         }
 
         isRunning = true
+        runGeneration += 1
+        let generation = runGeneration
         let runId = UUID()
+        let runCancellation = RunCancellation()
         activeRunId = runId
+        activeRunCancellation = runCancellation
         defer {
             isRunning = false
             if activeRunId == runId {
                 activeRunId = nil
+                activeRunCancellation = nil
                 activeTranscriber = nil
                 activeDiarizer = nil
+                activeVoiceprintHandles.removeAll()
             }
         }
 
@@ -115,16 +167,21 @@ public actor MeetingReprocessor {
                 let segments = try await transcribe(
                     samples: samples, durationMs: durationMs, meetingId: meetingId, progress: progress
                 )
+                try ensureActive(runId: runId)
                 guard !segments.isEmpty else { throw MeetingReprocessingError.noSpeechDetected }
 
                 let diarization = try await detectSpeakers(
                     samples: samples, durationMs: durationMs, progress: progress
                 )
+                try ensureActive(runId: runId)
                 guard !diarization.isEmpty else {
                     throw MeetingReprocessingError.speakerDetectionFailed("No speaker segments were produced.")
                 }
 
                 let speakerDrafts = try await identifySpeakers(
+                    meetingId: meetingId,
+                    runId: runId,
+                    generation: generation,
                     samples: samples,
                     diarization: diarization,
                     oldUtterances: oldUtterances,
@@ -132,6 +189,7 @@ public actor MeetingReprocessor {
                     progress: progress
                 )
                 try Task.checkCancellation()
+                try runCancellation.check()
                 let utteranceDrafts = segments.map { segment in
                     ReprocessedUtteranceDraft(
                         startMs: segment.startMs,
@@ -151,7 +209,11 @@ public actor MeetingReprocessor {
                     meetingId: meetingId,
                     utterances: utteranceDrafts,
                     speakers: speakerDrafts,
-                    deviceId: deviceId
+                    deviceId: deviceId,
+                    cancellationCheck: {
+                        try Task.checkCancellation()
+                        try runCancellation.check()
+                    }
                 )
                 await progress(.init(stage: .saving, fractionCompleted: 1))
                 return MeetingReprocessingSummary(
@@ -258,6 +320,9 @@ public actor MeetingReprocessor {
     }
 
     private func identifySpeakers(
+        meetingId: String,
+        runId: UUID,
+        generation: Int,
         samples: [Float],
         diarization: [DiarizerSegment],
         oldUtterances: [Utterance],
@@ -267,15 +332,12 @@ public actor MeetingReprocessor {
         await progress(.init(stage: .identifyingSpeakers, fractionCompleted: 0.82))
         try Task.checkCancellation()
         let indexes = Set(diarization.map(\.speakerIndex)).sorted()
-        guard let directory = configuration.campPlusDirectory,
-              DiarizationModelStore.isCampPlusInstalled(at: directory) else {
+        guard canProcessVoiceprints, let voiceprintProcessor else {
             return indexes.map { index in
                 ReprocessedSpeakerDraft(
                     speakerIndex: index,
                     existingSpeakerId: Self.confirmedSpeakerId(
-                        for: index,
-                        diarization: diarization,
-                        oldUtterances: oldUtterances,
+                        for: index, diarization: diarization, oldUtterances: oldUtterances,
                         namedSpeakerIds: namedSpeakerIds
                     )
                 )
@@ -283,31 +345,39 @@ public actor MeetingReprocessor {
         }
 
         do {
-            let embedder = CampPlusEmbedder(models: try CampPlusModels.load(from: directory))
             var drafts: [ReprocessedSpeakerDraft] = []
             for (offset, index) in indexes.enumerated() {
                 try Task.checkCancellation()
+                try ensureActive(runId: runId)
                 let confirmedSpeakerId = Self.confirmedSpeakerId(
-                    for: index,
-                    diarization: diarization,
-                    oldUtterances: oldUtterances,
+                    for: index, diarization: diarization, oldUtterances: oldUtterances,
                     namedSpeakerIds: namedSpeakerIds
                 )
-                let slotSamples = Self.samples(
-                    forSpeakerIndex: index, from: samples, segments: diarization
+                let request = try await Self.voiceprintRequest(
+                    meetingId: meetingId, generation: generation, speakerIndex: index,
+                    samples: samples, diarization: diarization
                 )
-                guard !slotSamples.isEmpty else {
-                    drafts.append(ReprocessedSpeakerDraft(
-                        speakerIndex: index, existingSpeakerId: confirmedSpeakerId
-                    ))
+                guard let request else {
+                    drafts.append(.init(speakerIndex: index, existingSpeakerId: confirmedSpeakerId))
                     continue
                 }
-                let embedding = try await embedder.embed(audio: slotSamples)
-                drafts.append(ReprocessedSpeakerDraft(
+                let handle = try await voiceprintProcessor.submit(request)
+                activeVoiceprintHandles[handle.id] = handle
+                let result: VoiceprintProcessingResult
+                do {
+                    result = try await handle.value()
+                } catch {
+                    activeVoiceprintHandles[handle.id] = nil
+                    throw error
+                }
+                activeVoiceprintHandles[handle.id] = nil
+                try ensureActive(runId: runId)
+
+                drafts.append(try await Self.speakerDraft(
                     speakerIndex: index,
-                    existingSpeakerId: confirmedSpeakerId,
-                    embedding: embedding,
-                    wasVoiceprintMatch: false
+                    confirmedSpeakerId: confirmedSpeakerId,
+                    result: result,
+                    matcher: voiceprintMatcher
                 ))
                 let fraction = Double(offset + 1) / Double(max(1, indexes.count))
                 await progress(.init(
@@ -322,8 +392,67 @@ public actor MeetingReprocessor {
         }
     }
 
+    private func ensureActive(runId: UUID) throws {
+        try Task.checkCancellation()
+        guard activeRunId == runId else { throw CancellationError() }
+        try activeRunCancellation?.check()
+    }
+
+    nonisolated static func speakerDraft(
+        speakerIndex: Int,
+        confirmedSpeakerId: String?,
+        result: VoiceprintProcessingResult,
+        matcher: VoiceprintMatcher?
+    ) async throws -> ReprocessedSpeakerDraft {
+        let embedding = result.embedding
+        var matchedSpeakerId: String?
+        if confirmedSpeakerId == nil, let embedding, let matcher,
+           case .matched(let speakerId, _) = try await matcher.match(
+               embedding: embedding, cleanDuration: result.evidence.cleanDuration
+           ) {
+            matchedSpeakerId = speakerId
+        }
+        return ReprocessedSpeakerDraft(
+            speakerIndex: speakerIndex,
+            existingSpeakerId: confirmedSpeakerId ?? matchedSpeakerId,
+            embedding: embedding,
+            wasVoiceprintMatch: confirmedSpeakerId == nil && matchedSpeakerId != nil
+        )
+    }
+
+    private nonisolated static func voiceprintRequest(
+        meetingId: String,
+        generation: Int,
+        speakerIndex: Int,
+        samples: [Float],
+        diarization: [DiarizerSegment]
+    ) async throws -> VoiceprintRequest? {
+        try await Task.detached(priority: .utility) {
+            do {
+                let selected = try VoiceprintSampleSelector().select(
+                    speakerIndex: speakerIndex, audio: samples, sampleRate: 16_000,
+                    finalizedSegments: diarization
+                )
+                let segment = DiarizerSegment(
+                    speakerIndex: speakerIndex, startFrame: 0, endFrame: selected.samples.count,
+                    frameDurationSeconds: 1.0 / 16_000.0
+                )
+                return VoiceprintRequest(
+                    meetingId: meetingId, speakerSlot: speakerIndex,
+                    generation: generation, audio: selected.samples, sampleRate: 16_000,
+                    finalizedSegments: [segment]
+                )
+            } catch VoiceprintSampleSelectionError.insufficientCleanAudio {
+                return nil
+            }
+        }.value
+    }
+
     private func cancelChildren(runId: UUID) async {
         guard activeRunId == runId else { return }
+        activeRunCancellation?.cancel()
+        let handles = Array(activeVoiceprintHandles.values)
+        for handle in handles { await handle.cancel() }
         await activeTranscriber?.cancelAndWait()
         await activeDiarizer?.cancelAndWait()
     }

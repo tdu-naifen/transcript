@@ -60,15 +60,21 @@ public struct MeetingReprocessingRepository: Sendable {
         self.database = database
     }
 
+    /// Atomically replaces derived transcript and meeting-speaker rows. Voiceprint
+    /// embeddings are evidence only and are never enrolled by this operation.
+    /// Cancellation observed before the final transaction check rolls back all changes;
+    /// after that check, the atomic commit wins.
     @discardableResult
     public func replace(
         meetingId: String,
         utterances drafts: [ReprocessedUtteranceDraft],
         speakers speakerDrafts: [ReprocessedSpeakerDraft],
         deviceId: String,
-        now: Date = Date()
+        now: Date = Date(),
+        cancellationCheck: @escaping @Sendable () throws -> Void = { try Task.checkCancellation() }
     ) async throws -> MeetingReprocessingResult {
         try await database.writer.write { db in
+            try cancellationCheck()
             guard var meeting = try Meeting.fetchOne(db, key: meetingId) else {
                 throw RepositoryError.notFound(table: Meeting.databaseTableName, id: meetingId)
             }
@@ -121,23 +127,6 @@ public struct MeetingReprocessingRepository: Sendable {
                 }
                 speakerIdsByIndex[draft.speakerIndex] = speakerId
 
-                if let embedding = draft.embedding, !embedding.isEmpty {
-                    let existingDimension = try Int.fetchOne(db, sql: """
-                        SELECT dimension FROM speakerEmbedding WHERE speakerId = ? LIMIT 1
-                        """, arguments: [speakerId])
-                    if let existingDimension, existingDimension != embedding.count {
-                        throw RepositoryError.dimensionMismatch(
-                            expected: existingDimension, actual: embedding.count
-                        )
-                    }
-                    try SpeakerEmbedding(
-                        speakerId: speakerId,
-                        floats: embedding,
-                        createdAt: now,
-                        updatedAt: now,
-                        originDeviceId: deviceId
-                    ).insert(db)
-                }
             }
 
             var linkedSpeakerIds: Set<String> = []
@@ -172,6 +161,7 @@ public struct MeetingReprocessingRepository: Sendable {
                 ).insert(db)
             }
 
+            try cancellationCheck()
             meeting.localeIdentifier = try PrimaryLanguage.derive(db, meetingId: meetingId)
             meeting.updatedAt = now
             meeting.originDeviceId = deviceId

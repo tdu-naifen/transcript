@@ -1,18 +1,17 @@
 import FluidAudio
 import Foundation
 
-/// Cosine threshold for binding a diarized CAM++ voiceprint to an existing GRDB speaker
-/// (PLAN §3.1.1 / work item 4). 0.7 is a defensible starting point for a 192-d
-/// L2-normalized cosine embedding space (well above chance, comparable to published
-/// CAM++ verification operating points), **not a validated one — it needs tuning against
-/// real enrollment data** before shipping.
+/// Legacy matching threshold. It is uncalibrated and retained only for source compatibility.
 public let voiceprintMatchThreshold: Float = 0.7
 
-/// Turns diarized speaker slots into GRDB `speaker` / `meetingSpeaker` rows (PLAN work
-/// item 4). Our GRDB tables stay authoritative (PLAN §3.1.1 / D9 / D12): FluidAudio only
-/// *produces* embeddings here, matching against GRDB is brute-force cosine via
-/// ``SpeakerRepository/findNearestSpeaker(embedding:threshold:)``, exactly as the
-/// existing suggestion-chip path does.
+/// Atomically publishes an identity decision. Matching is read-only; enrollment is a
+/// separate explicit operation and is never implied by `bindIdentity` or `bindAnonymous`.
+public enum VoiceprintBindingError: Error, Sendable, Equatable {
+    case staleExpectation
+    case confirmedMappingConflict(speakerId: String)
+    case invalidEmbedding
+}
+
 public struct VoiceprintBinder: Sendable {
     public struct Binding: Sendable, Equatable {
         public let speakerIndex: Int
@@ -26,12 +25,100 @@ public struct VoiceprintBinder: Sendable {
         self.speakers = speakers
     }
 
-    /// Matches one pre-computed 192-d CAM++ embedding against GRDB speakers and writes
-    /// the `meetingSpeaker` row for this slot. Pure GRDB I/O — no CoreML involved, so
-    /// this half is unit-testable without the CAM++ model.
-    ///
-    /// Above `threshold` → binds to the nearest existing `speaker.id`. Below → creates a
-    /// new `Speaker` with an unused anonymous animal name (PLAN Phase 2d).
+    public func expectation(
+        meetingId: String,
+        speakerIndex: Int
+    ) async throws -> VoiceprintBindingExpectation {
+        try await speakers.bindingExpectation(meetingId: meetingId, speakerIndex: speakerIndex)
+    }
+
+    @discardableResult
+    public func bindIdentity(
+        speakerId: String,
+        evidence: VoiceprintMatchEvidence,
+        meetingId: String,
+        speakerIndex: Int,
+        expectation: VoiceprintBindingExpectation,
+        deviceId: String,
+        now: Date = Date()
+    ) async throws -> Binding {
+        _ = try await speakers.bindVoiceprintIdentity(
+            speakerId: speakerId, expectedVoiceprintGeneration: evidence.voiceprintGeneration,
+            meetingId: meetingId, speakerIndex: speakerIndex,
+            expectation: expectation, deviceId: deviceId, now: now
+        )
+        return Binding(speakerIndex: speakerIndex, speakerId: speakerId, isNewSpeaker: false)
+    }
+
+    /// Compatibility for callers that explicitly select an identity without match evidence.
+    @available(*, deprecated, renamed: "bindSelectedIdentity(speakerId:meetingId:speakerIndex:expectation:deviceId:now:)")
+    @discardableResult
+    public func bindIdentity(
+        speakerId: String,
+        meetingId: String,
+        speakerIndex: Int,
+        expectation: VoiceprintBindingExpectation,
+        deviceId: String,
+        now: Date = Date()
+    ) async throws -> Binding {
+        try await bindSelectedIdentity(
+            speakerId: speakerId, meetingId: meetingId, speakerIndex: speakerIndex,
+            expectation: expectation, deviceId: deviceId, now: now
+        )
+    }
+
+    /// Publishes an explicit user selection, which is not derived from match evidence.
+    @discardableResult
+    public func bindSelectedIdentity(
+        speakerId: String,
+        meetingId: String,
+        speakerIndex: Int,
+        expectation: VoiceprintBindingExpectation,
+        deviceId: String,
+        now: Date = Date()
+    ) async throws -> Binding {
+        _ = try await speakers.bindSelectedVoiceprintIdentity(
+            speakerId: speakerId, meetingId: meetingId, speakerIndex: speakerIndex,
+            expectation: expectation, deviceId: deviceId, now: now
+        )
+        return Binding(speakerIndex: speakerIndex, speakerId: speakerId, isNewSpeaker: false)
+    }
+
+    @discardableResult
+    public func bindAnonymous(
+        meetingId: String,
+        speakerIndex: Int,
+        expectation: VoiceprintBindingExpectation,
+        deviceId: String,
+        now: Date = Date()
+    ) async throws -> Binding {
+        let speaker = try await speakers.createAnonymousVoiceprintBinding(
+            meetingId: meetingId, speakerIndex: speakerIndex,
+            expectation: expectation, deviceId: deviceId, now: now
+        )
+        return Binding(speakerIndex: speakerIndex, speakerId: speaker.id, isNewSpeaker: true)
+    }
+
+    /// Explicitly persists a long-term template. Recognition alone must not call this.
+    public func enroll(
+        embedding: [Float],
+        speakerId: String,
+        modelIdentifier: String,
+        deviceId: String,
+        now: Date = Date()
+    ) async throws {
+        guard !modelIdentifier.isEmpty, FloatVector.normalized(embedding) != nil else {
+            throw VoiceprintBindingError.invalidEmbedding
+        }
+        try await speakers.addEmbedding(SpeakerEmbedding(
+            speakerId: speakerId, floats: embedding, createdAt: now,
+            updatedAt: now, originDeviceId: deviceId, modelIdentifier: modelIdentifier
+        ))
+    }
+
+    /// Compatibility only: nil-model matching plus automatic enrollment. New flows must
+    /// use `VoiceprintMatcher`, explicit binding, and optional explicit `enroll`.
+    @available(*, deprecated, message: "Use VoiceprintMatcher and explicit binding/enrollment")
     @discardableResult
     public func bind(
         embedding: [Float],
@@ -51,28 +138,19 @@ public struct VoiceprintBinder: Sendable {
             speakerId = speaker.id
             isNewSpeaker = true
         }
-
         try await speakers.addEmbedding(SpeakerEmbedding(
-            speakerId: speakerId,
-            floats: embedding,
-            createdAt: now,
-            updatedAt: now,
-            originDeviceId: deviceId
+            speakerId: speakerId, floats: embedding, createdAt: now,
+            updatedAt: now, originDeviceId: deviceId
         ))
         try await speakers.assignDisplayIndex(
-            meetingId: meetingId,
-            speakerId: speakerId,
-            displayIndex: speakerIndex,
-            deviceId: deviceId,
-            now: now
+            meetingId: meetingId, speakerId: speakerId, displayIndex: speakerIndex,
+            deviceId: deviceId, now: now
         )
         return Binding(speakerIndex: speakerIndex, speakerId: speakerId, isNewSpeaker: isNewSpeaker)
     }
 
-    /// Embeds each diarized slot's gathered audio with CAM++, then binds it via
-    /// ``bind(embedding:meetingId:speakerIndex:deviceId:threshold:now:)``. Requires the
-    /// CAM++ model to be loaded — gate any test that exercises this behind model
-    /// availability; the pure matching logic above does not need it.
+    /// Compatibility-only wrapper around deprecated `bind`.
+    @available(*, deprecated, message: "Use the processor, VoiceprintMatcher, and explicit binding")
     public func bindSlots(
         _ slots: [(speakerIndex: Int, samples: [Float])],
         meetingId: String,
@@ -85,12 +163,8 @@ public struct VoiceprintBinder: Sendable {
         for slot in slots {
             let vector = try await embedder.embed(audio: slot.samples)
             bindings.append(try await bind(
-                embedding: vector,
-                meetingId: meetingId,
-                speakerIndex: slot.speakerIndex,
-                deviceId: deviceId,
-                threshold: threshold,
-                now: now
+                embedding: vector, meetingId: meetingId, speakerIndex: slot.speakerIndex,
+                deviceId: deviceId, threshold: threshold, now: now
             ))
         }
         return bindings

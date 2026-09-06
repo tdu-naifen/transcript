@@ -1,3 +1,4 @@
+import Accelerate
 import Foundation
 
 /// Conversion between `[Float]` and raw little-endian Float32 `Data`,
@@ -27,9 +28,33 @@ public enum FloatVector {
         return out
     }
 
-    /// Returns 0 for mismatched or zero-magnitude vectors.
-    public static func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Float {
+    public static func isValidStorage(_ data: Data, dimension: Int) -> Bool {
+        dimension > 0 && data.count.isMultiple(of: MemoryLayout<Float>.size)
+            && data.count / MemoryLayout<Float>.size == dimension
+    }
+
+    /// Returns a unit vector only when every component and the magnitude are finite.
+    public static func normalized(_ values: [Float]) -> [Float]? {
+        guard !values.isEmpty, values.allSatisfy(\.isFinite) else { return nil }
+        var squaredMagnitude: Float = 0
+        for value in values { squaredMagnitude += value * value }
+        let magnitude = squaredMagnitude.squareRoot()
+        guard magnitude.isFinite, magnitude > 0 else { return nil }
+        return values.map { $0 / magnitude }
+    }
+
+    static func dot(
+        _ a: UnsafeBufferPointer<Float>,
+        _ b: UnsafeBufferPointer<Float>
+    ) -> Float {
         guard a.count == b.count, !a.isEmpty else { return 0 }
+        return vDSP.dot(a, b)
+    }
+
+    /// Returns 0 for mismatched, non-finite, or zero-magnitude vectors.
+    public static func cosineSimilarity(_ a: [Float], _ b: [Float]) -> Float {
+        guard a.count == b.count, !a.isEmpty,
+              a.allSatisfy(\.isFinite), b.allSatisfy(\.isFinite) else { return 0 }
         var dot: Float = 0
         var normA: Float = 0
         var normB: Float = 0

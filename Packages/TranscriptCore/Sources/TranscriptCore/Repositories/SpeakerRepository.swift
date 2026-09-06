@@ -6,6 +6,41 @@ public struct SpeakerMatch: Sendable, Equatable {
     public let similarity: Float
 }
 
+public struct SpeakerNameSearchCursor: Codable, Hashable, Sendable {
+    public let lastSpeakerId: String
+
+    public init(lastSpeakerId: String) {
+        self.lastSpeakerId = lastSpeakerId
+    }
+}
+
+public struct SpeakerNameSearchPage: Sendable, Equatable {
+    public let speakers: [Speaker]
+    public let nextCursor: SpeakerNameSearchCursor?
+}
+
+struct VoiceprintSnapshot: Sendable {
+    struct Entry: Sendable {
+        let speakerId: String
+        let dimension: Int
+        let offset: Int
+    }
+
+    let generation: Int
+    let values: [Float]
+    let entries: [Entry]
+}
+
+public struct VoiceprintBindingExpectation: Sendable, Equatable {
+    public let speakerId: String?
+    public let updatedAt: Date?
+
+    public init(speakerId: String?, updatedAt: Date?) {
+        self.speakerId = speakerId
+        self.updatedAt = updatedAt
+    }
+}
+
 public struct SpeakerRepository: Sendable {
     private let database: AppDatabase
 
@@ -28,6 +63,44 @@ public struct SpeakerRepository: Sendable {
     public func fetchAll() async throws -> [Speaker] {
         try await database.reader.read { db in
             try Speaker.order(Speaker.Columns.anonymousName).fetchAll(db)
+        }
+    }
+
+    /// Prefix-searches either current display name or anonymous fallback name. Results are
+    /// ordered by stable speaker id so inserts do not duplicate rows across cursor pages.
+    public func searchNames(
+        prefix: String,
+        limit: Int = 25,
+        cursor: SpeakerNameSearchCursor? = nil
+    ) async throws -> SpeakerNameSearchPage {
+        let boundedLimit = min(max(limit, 1), 50)
+        let escaped = prefix
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_") + "%"
+        return try await database.reader.read { db in
+            let rows = try Speaker.fetchAll(db, sql: """
+                SELECT * FROM (
+                    SELECT speaker.*, displayName AS matchedName
+                    FROM speaker INDEXED BY speaker_on_displayName_nocase
+                    WHERE displayName LIKE ? ESCAPE '\\' COLLATE NOCASE
+                    UNION ALL
+                    SELECT speaker.*, anonymousName AS matchedName
+                    FROM speaker INDEXED BY speaker_on_anonymousName_nocase
+                    WHERE anonymousName LIKE ? ESCAPE '\\' COLLATE NOCASE
+                      AND (displayName IS NULL OR displayName NOT LIKE ? ESCAPE '\\' COLLATE NOCASE)
+                )
+                WHERE id > ?
+                ORDER BY id
+                LIMIT ?
+                """, arguments: [escaped, escaped, escaped, cursor?.lastSpeakerId ?? "", boundedLimit + 1])
+            let speakers = Array(rows.prefix(boundedLimit))
+            return SpeakerNameSearchPage(
+                speakers: speakers,
+                nextCursor: rows.count > boundedLimit
+                    ? speakers.last.map { SpeakerNameSearchCursor(lastSpeakerId: $0.id) }
+                    : nil
+            )
         }
     }
 
@@ -335,14 +408,14 @@ public struct SpeakerRepository: Sendable {
 
     // MARK: - Embeddings
 
-    /// Search tolerates mixed dimensions by skipping, but ingestion must not: storing a
-    /// vector whose dimension disagrees with the speaker's existing ones means the wrong
-    /// embedding model produced it, and every later comparison would silently skip it.
+    /// Rejects dimension drift within one exact model revision. Different models (and
+    /// legacy nil-model rows) are separate compatibility domains.
     public func addEmbedding(_ embedding: SpeakerEmbedding) async throws {
         try await database.writer.write { db in
             let existing = try Int.fetchOne(db, sql: """
-                SELECT dimension FROM speakerEmbedding WHERE speakerId = ? LIMIT 1
-                """, arguments: [embedding.speakerId])
+                SELECT dimension FROM speakerEmbedding
+                WHERE speakerId = ? AND modelIdentifier IS ? LIMIT 1
+                """, arguments: [embedding.speakerId, embedding.modelIdentifier])
             if let existing, existing != embedding.dimension {
                 throw RepositoryError.dimensionMismatch(expected: existing, actual: embedding.dimension)
             }
@@ -355,6 +428,197 @@ public struct SpeakerRepository: Sendable {
             try SpeakerEmbedding
                 .filter(SpeakerEmbedding.Columns.speakerId == speakerId)
                 .fetchAll(db)
+        }
+    }
+
+    public func deleteEmbeddings(forSpeaker speakerId: String, modelIdentifier: String) async throws {
+        try await database.writer.write { db in
+            try db.execute(
+                sql: "DELETE FROM speakerEmbedding WHERE speakerId = ? AND modelIdentifier = ?",
+                arguments: [speakerId, modelIdentifier]
+            )
+        }
+    }
+
+    public func voiceprintGeneration() async throws -> Int {
+        try await database.reader.read { db in
+            try Int.fetchOne(db, sql: "SELECT revision FROM voiceprintGeneration WHERE id = 1") ?? 0
+        }
+    }
+
+    /// Loads and normalizes a model-compatible snapshot in one database read transaction.
+    /// Invalid blobs, dimensions, and values are omitted rather than poisoning matching.
+    func loadVoiceprintSnapshot(
+        modelIdentifier: String,
+        includeLegacy: Bool
+    ) async throws -> VoiceprintSnapshot {
+        try await database.reader.read { db in
+            let generation = try Int.fetchOne(
+                db, sql: "SELECT revision FROM voiceprintGeneration WHERE id = 1"
+            ) ?? 0
+            let rows = try SpeakerEmbedding.fetchAll(
+                db,
+                sql: includeLegacy
+                    ? "SELECT * FROM speakerEmbedding WHERE modelIdentifier = ? OR modelIdentifier IS NULL ORDER BY speakerId, id"
+                    : "SELECT * FROM speakerEmbedding WHERE modelIdentifier = ? ORDER BY speakerId, id",
+                arguments: [modelIdentifier]
+            )
+            var values: [Float] = []
+            var entries: [VoiceprintSnapshot.Entry] = []
+            for row in rows {
+                guard FloatVector.isValidStorage(row.vector, dimension: row.dimension),
+                      let normalized = FloatVector.normalized(row.floats),
+                      normalized.count == row.dimension else { continue }
+                entries.append(.init(
+                    speakerId: row.speakerId, dimension: row.dimension, offset: values.count
+                ))
+                values.append(contentsOf: normalized)
+            }
+            return VoiceprintSnapshot(generation: generation, values: values, entries: entries)
+        }
+    }
+
+    func bindingExpectation(
+        meetingId: String,
+        speakerIndex: Int
+    ) async throws -> VoiceprintBindingExpectation {
+        try await database.reader.read { db in
+            guard let row = try Row.fetchOne(db, sql: """
+                SELECT speakerId, updatedAt FROM meetingSpeaker
+                WHERE meetingId = ? AND displayIndex = ?
+                """, arguments: [meetingId, speakerIndex]) else {
+                return VoiceprintBindingExpectation(speakerId: nil, updatedAt: nil)
+            }
+            return VoiceprintBindingExpectation(
+                speakerId: row["speakerId"], updatedAt: row["updatedAt"]
+            )
+        }
+    }
+
+    func bindVoiceprintIdentity(
+        speakerId: String,
+        expectedVoiceprintGeneration: Int,
+        meetingId: String,
+        speakerIndex: Int,
+        expectation: VoiceprintBindingExpectation,
+        deviceId: String,
+        now: Date
+    ) async throws -> Speaker {
+        try await bindVoiceprintIdentityTransaction(
+            speakerId: speakerId, expectedVoiceprintGeneration: expectedVoiceprintGeneration,
+            meetingId: meetingId, speakerIndex: speakerIndex, expectation: expectation,
+            deviceId: deviceId, now: now
+        )
+    }
+
+    func bindSelectedVoiceprintIdentity(
+        speakerId: String,
+        meetingId: String,
+        speakerIndex: Int,
+        expectation: VoiceprintBindingExpectation,
+        deviceId: String,
+        now: Date
+    ) async throws -> Speaker {
+        try await bindVoiceprintIdentityTransaction(
+            speakerId: speakerId, expectedVoiceprintGeneration: nil,
+            meetingId: meetingId, speakerIndex: speakerIndex, expectation: expectation,
+            deviceId: deviceId, now: now
+        )
+    }
+
+    private func bindVoiceprintIdentityTransaction(
+        speakerId: String,
+        expectedVoiceprintGeneration: Int?,
+        meetingId: String,
+        speakerIndex: Int,
+        expectation: VoiceprintBindingExpectation,
+        deviceId: String,
+        now: Date
+    ) async throws -> Speaker {
+        try await database.writer.write { db in
+            if let expectedVoiceprintGeneration {
+                let currentGeneration = try Int.fetchOne(
+                    db, sql: "SELECT revision FROM voiceprintGeneration WHERE id = 1"
+                ) ?? 0
+                guard currentGeneration == expectedVoiceprintGeneration else {
+                    throw VoiceprintBindingError.staleExpectation
+                }
+            }
+            guard let speaker = try Speaker.fetchOne(db, key: speakerId) else {
+                throw RepositoryError.notFound(table: Speaker.databaseTableName, id: speakerId)
+            }
+            let currentRow = try Row.fetchOne(db, sql: """
+                SELECT speakerId, updatedAt FROM meetingSpeaker WHERE meetingId = ? AND displayIndex = ?
+                """, arguments: [meetingId, speakerIndex])
+            let current: String? = currentRow?["speakerId"]
+            let currentUpdatedAt: Date? = currentRow?["updatedAt"]
+            guard current == expectation.speakerId,
+                  currentUpdatedAt == expectation.updatedAt else {
+                throw VoiceprintBindingError.staleExpectation
+            }
+            if let current, current != speakerId {
+                let named = try String.fetchOne(
+                    db, sql: "SELECT displayName FROM speaker WHERE id = ?", arguments: [current]
+                )
+                if named != nil {
+                    throw VoiceprintBindingError.confirmedMappingConflict(speakerId: current)
+                }
+                try db.execute(
+                    sql: "DELETE FROM meetingSpeaker WHERE meetingId = ? AND speakerId = ?",
+                    arguments: [meetingId, current]
+                )
+            }
+            if current != speakerId {
+                try MeetingSpeaker(
+                    meetingId: meetingId, speakerId: speakerId, displayIndex: speakerIndex,
+                    createdAt: now, updatedAt: now, originDeviceId: deviceId
+                ).insert(db)
+            }
+            return speaker
+        }
+    }
+
+    func createAnonymousVoiceprintBinding(
+        meetingId: String,
+        speakerIndex: Int,
+        expectation: VoiceprintBindingExpectation,
+        deviceId: String,
+        now: Date
+    ) async throws -> Speaker {
+        try await database.writer.write { db in
+            let currentRow = try Row.fetchOne(db, sql: """
+                SELECT speakerId, updatedAt FROM meetingSpeaker WHERE meetingId = ? AND displayIndex = ?
+                """, arguments: [meetingId, speakerIndex])
+            let current: String? = currentRow?["speakerId"]
+            let currentUpdatedAt: Date? = currentRow?["updatedAt"]
+            guard current == expectation.speakerId,
+                  currentUpdatedAt == expectation.updatedAt else {
+                throw VoiceprintBindingError.staleExpectation
+            }
+            if let current {
+                let named = try String.fetchOne(
+                    db, sql: "SELECT displayName FROM speaker WHERE id = ?", arguments: [current]
+                )
+                if named != nil {
+                    throw VoiceprintBindingError.confirmedMappingConflict(speakerId: current)
+                }
+                try db.execute(
+                    sql: "DELETE FROM meetingSpeaker WHERE meetingId = ? AND speakerId = ?",
+                    arguments: [meetingId, current]
+                )
+            }
+            let used = try String.fetchAll(db, sql: "SELECT anonymousName FROM speaker")
+            let speaker = Speaker(
+                anonymousName: AnonymousNameGenerator.nextName(usedNames: used),
+                colorIndex: try Speaker.fetchCount(db) % 12,
+                createdAt: now, updatedAt: now, originDeviceId: deviceId
+            )
+            try speaker.insert(db)
+            try MeetingSpeaker(
+                meetingId: meetingId, speakerId: speaker.id, displayIndex: speakerIndex,
+                createdAt: now, updatedAt: now, originDeviceId: deviceId
+            ).insert(db)
+            return speaker
         }
     }
 
