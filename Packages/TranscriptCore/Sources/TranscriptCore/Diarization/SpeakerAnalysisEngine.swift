@@ -133,7 +133,7 @@ public actor SpeakerAnalysisEngine: SpeakerAnalyzing {
         }
         try await SpeakerAnalysisRepository(database).apply(
             meetingID: meetingID, expectedUtterances: expected, slotsByUtterance: assignments,
-            voices: voices, modelIdentifier: modelIdentifier,
+            voices: voices, timeline: segments, modelIdentifier: modelIdentifier,
             deviceID: deviceID
         )
     }

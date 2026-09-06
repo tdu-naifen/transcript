@@ -45,6 +45,7 @@ final class MeetingDetailModel {
     private let deviceId: String
     private var reprocessingTask: Task<Void, Never>?
     private var pendingInitialSeekMs: Int?
+    private var requestedUnknownBackfill = false
 
     init(
         meeting: Meeting,
@@ -122,7 +123,9 @@ final class MeetingDetailModel {
             loadFailure = nil
             if self.meeting.audioFileName != nil,
                speakers.isEmpty || utterances.contains(where: { $0.speakerId == nil }) {
-                await speakerAnalysis.enqueue(self.meeting)
+                let needsBackfill = utterances.contains(where: { $0.speakerId == nil }) && !requestedUnknownBackfill
+                requestedUnknownBackfill = true
+                await speakerAnalysis.enqueue(self.meeting, retry: needsBackfill)
             }
             // Consume once after data is ready, not on every appearance or reload.
             if let initialSeekMs = pendingInitialSeekMs {

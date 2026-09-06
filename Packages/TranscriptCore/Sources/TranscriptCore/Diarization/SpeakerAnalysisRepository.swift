@@ -1,5 +1,6 @@
 import Foundation
 import GRDB
+import struct FluidAudio.DiarizerSegment
 
 public struct DetectedVoiceprint: Sendable {
     public let slot: Int
@@ -68,6 +69,7 @@ public struct SpeakerAnalysisRepository: Sendable {
         expectedUtterances: [Utterance],
         slotsByUtterance: [String: Int],
         voices: [DetectedVoiceprint],
+        timeline: [DiarizerSegment] = [],
         modelIdentifier: String,
         deviceID: String,
         policy: VoiceprintMatchPolicy = .init()
@@ -147,7 +149,12 @@ public struct SpeakerAnalysisRepository: Sendable {
             for var utterance in current {
                 if let id = utterance.speakerId,
                    try Speaker.fetchOne(db, key: id)?.displayName != nil { continue }
-                let identity = slotsByUtterance[utterance.id].flatMap { resolved[$0]?.id }
+                let identity = timeline.isEmpty
+                    ? slotsByUtterance[utterance.id].flatMap { resolved[$0]?.id }
+                    : SpeakerOverlapAssigner.speakerID(
+                        utteranceStartMs: utterance.startMs, utteranceEndMs: utterance.endMs,
+                        segments: timeline, identitiesBySlot: resolved.mapValues(\.id)
+                    )
                 if let identity, identity != utterance.speakerId {
                     utterance.speakerId = identity
                     utterance.revision += 1

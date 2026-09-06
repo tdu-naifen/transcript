@@ -9,6 +9,21 @@ import Foundation
 /// Both axes are absolute seconds from stream start: `Utterance.startMs`/`endMs` (as
 /// milliseconds here) and `DiarizerSegment.startTime`/`endTime`.
 public enum SpeakerOverlapAssigner {
+    /// Resolve slots to persistent identities before deciding whether a turn is mixed.
+    public static func speakerID(
+        utteranceStartMs: Int, utteranceEndMs: Int,
+        segments: [DiarizerSegment], identitiesBySlot: [Int: String]
+    ) -> String? {
+        let start = Double(utteranceStartMs) / 1000
+        let end = Double(utteranceEndMs) / 1000
+        var identities: Set<String> = []
+        for segment in segments where min(end, Double(segment.endTime)) > max(start, Double(segment.startTime)) {
+            guard let identity = identitiesBySlot[segment.speakerIndex] else { return nil }
+            identities.insert(identity)
+        }
+        return identities.count == 1 ? identities.first : nil
+    }
+
     /// - Returns: The speaker index when exactly one speaker overlaps the utterance,
     ///   or `nil` when the interval is unvoiced or spans multiple speakers.
     public static func speakerIndex(

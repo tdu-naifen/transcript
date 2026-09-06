@@ -1,9 +1,30 @@
 import Foundation
 import Testing
+import struct FluidAudio.DiarizerSegment
 @testable import TranscriptCore
 
 @Suite(.serialized)
 struct SpeakerAnalysisTests {
+    @Test func earlierUnknownTurnSpanningTwoSlotsOfSameAnimalIsBackfilled() async throws {
+        let db = try AppDatabase.inMemory()
+        let fixture = try await meeting(db)
+        let timeline = [
+            DiarizerSegment(speakerIndex: 0, startFrame: 0, endFrame: 16000, frameDurationSeconds: 1.0 / 16000),
+            DiarizerSegment(speakerIndex: 1, startFrame: 16000, endFrame: 48000, frameDurationSeconds: 1.0 / 16000)
+        ]
+        #expect(SpeakerOverlapAssigner.speakerIndex(utteranceStartMs: 0, utteranceEndMs: 3000, segments: timeline) == nil)
+        let identities = try await SpeakerAnalysisRepository(db).apply(
+            meetingID: fixture.id, expectedUtterances: fixture.rows, slotsByUtterance: [:],
+            voices: [.init(slot: 0, embedding: [1, 0], cleanDuration: 3),
+                     .init(slot: 1, embedding: [1, 0], cleanDuration: 3)],
+            timeline: timeline, modelIdentifier: "test-cam", deviceID: "test")
+        let stored = try await UtteranceRepository(db).fetch(meetingId: fixture.id)
+        #expect(stored[0].speakerId == identities[0]?.id)
+        #expect(stored[0].text == fixture.rows[0].text)
+        #expect(SpeakerOverlapAssigner.speakerID(utteranceStartMs: 0, utteranceEndMs: 3000,
+            segments: timeline, identitiesBySlot: [0: "condor", 1: "otter"]) == nil)
+    }
+
     @Test func modelIdentityDependsOnInstalledBytesNotFolderName() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
