@@ -24,6 +24,7 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: MacApp
+      - path: Shared/Pairing
     dependencies:
       - package: TranscriptCore
         product: TranscriptCore

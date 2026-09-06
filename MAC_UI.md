@@ -47,6 +47,7 @@
 - 明确标识的只读示例资料库，不写数据库、不传输、不带假音频。切换会议、示例或页面时卸载上一次音频，避免串播。
 - Mac 侧 `NWListener` 发布 `_vtscribe._tcp`；用户主动开启，显示真实发布状态、服务重命名、权限 / 网络失败与重试。关闭窗口不退出 App，发现可继续；退出会撤销服务。
 - Mac 认证配对服务及真实六位码确认 UI：双方先提交密钥承诺再揭示，X25519 / Ed25519 认证交换、HKDF-SHA256、ChaChaPoly 加密帧；两端均确认才保存信任。Keychain 持久身份、固定公钥重连、拒绝、超时、断开与取消配对。协议与 iOS 接入契约见 [MAC_PAIRING_PROTOCOL.md](MAC_PAIRING_PROTOCOL.md)。
+- 已集成 iOS 固定提交 `33b30b5`，Mac 与 iOS target 共同编译 [Shared/Pairing](Shared/Pairing) 的 Crypto / Transport / IdentityStore 三份源文件；Mac 原同名副本已移除，密码协议没有重写。`MacPairingServer` 仍为 Mac 专有，iOS 使用独立生产客户端状态机。单端测试通过不代表 Simulator 与原生 Mac 服务的互通或双端 UI 已验收。
 - 新配对需明确开启（两分钟 / 最多五次尝试）；握手十秒、人工确认六十秒、已认证连接空闲一百二十秒超时。发现名称不是身份；断开保留信任，取消配对删除信任但不删除会议。
 - App Sandbox、网络 server / client entitlement、用户选择文件只读权限与本地网络隐私声明。无需麦克风权限，也不会启动录音。
 
