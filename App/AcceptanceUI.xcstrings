@@ -1,6 +1,30 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Collapsed" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已收起" } }
+      }
+    },
+    "Expanded" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已展开" } }
+      }
+    },
+    "Follow playback" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "跟随播放" } }
+      }
+    },
+    "Scroll to the current transcript segment." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "滚动到当前播放的转写片段。" } }
+      }
+    },
     "Cancel" : {
       "extractionState" : "stale",
       "localizations" : {

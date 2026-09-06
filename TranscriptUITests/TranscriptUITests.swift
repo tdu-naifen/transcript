@@ -609,6 +609,73 @@ final class TranscriptUITests: XCTestCase {
         tapDone(in: app)
     }
 
+    func testTranscriptManualBrowsingCanResumePlaybackFollowing() {
+        let app = isolatedApp()
+        app.launchArguments = [
+            "-uiFixture", "1", "-uiFixturePlayback", "1", "-appLanguage", "en",
+            "-uiFixtureOpenMeetingId", "fixture-meeting-playback"
+        ]
+        app.launch()
+        let play = app.buttons["audioPlayPauseButton"]
+        XCTAssertTrue(play.waitForExistence(timeout: 5))
+        play.tap()
+        let scroll = app.scrollViews["meetingTranscriptScrollView"]
+        scroll.swipeUp()
+        let follow = app.buttons["transcriptFollowPlayback"]
+        XCTAssertTrue(follow.waitForExistence(timeout: 3))
+        XCTAssertGreaterThanOrEqual(follow.frame.height, 44)
+        let visibleLine = scroll.buttons.allElementsBoundByIndex.first {
+            $0.identifier.hasPrefix("transcriptPlay-") && $0.isHittable
+        }
+        XCTAssertNotNil(visibleLine)
+        let browsingY = visibleLine?.frame.midY
+        // Wait for a real playback segment change; manual browsing must remain active.
+        let currentTime = app.staticTexts["audioCurrentTime"]
+        let initialTime = currentTime.label
+        let advances = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in currentTime.label != initialTime }, object: nil
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [advances], timeout: 4), .completed)
+        XCTAssertTrue(follow.exists)
+        if let visibleLine, let browsingY {
+            XCTAssertEqual(visibleLine.frame.midY, browsingY, accuracy: 2)
+        }
+        follow.tap()
+        XCTAssertTrue(follow.waitForNonExistence(timeout: 3))
+        XCTAssertEqual(play.label, "Pause audio")
+        attachScreenshot(of: app, name: "transcript-follow-resumed")
+    }
+
+    func testInsightsAccessibilityTextFitsAndRenameRemainsReachable() {
+        let app = isolatedApp()
+        app.launchArguments = [
+            "-uiFixture", "1", "-appLanguage", "en",
+            "-uiFixtureSelectedTab", "recordings",
+            "-uiFixtureOpenMeetingId", "fixture-meeting-review-90min",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["speakerInsightsButton"].waitForExistence(timeout: 5))
+        app.buttons["speakerInsightsButton"].tap()
+        let rename = app.buttons["speakerRenameButton.fixture-speaker-alexandra"]
+        XCTAssertTrue(rename.waitForExistence(timeout: 3))
+        for _ in 0..<5 where !rename.isHittable || rename.frame.maxY > app.frame.height {
+            app.swipeUp()
+        }
+        XCTAssertTrue(rename.isHittable)
+        XCTAssertGreaterThanOrEqual(rename.frame.height, 44)
+        XCTAssertGreaterThan(rename.frame.height, 52, "The accessibility-size name must wrap instead of truncating")
+        XCTAssertGreaterThanOrEqual(rename.frame.minX, 0)
+        XCTAssertLessThanOrEqual(rename.frame.maxX, app.frame.width)
+        XCTAssertLessThanOrEqual(rename.frame.maxY, app.frame.height)
+        XCTAssertFalse(app.staticTexts["45:00"].exists, "The compact time axis keeps endpoints instead of wrapping three timestamps")
+        attachScreenshot(of: app, name: "insights-accessibility-text")
+        rename.tap()
+        XCTAssertTrue(app.alerts["Edit speaker name"].waitForExistence(timeout: 3))
+        app.alerts["Edit speaker name"].buttons["Cancel"].tap()
+        XCTAssertTrue(rename.waitForExistence(timeout: 3))
+    }
+
     func testTranscriptTailIsFullyVisibleAndTapsRealFixtureAudio() {
         let app = isolatedApp()
         app.launchArguments = [
@@ -643,7 +710,10 @@ final class TranscriptUITests: XCTestCase {
         play.tap()
         XCTAssertEqual(play.label, "Play audio")
         XCTAssertFalse(app.buttons["meetingProcessByMacButton"].isEnabled)
-        XCTAssertTrue(app.staticTexts["meetingMacUnavailableReason"].label.contains("no transport service"))
+        XCTAssertEqual(
+            app.staticTexts["meetingMacUnavailableReason"].label,
+            "Open Transcript on your Mac, then look for it on your local network."
+        )
         attachScreenshot(of: app, name: "transcript-tail-seeked")
         app.buttons["BackButton"].tap()
         XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 3))
