@@ -138,6 +138,60 @@ final class AudioPlaybackRecordingStateTests: XCTestCase {
         detail.playback.stop()
     }
 
+    func testInitialSeekOnlyRunsAfterFirstLoadAndReloadRetainsPlaybackPosition() async throws {
+        let fixture = try makeRecorder()
+        let meeting = Meeting(
+            title: "Seek once", startedAt: Date(), durationMs: 4_000, originDeviceId: "test"
+        )
+        try await MeetingRepository(fixture.services.database).insert(meeting)
+        try await UtteranceRepository(fixture.services.database).append([
+            Utterance(id: "first", meetingId: meeting.id, startMs: 1_000, endMs: 1_500, text: "First", originDeviceId: "test"),
+            Utterance(id: "second", meetingId: meeting.id, startMs: 2_000, endMs: 2_500, text: "Second", originDeviceId: "test")
+        ])
+        let detail = MeetingDetailModel(
+            meeting: meeting, audioURL: fixture.url, services: fixture.services, initialSeekMs: 1_000
+        )
+        XCTAssertEqual(detail.playback.currentTimeMs, 0)
+        XCTAssertTrue(fixture.events.values.isEmpty)
+        await detail.load()
+        detail.playback.pause()
+        XCTAssertEqual(detail.playback.currentTimeMs, 1_000)
+        XCTAssertEqual(detail.currentUtteranceId, "first")
+        XCTAssertEqual(fixture.events.values, ["playback.activate"])
+        detail.playback.seek(toMs: 2_000)
+        detail.playback.stop() // Same boundary used when navigating away.
+        let events = fixture.events.values
+        await detail.load()
+        XCTAssertEqual(detail.playback.currentTimeMs, 2_000)
+        XCTAssertEqual(detail.currentUtteranceId, "second")
+        XCTAssertFalse(detail.playback.isPlaying)
+        XCTAssertEqual(fixture.events.values, events, "Reload must neither activate nor restart initial playback")
+        let renamed = await detail.renameMeeting(newTitle: "Renamed")
+        XCTAssertTrue(renamed)
+        await detail.load()
+        XCTAssertEqual(detail.playback.currentTimeMs, 2_000)
+        XCTAssertEqual(detail.meeting.title, "Renamed")
+        XCTAssertEqual(fixture.events.values, events)
+    }
+
+    func testInitialSeekConsumedWhileCapturingDoesNotJumpOnLaterReload() async throws {
+        let fixture = try makeRecorder()
+        let detail = MeetingDetailModel(
+            meeting: Meeting(title: "Saved", startedAt: Date(), durationMs: 4_000, originDeviceId: "test"),
+            audioURL: fixture.url, services: fixture.services, initialSeekMs: 1_000
+        )
+        await fixture.recorder.toggleRecording()
+        await detail.load()
+        XCTAssertEqual(detail.playback.currentTimeMs, 0)
+        XCTAssertTrue(detail.playback.isInteractionBlockedByRecording)
+        await fixture.recorder.toggleRecording()
+        detail.playback.seek(toMs: 2_000)
+        await detail.load()
+        XCTAssertEqual(detail.playback.currentTimeMs, 2_000)
+        XCTAssertFalse(detail.playback.isPlaying)
+        XCTAssertFalse(fixture.events.values.contains("playback.activate"))
+    }
+
     private func makeRecorder(
         failCaptureStart: Bool = false,
         requestPermission: @escaping () async -> MicrophonePermission.Status = { .granted }

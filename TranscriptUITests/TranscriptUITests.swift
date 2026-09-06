@@ -187,6 +187,69 @@ final class TranscriptUITests: XCTestCase {
         attachScreenshot(of: app, name: "english-app-chinese-system-option")
     }
 
+    func testFloatingPositionSurvivesTabsRelaunchRotationAndReset() {
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiFixture", "1", "-uiFixtureSelectedTab", "home", "-appLanguage", "en"]
+        app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 5))
+        app.tabBars.buttons["Settings"].tap()
+        app.buttons["resetFloatingRecordButton"].tap()
+        app.tabBars.buttons["Home"].tap()
+        let record = app.buttons["globalRecordButton"]
+        let initial = record.frame
+        record.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
+            forDuration: 0.2,
+            thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.28, dy: 0.42))
+        )
+        let moved = record.frame
+        XCTAssertGreaterThan(abs(initial.midX - moved.midX), 30)
+        XCTAssertGreaterThan(abs(initial.midY - moved.midY), 30)
+        XCTAssertFalse(app.buttons["collapseRecordingButton"].exists)
+        XCTAssertFalse(app.buttons["recordingMiniBar"].exists)
+        app.tabBars.buttons["Meetings"].tap()
+        XCTAssertEqual(record.frame.midX, moved.midX, accuracy: 3)
+        XCTAssertEqual(record.frame.midY, moved.midY, accuracy: 3)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(record.waitForExistence(timeout: 5))
+        XCTAssertEqual(record.frame.midX, moved.midX, accuracy: 3)
+        XCTAssertEqual(record.frame.midY, moved.midY, accuracy: 3)
+
+        XCUIDevice.shared.orientation = .landscapeLeft
+        waitForWindow(in: app, landscape: true)
+        XCTAssertTrue(app.windows.firstMatch.frame.contains(record.frame))
+        XCTAssertFalse(record.frame.intersects(app.tabBars.firstMatch.frame))
+        XCTAssertFalse(app.buttons["collapseRecordingButton"].exists)
+        attachScreenshot(of: app, name: "floating-landscape-bounds")
+        XCUIDevice.shared.orientation = .portrait
+        waitForWindow(in: app, landscape: false)
+        XCTAssertEqual(record.frame.midX, moved.midX, accuracy: 3)
+        XCTAssertEqual(record.frame.midY, moved.midY, accuracy: 3)
+        app.tabBars.buttons["Settings"].tap()
+        app.buttons["resetFloatingRecordButton"].tap()
+        app.tabBars.buttons["Home"].tap()
+        XCTAssertEqual(record.frame.midX, initial.midX, accuracy: 3)
+        XCTAssertEqual(record.frame.midY, initial.midY, accuracy: 3)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(record.waitForExistence(timeout: 5))
+        XCTAssertEqual(record.frame.midX, initial.midX, accuracy: 3)
+        XCTAssertEqual(record.frame.midY, initial.midY, accuracy: 3)
+        attachScreenshot(of: app, name: "floating-reset-persisted")
+    }
+
+    private func waitForWindow(in app: XCUIApplication, landscape: Bool) {
+        let rotated = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                let frame = app.windows.firstMatch.frame
+                return landscape ? frame.width > frame.height : frame.height > frame.width
+            }, object: nil
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [rotated], timeout: 5), .completed)
+    }
+
     private func assertConnectionUnavailable(in app: XCUIApplication, reason: String) {
         app.buttons["homeConnectionButton"].tap()
         let explanation = app.staticTexts["macConnectionExplanation"]
