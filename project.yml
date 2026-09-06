@@ -112,6 +112,8 @@ schemes:
         TranscriptTests: [test]
     test:
       config: Debug
+      environmentVariables:
+        TRANSCRIPT_UI_FIXTURE: "1"
       targets:
         - TranscriptTests
   TranscriptCore:
@@ -133,6 +135,8 @@ schemes:
       config: Debug
     test:
       config: Debug
+      environmentVariables:
+        TRANSCRIPT_UI_FIXTURE: "1"
       targets:
         - TranscriptUITests
         - TranscriptTests

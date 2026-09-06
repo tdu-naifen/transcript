@@ -10,8 +10,9 @@ import TranscriptCore
 /// Idempotent: bails out before writing anything if the marker meeting already exists.
 enum UIFixture {
     static var isRequested: Bool {
-        ProcessInfo.processInfo.arguments.contains("-uiFixture")
-            && UserDefaults.standard.integer(forKey: "uiFixture") == 1
+        ProcessInfo.processInfo.environment["TRANSCRIPT_UI_FIXTURE"] == "1"
+            || (ProcessInfo.processInfo.arguments.contains("-uiFixture")
+                && UserDefaults.standard.integer(forKey: "uiFixture") == 1)
     }
 
     static func seedIfRequested(services: AppServices) async {

@@ -135,16 +135,16 @@ final class TranscriptionModelBUG002Tests: XCTestCase {
     }
 
     private func makeFixture() async throws -> (AppServices, Meeting) {
-        let previousFixtureValue = UserDefaults.standard.object(forKey: "uiFixture")
-        UserDefaults.standard.set(1, forKey: "uiFixture")
-        defer {
-            if let previousFixtureValue {
-                UserDefaults.standard.set(previousFixtureValue, forKey: "uiFixture")
-            } else {
-                UserDefaults.standard.removeObject(forKey: "uiFixture")
-            }
+        let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("transcription-\(UUID().uuidString)", isDirectory: true)
+        let services = try AppServices(
+            database: .inMemory(), store: AudioFileStore.standard(applicationSupport: root)
+        )
+        let session = services.session
+        addTeardownBlock {
+            session.invalidate()
+            try FileManager.default.removeItem(at: root)
         }
-        let services = try AppServices()
         let meeting = Meeting(
             id: UUID().uuidString, title: "BUG002",
             startedAt: Date(), originDeviceId: "test-device"
