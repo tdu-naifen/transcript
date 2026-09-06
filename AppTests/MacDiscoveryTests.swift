@@ -19,14 +19,25 @@ final class MacDiscoveryTests: XCTestCase {
         let discovery = BonjourMacDiscovery()
         let found = expectation(description: "Real browser received the published service")
         found.assertForOverFulfill = false
+        var discoveredDeviceID: String?
         discovery.onUpdate = { update in
-            if case .devices(let devices) = update, devices.contains(where: { $0.name == name }) {
+            if case .devices(let devices) = update, let device = devices.first(where: { $0.name == name }) {
+                guard let endpoint = discovery.endpoint(for: device.id),
+                      case .service(let discoveredName, let type, _, _) = endpoint else {
+                    return XCTFail("A discovered candidate must retain its real Network endpoint")
+                }
+                XCTAssertEqual(discoveredName, name)
+                XCTAssertEqual(type, "_vtscribe._tcp")
+                discoveredDeviceID = device.id
                 found.fulfill()
             }
         }
         discovery.start()
         defer { discovery.stop() }
         await fulfillment(of: [found], timeout: 15)
+        let deviceID = try XCTUnwrap(discoveredDeviceID)
+        discovery.stop()
+        XCTAssertNil(discovery.endpoint(for: deviceID))
     }
 
     func testFindMacStartsServiceAndDoesNotClaimAuthenticatedConnection() async {
@@ -76,12 +87,43 @@ final class MacDiscoveryTests: XCTestCase {
         XCTAssertTrue(model.devices.isEmpty)
         model.stopDiscovery()
     }
+
+    func testPairingConnectionDoesNotEnableMeetingTransfer() {
+        let model = MacConnectionModel()
+        let localization = LocalizationManager.shared
+        let original = localization.language
+        defer { localization.language = original }
+        model.connection = .connected(.init(id: "verified-key", name: "Paired Mac"), modelReady: true)
+        XCTAssertTrue(model.isConnected)
+        XCTAssertFalse(model.supportsMeetingTransfer)
+        for language in [AppLanguage.en, .zhHans] {
+            localization.language = language
+            let reason = model.submissionBlockReason(meetingID: "meeting")
+            XCTAssertNotNil(reason)
+            XCTAssertTrue(model.jobs.isEmpty)
+            XCTAssertEqual(
+                reason,
+                language == .en
+                    ? "This connection supports pairing only. Meeting transfer is not available yet."
+                    : "此连接仅支持配对，目前尚不支持传输会议。"
+            )
+        }
+    }
+
+    func testLeavingConnectionPresentationDoesNotEraseEstablishedState() {
+        let model = MacConnectionModel(discovery: DiscoveryProbe())
+        let state = MacConnectionModel.Connection.connected(.init(id: "verified-key", name: "Mac"), modelReady: nil)
+        model.connection = state
+        model.endConnectionPresentation()
+        XCTAssertEqual(model.connection, state)
+    }
 }
 
 @MainActor
 private final class DiscoveryProbe: MacDiscovering {
     var onUpdate: (@MainActor (MacDiscoveryUpdate) -> Void)?
     var starts = 0
+    func endpoint(for deviceID: String) -> NWEndpoint? { nil }
     func start() { starts += 1 }
     func stop() {}
 }

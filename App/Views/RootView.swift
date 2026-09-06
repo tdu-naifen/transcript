@@ -59,6 +59,7 @@ private struct ReadyView: View {
     @State private var recordingsPath = NavigationPath()
     @State private var settingsPath = NavigationPath()
     @State private var macConnection = MacConnectionModel(discovery: BonjourMacDiscovery())
+    @Environment(\.scenePhase) private var scenePhase
     @State private var isStartingRecording = false
     @State private var isStoppingRecording = false
     @State private var namingError: String?
@@ -154,6 +155,10 @@ private struct ReadyView: View {
             }
         }
         .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.8), value: isRecordingExpanded)
+        .task { macConnection.enablePairing() }
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background { macConnection.suspendConnection() }
+        }
         .onChange(of: services.speakerAnalysis.revision) { _, _ in
             Task { await library.reload() }
         }

@@ -24,6 +24,7 @@ targets:
     sources:
       # Recursive: regenerate the ignored .xcodeproj after adding or removing App files.
       - path: App
+      - path: Shared/Pairing
     dependencies:
       - package: TranscriptCore
         product: TranscriptCore
