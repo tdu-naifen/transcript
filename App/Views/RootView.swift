@@ -21,7 +21,7 @@ struct RootView: View {
             }
         }
         .environment(\.locale, localization.resolvedLocale)
-        .tint(FloatingRecordButton.accent)
+        .tint(AppColors.controlTint)
     }
 }
 

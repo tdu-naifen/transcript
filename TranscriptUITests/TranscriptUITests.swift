@@ -183,6 +183,28 @@ final class TranscriptUITests: XCTestCase {
         attachScreenshot(of: app, name: "english-app-chinese-system-option")
     }
 
+    func testHomeAndSettingsControlScreenshots() {
+        let app = isolatedApp()
+        app.launchArguments = ["-uiFixtureSelectedTab", "home", "-appLanguage", "en"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Home"].waitForExistence(timeout: 5))
+        app.buttons["homeSpeakerFilter"].tap()
+        toggleSwitch(app.switches["homeSpeaker-fixture-speaker-wei"])
+        tapDone(in: app)
+        app.buttons["homeDateFilter"].tap()
+        toggleSwitch(app.switches["homeDateRangeEnabled"])
+        tapDone(in: app)
+        for identifier in ["homeSpeakerFilter", "homeDateFilter", "homeConnectionButton", "globalRecordButton"] {
+            XCTAssertTrue(app.buttons[identifier].isHittable)
+        }
+        attachScreenshot(of: app, name: "appearance-home-selected-controls")
+        app.tabBars.buttons["Settings"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["downloadModelButton"].isHittable)
+        XCTAssertTrue(app.buttons["English"].isHittable)
+        attachScreenshot(of: app, name: "appearance-settings-controls")
+    }
+
     func testFloatingPositionSurvivesTabsRelaunchRotationAndReset() {
         XCUIDevice.shared.orientation = .portrait
         defer { XCUIDevice.shared.orientation = .portrait }

@@ -22,7 +22,7 @@ struct MeetingDetailView: View {
     @State private var renameText = ""
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    private let accent = Color(red: 6 / 255, green: 34 / 255, blue: 158 / 255)
+    private let accent = AppColors.controlTint
 
     /// Screenshot verification aid (see `RecordingsListView.openFixtureMeetingIfRequested`):
     /// `-uiFixtureExpandParticipants 1` starts the header expanded since there's no way
@@ -212,6 +212,7 @@ struct MeetingDetailView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(AppColors.filledControl)
                 .disabled(onProcessByMac == nil || macUnavailableReason != nil
                           || !model.hasLocalAudioForReprocessing || model.isReprocessing)
                 .accessibilityIdentifier("meetingProcessByMacButton")
@@ -318,6 +319,7 @@ struct MeetingDetailView: View {
                                     isReprocessingConfirmationPresented = true
                                 }
                                 .buttonStyle(.borderedProminent)
+                                .tint(AppColors.filledControl)
                                 .disabled(model.isReprocessing)
                                 .accessibilityIdentifier("emptyTranscriptReprocessButton")
                             }
@@ -387,7 +389,7 @@ private struct MeetingReprocessingSheet: View {
             Text(stageText(progress.stage))
                 .font(.headline)
             ProgressView(value: progress.fractionCompleted)
-                .tint(Color(red: 6 / 255, green: 34 / 255, blue: 158 / 255))
+                .tint(AppColors.controlTint)
             Text(text("The current transcript remains available until the new result is complete."))
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -417,6 +419,7 @@ private struct MeetingReprocessingSheet: View {
                 isPresented = false
             }
             .buttonStyle(.borderedProminent)
+            .tint(AppColors.filledControl)
         case .failed(let message):
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 38))
@@ -437,6 +440,7 @@ private struct MeetingReprocessingSheet: View {
                 .buttonStyle(.bordered)
                 Button(text("Retry")) { model.startReprocessing() }
                     .buttonStyle(.borderedProminent)
+                    .tint(AppColors.filledControl)
             }
         }
     }

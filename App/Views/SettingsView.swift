@@ -48,7 +48,7 @@ struct SettingsView: View {
             }
             .navigationTitle(LocalizationManager.shared.text("Settings"))
             .scrollContentBackground(.hidden)
-            .background(Color(red: 0.975, green: 0.97, blue: 0.96))
+            .background(AppColors.settingsBackground)
             .task {
                 if models == nil { models = ModelDownloadModel(services: services) }
                 models?.observe()
@@ -74,6 +74,7 @@ private struct ModelRow: View {
             } else {
                 Button("Download model") { Task { await model.download() } }
                     .buttonStyle(.borderedProminent)
+                    .tint(AppColors.filledControl)
                     .disabled(model.isWorking)
                     .accessibilityIdentifier("downloadModelButton")
             }

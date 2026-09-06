@@ -23,7 +23,7 @@ struct AudioPlayerBar: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("audioUnavailableReason")
             } else {
-                AudioWaveformScrubber(playback: playback, accent: accent)
+                AudioWaveformScrubber(playback: playback, accent: AppColors.controlTint)
                     .frame(height: dynamicTypeSize.isAccessibilitySize ? 24 : 40)
 
                 HStack {
