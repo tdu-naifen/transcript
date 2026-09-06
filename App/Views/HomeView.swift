@@ -42,9 +42,7 @@ struct HomeView: View {
                         VStack(alignment: .leading, spacing: 12) { filterButtons }
                     }
                     if model.usesDateRange {
-                        Text(model.startDate, format: .dateTime.year().month().day())
-                            + Text(" – ")
-                            + Text(model.endDate, format: .dateTime.year().month().day())
+                        Text("\(Text(model.startDate, format: .dateTime.year().month().day())) – \(Text(model.endDate, format: .dateTime.year().month().day()))")
                     }
                     if model.hasSearchConditions {
                         Button("home.filters.clear") { model.clearFilters() }

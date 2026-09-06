@@ -96,7 +96,7 @@ struct RecordingsListView: View {
                 }
                 Button("common.cancel", role: .cancel) { pendingDeletion = nil }
             } message: { meeting in
-                Text(meeting.title) + Text("\n") + Text("meetings.delete_local.scope")
+                Text("\(meeting.title)\n\(Text("meetings.delete_local.scope"))")
             }
             .refreshable { await model.reload() }
             .task {
