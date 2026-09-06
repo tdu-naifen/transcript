@@ -1,0 +1,3 @@
+/* English source strings are also the localization keys. */
+"Transcript" = "Transcript";
+"app.name" = "Transcript";

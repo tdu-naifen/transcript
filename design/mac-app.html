@@ -1,0 +1,619 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Transcript · Mac 与 iPhone 统一视觉设计</title>
+  <style>
+    :root {
+      color-scheme: light;
+      /* Brand and adaptive tints match AppColors.swift / FloatingRecordButton.swift. */
+      --brand: #06229e;
+      --tint: #06229e;
+      --warm: rgb(97.5% 97% 96%);
+      --canvas: #eae9e5;
+      --surface: #fff;
+      --raised: #fff;
+      --sidebar: #f3f2ee;
+      --subtle: #f5f5f7;
+      --selected: #eaedfa;
+      --text: #202126;
+      --secondary: #63656e;
+      --line: #e4e4e8;
+      --success: #217447;
+      --danger: #b52f38;
+      --warning: #875707;
+      --speaker-0: #ff3b30;
+      --speaker-1: #ff9500;
+      --speaker-5: #30b0c7;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", sans-serif;
+      font-size: 13px;
+    }
+    :root[data-theme="dark"] {
+      color-scheme: dark;
+      --tint: #90aeff;
+      --warm: #000;
+      --canvas: #111215;
+      --surface: #1c1c1e;
+      --raised: #29292c;
+      --sidebar: #222225;
+      --subtle: #28282b;
+      --selected: #2c3551;
+      --text: #f2f2f7;
+      --secondary: #b0b0ba;
+      --line: #414147;
+      --success: #83d5a0;
+      --danger: #ff9499;
+      --warning: #f3c56d;
+      --speaker-0: #ff453a;
+      --speaker-1: #ff9f0a;
+      --speaker-5: #40c8e0;
+    }
+    :root[data-contrast="high"] { --secondary: #42444a; --line: #87878e; }
+    :root[data-theme="dark"][data-contrast="high"] {
+      --tint: #c3d4ff;
+      --secondary: #d5d5dd;
+      --line: #96969e;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--canvas); color: var(--text); }
+    button, input, select { font: inherit; }
+    button { color: inherit; cursor: pointer; }
+    button, input, select { border: 1px solid var(--line); border-radius: 8px; background: var(--raised); }
+    button { min-height: 32px; padding: 6px 12px; }
+    button:hover { filter: brightness(.96); }
+    button:focus-visible, input:focus-visible, select:focus-visible, a:focus-visible {
+      outline: 3px solid var(--tint); outline-offset: 3px;
+    }
+    button[aria-pressed="true"] { background: var(--selected); color: var(--tint); border-color: var(--tint); }
+    button:disabled { cursor: not-allowed; opacity: .65; }
+    [hidden] { display: none !important; }
+    h1, h2, h3, p { margin: 0; }
+    h1 { font-size: 27px; letter-spacing: -.8px; font-weight: 650; }
+    h2 { font-size: 20px; font-weight: 650; letter-spacing: -.4px; }
+    h3 { font-size: 14px; font-weight: 600; }
+    small { font-size: 11px; }
+    .muted { color: var(--secondary); }
+    .tint { color: var(--tint); }
+    .row { display: flex; align-items: center; gap: 10px; }
+    .spread { justify-content: space-between; }
+    .stack { display: grid; gap: 16px; }
+    .primary, .primary[aria-pressed="true"] { color: #fff; background: var(--brand); border-color: var(--brand); }
+    .quiet { background: transparent; border-color: transparent; }
+    .icon { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-width: 1.65; stroke-linecap: round; stroke-linejoin: round; }
+    .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: currentColor; flex: 0 0 auto; }
+    .success { color: var(--success); }
+    .danger { color: var(--danger); }
+    .warning { color: var(--warning); }
+    .eyebrow { font-size: 10px; font-weight: 650; letter-spacing: 1.8px; color: var(--secondary); }
+    .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; padding: 4px 8px; background: var(--subtle); border-radius: 6px; white-space: nowrap; }
+    .design-bar { max-width: 1560px; margin: auto; padding: 26px 32px 23px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+    .brand-mark { width: 35px; height: 35px; border-radius: 11px; background: var(--brand); color: white; display: grid; place-items: center; }
+    .design-title { font-size: 16px; font-weight: 650; }
+    .design-subtitle { margin-top: 4px; color: var(--secondary); font-size: 11px; }
+    .design-controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    .design-controls select { padding: 7px 10px; }
+    .workspace { padding: 0 32px; max-width: 1560px; margin: auto; display: grid; gap: 24px; align-items: start; }
+    .workspace.compare { grid-template-columns: minmax(760px, 1fr) 282px; }
+    .mac-window { min-width: 0; border: 1px solid var(--line); border-radius: 13px; overflow: hidden; background: var(--surface); box-shadow: 0 24px 70px #00000015, 0 2px 7px #00000008; }
+    .titlebar { height: 54px; background: var(--sidebar); border-bottom: 1px solid var(--line); display: flex; align-items: center; }
+    .window-controls { display: flex; gap: 8px; padding-left: 19px; width: 184px; flex-shrink: 0; }
+    .window-controls i { width: 12px; height: 12px; border-radius: 50%; background: #ff5f57; box-shadow: inset 0 0 0 1px #00000012; }
+    .window-controls i:nth-child(2) { background: #febc2e; }
+    .window-controls i:nth-child(3) { background: #28c840; }
+    .toolbar { flex: 1; padding: 0 19px; }
+    .toolbar-title { font-weight: 600; }
+    .toolbar .muted { font-size: 11px; }
+    .shell { display: grid; grid-template-columns: 184px minmax(0, 1fr); height: clamp(560px, calc(100vh - 220px), 820px); }
+    .sidebar { background: var(--sidebar); border-right: 1px solid var(--line); padding: 25px 12px 14px; display: flex; flex-direction: column; gap: 24px; }
+    .sidebar-brand { padding-left: 12px; font-size: 17px; font-weight: 650; letter-spacing: -.4px; }
+    .nav-label { padding: 0 12px 9px; font-size: 10px; color: var(--secondary); }
+    .navigation { display: grid; gap: 5px; }
+    .nav-button { display: flex; align-items: center; gap: 10px; width: 100%; border: 0; text-align: left; min-height: 38px; background: transparent; }
+    .nav-button[aria-current="page"] { background: var(--selected); color: var(--tint); font-weight: 600; }
+    .nav-button .count { margin-left: auto; font-size: 11px; color: var(--secondary); }
+    .sidebar-footer { margin-top: auto; display: grid; gap: 12px; }
+    .device-pill { background: var(--surface); border: 1px solid var(--line); padding: 12px; border-radius: 10px; width: 100%; text-align: left; }
+    .device-pill small { display: block; margin-top: 6px; }
+    .content { min-width: 0; min-height: 0; overflow: auto; }
+    #page-meetings { height: 100%; }
+    .meetings-layout { display: grid; grid-template-columns: 264px minmax(0, 1fr); height: 100%; }
+    .library { border-right: 1px solid var(--line); padding: 24px 12px; overflow-y: auto; min-height: 0; }
+    .library-header { padding: 0 8px; }
+    .search { position: relative; margin: 20px 0 23px; }
+    .search .icon { position: absolute; top: 10px; left: 10px; width: 15px; height: 15px; color: var(--secondary); }
+    .search input { background: var(--subtle); border-color: transparent; padding: 9px 10px 9px 33px; width: 100%; }
+    input::placeholder { color: var(--secondary); }
+    .group-title { font-size: 11px; color: var(--secondary); margin: 19px 8px 10px; }
+    .meeting { display: block; width: 100%; text-align: left; padding: 14px 12px; margin-bottom: 5px; border-color: transparent; border-radius: 9px; background: transparent; }
+    .meeting[aria-pressed="true"] { border-color: transparent; color: var(--text); }
+    .meeting-title { display: block; font-weight: 600; margin-bottom: 8px; }
+    .meeting-meta { display: flex; gap: 7px; align-items: center; color: var(--secondary); font-size: 11px; }
+    .meeting-people { margin-top: 13px; display: flex; gap: 5px; align-items: center; }
+    .meeting-people small { margin-left: 5px; color: var(--secondary); }
+    .speaker-dot { width: 7px; height: 7px; display: inline-block; border-radius: 50%; }
+    .speaker-0 { background: var(--speaker-0); }
+    .speaker-1 { background: var(--speaker-1); }
+    .speaker-5 { background: var(--speaker-5); }
+    .detail { padding: 25px 32px 0; display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+    .detail > * { flex-shrink: 0; }
+    .detail-kicker { margin-bottom: 12px; }
+    .detail-meta { display: flex; flex-wrap: wrap; gap: 14px; margin-top: 14px; font-size: 12px; color: var(--secondary); }
+    .detail-people { display: flex; flex-wrap: wrap; align-items: center; gap: 16px; margin: 19px 0; font-size: 12px; }
+    .tabs { display: flex; border-bottom: 1px solid var(--line); gap: 23px; }
+    .tab { padding: 10px 0 13px; border: 0; border-radius: 0; background: transparent; color: var(--secondary); }
+    .tab[aria-pressed="true"] { background: transparent; color: var(--tint); box-shadow: inset 0 -2px var(--tint); }
+    .transcript { padding-top: 21px; display: grid; align-content: start; gap: 22px; padding-bottom: 24px; padding-right: 8px; overflow-y: auto; min-height: 0; flex: 1 1 auto; }
+    .utterance { border-left: 2px solid transparent; padding-left: 14px; }
+    .utterance.active { border-color: var(--tint); }
+    .utterance .speaker-line { font-size: 12px; margin-bottom: 9px; }
+    .timestamp { border: 0; background: transparent; padding: 0 4px; min-height: 24px; color: var(--tint); font-size: 12px; font-variant-numeric: tabular-nums; }
+    .utterance p { line-height: 1.85; font-size: 14px; }
+    .player { margin-top: auto; padding: 17px 0 20px; border-top: 1px solid var(--line); }
+    .play-button { width: 36px; height: 36px; border-radius: 50%; padding: 8px; display: grid; place-items: center; }
+    .timeline { flex: 1; accent-color: var(--tint); min-width: 60px; }
+    .player-caption { display: flex; flex-wrap: wrap; gap: 6px; justify-content: space-between; margin-top: 10px; font-size: 12px; color: var(--secondary); }
+    .page { padding: 37px 42px; max-width: 1060px; margin: auto; }
+    .page-intro { margin-top: 10px; color: var(--secondary); line-height: 1.75; }
+    .section-heading { margin: 30px 0 14px; }
+    .card { border: 1px solid var(--line); border-radius: 12px; padding: 23px; background: var(--raised); }
+    .task-card { margin-top: 14px; }
+    .task-card p { margin-top: 9px; font-size: 12px; color: var(--secondary); line-height: 1.7; }
+    progress { accent-color: var(--tint); width: 100%; height: 6px; margin-top: 23px; border: 0; border-radius: 10px; overflow: hidden; background: var(--subtle); }
+    progress::-webkit-progress-bar { background: var(--subtle); }
+    progress::-webkit-progress-value { background: var(--tint); }
+    .steps { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 11px; font-size: 11px; color: var(--secondary); }
+    .steps strong { color: var(--tint); font-weight: 500; }
+    .connection-hero { padding: 33px 25px; text-align: center; background: var(--subtle); border-radius: 12px; margin-top: 25px; }
+    .device-art { display: flex; justify-content: center; align-items: center; gap: 25px; margin-bottom: 25px; color: var(--tint); }
+    .device-art .icon { height: 68px; width: 76px; stroke-width: .9; }
+    .device-art .icon.phone-icon { width: 35px; height: 58px; }
+    .connection-line { width: 72px; border-top: 2px dotted var(--tint); position: relative; }
+    .connection-line .dot { position: absolute; left: 32px; top: -4px; }
+    .connection-hero p { color: var(--secondary); line-height: 1.8; margin: 12px auto 0; max-width: 450px; }
+    .pair-code { letter-spacing: 10px; font-size: 36px; color: var(--tint); font-weight: 600; margin: 22px 0; font-variant-numeric: tabular-nums; padding-left: 10px; }
+    .center-actions { justify-content: center; margin-top: 21px; flex-wrap: wrap; }
+    .instruction { display: flex; align-items: flex-start; gap: 13px; padding: 13px 0; }
+    .instruction-number { width: 23px; height: 23px; display: grid; place-items: center; background: var(--selected); color: var(--tint); border-radius: 50%; flex-shrink: 0; font-size: 11px; }
+    .instruction p { margin-top: 4px; font-size: 12px; color: var(--secondary); line-height: 1.7; }
+    .inline-note { margin-top: 21px; font-size: 11px; line-height: 1.8; color: var(--secondary); }
+    .scenario { padding: 12px 0 0; display: flex; flex-wrap: wrap; align-items: center; gap: 10px; color: var(--secondary); font-size: 11px; }
+    .scenario select { padding: 6px; }
+    .insight-row { margin: 16px 0; }
+    .insight-track { height: 7px; display: flex; gap: 3px; margin-top: 12px; }
+    .insight-track span { border-radius: 3px; }
+    .summary-list { line-height: 1.9; padding-left: 19px; }
+    .phone-section { padding-top: 5px; }
+    .phone-label { margin: 0 0 12px 5px; }
+    .phone { border: 6px solid #26272b; border-radius: 41px; overflow: hidden; height: 593px; background: var(--surface); position: relative; box-shadow: 0 18px 36px #00000012; }
+    .phone-status { height: 46px; display: flex; align-items: center; justify-content: space-between; padding: 0 22px; font-size: 11px; font-weight: 600; }
+    .island { width: 81px; height: 23px; background: #101014; border-radius: 20px; position: absolute; top: 10px; left: calc(50% - 40px); }
+    .phone-body { padding: 18px 17px; }
+    .phone h2 { font-size: 27px; }
+    .phone-connect { color: var(--tint); font-size: 10px; margin-top: 14px; }
+    .phone-search { padding: 11px; border-radius: 10px; background: var(--subtle); font-size: 11px; color: var(--secondary); margin: 20px 0; }
+    .phone-section-title { font-size: 16px; font-weight: 650; margin: 23px 0 13px; }
+    .phone-meeting { border-bottom: 1px solid var(--line); padding: 13px 0 17px; }
+    .phone-meeting h3 { font-size: 12px; }
+    .phone-meeting p { font-size: 10px; margin-top: 8px; color: var(--secondary); }
+    .phone-tabs { position: absolute; bottom: 16px; left: 12px; right: 12px; background: var(--subtle); border: 1px solid var(--line); border-radius: 26px; padding: 12px; display: flex; justify-content: space-around; }
+    .phone-tabs span { display: grid; justify-items: center; gap: 4px; font-size: 9px; color: var(--secondary); }
+    .phone-tabs span:first-child { color: var(--tint); }
+    .phone-record { position: absolute; right: 18px; bottom: 92px; width: 51px; height: 51px; border-radius: 50%; background: var(--brand); color: white; display: grid; place-items: center; box-shadow: 0 4px 12px #0002; }
+    .phone-home { height: 4px; width: 86px; background: var(--text); border-radius: 5px; position: absolute; bottom: 6px; left: calc(50% - 43px); }
+    .phone-note { padding: 14px 5px; line-height: 1.8; font-size: 11px; color: var(--secondary); }
+    .design-footer { max-width: 1560px; margin: auto; padding: 22px 34px 30px; display: flex; justify-content: space-between; gap: 20px; align-items: center; }
+    .swatches { display: flex; flex-wrap: wrap; gap: 18px; }
+    .swatch { display: flex; align-items: center; gap: 7px; color: var(--secondary); font-size: 10px; }
+    .swatch i { width: 14px; height: 14px; border-radius: 4px; border: 1px solid var(--line); }
+    .design-footer p { color: var(--secondary); font-size: 10px; line-height: 1.7; }
+    dialog { color: var(--text); background: var(--surface); border: 1px solid var(--line); border-radius: 15px; width: min(470px, calc(100vw - 32px)); padding: 28px; }
+    dialog::backdrop { background: #0005; }
+    #settings-dialog { background: var(--warm); }
+    dialog p { margin-top: 13px; color: var(--secondary); line-height: 1.8; }
+    .settings-row { display: flex; justify-content: space-between; gap: 18px; padding: 17px 12px; background: var(--surface); border-bottom: 1px solid var(--line); }
+    .settings-row:first-of-type { margin-top: 18px; }
+    .settings-row select { padding: 5px; }
+    .empty { padding: 28px 10px; line-height: 1.8; color: var(--secondary); }
+    @media (max-width: 1250px) {
+      .workspace.compare { grid-template-columns: minmax(0, 1fr); }
+      .phone-section { width: 282px; justify-self: center; }
+      .detail { padding: 28px 24px 0; }
+    }
+    @media (max-width: 1000px) {
+      .shell { grid-template-columns: 154px minmax(0, 1fr); }
+      .window-controls { width: 154px; }
+      .meetings-layout { grid-template-columns: 220px minmax(0, 1fr); }
+      .workspace { padding: 0 16px; }
+      .design-bar { padding: 20px 16px; }
+      .page { padding: 30px 26px; }
+    }
+    @media (max-width: 780px) {
+      .design-bar, .design-footer { align-items: flex-start; flex-direction: column; }
+      .shell { grid-template-columns: 1fr; height: auto; }
+      .sidebar { border-right: 0; border-bottom: 1px solid var(--line); padding: 10px; gap: 0; }
+      .sidebar-brand, .nav-label, .sidebar-footer { display: none; }
+      .navigation { display: flex; }
+      .nav-button { justify-content: center; }
+      .nav-button .count { display: none; }
+      .window-controls { width: 85px; }
+      .toolbar .muted { display: none; }
+      .meetings-layout { grid-template-columns: 1fr; }
+      .library { border-right: 0; border-bottom: 1px solid var(--line); padding: 20px; }
+      .library .search { margin: 12px 0; }
+      .meeting { padding: 12px; }
+      .meeting-people { display: none; }
+      .detail { min-height: 650px; padding: 26px 22px 0; }
+      .transcript { max-height: 380px; }
+      .detail-meta { gap: 8px; }
+      .page { padding: 26px 20px; }
+      .toolbar { padding: 0 10px; }
+      .connection-hero { padding: 26px 16px; }
+      .device-art { gap: 15px; }
+      .nav-button { gap: 6px; padding: 6px; font-size: 12px; }
+      .design-footer { padding: 22px 18px; }
+    }
+    @media (prefers-reduced-motion: reduce) { * { scroll-behavior: auto !important; } }
+  </style>
+</head>
+<body>
+  <svg hidden xmlns="http://www.w3.org/2000/svg">
+    <symbol id="wave" viewBox="0 0 24 24"><path d="M3 10v4m4-8v12m5-16v20m5-16v12m4-8v4"/></symbol>
+    <symbol id="library" viewBox="0 0 24 24"><rect x="4" y="3" width="16" height="18" rx="3"/><path d="M8 8h8m-8 4h8m-8 4h5"/></symbol>
+    <symbol id="tasks" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+    <symbol id="devices" viewBox="0 0 24 24"><rect x="2" y="4" width="14" height="11" rx="2"/><path d="M9 15v4m-4 0h8"/><rect x="17" y="9" width="5" height="12" rx="1"/></symbol>
+    <symbol id="search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="6"/><path d="m15 15 5 5"/></symbol>
+    <symbol id="settings" viewBox="0 0 24 24"><path d="m9 3-1 3-3 1v4l-2 1 2 1v4l3 1 1 3h6l1-3 3-1v-4l2-1-2-1V7l-3-1-1-3Z"/><circle cx="12" cy="12" r="3"/></symbol>
+    <symbol id="mac" viewBox="0 0 80 68"><rect x="5" y="5" width="70" height="45" rx="4"/><path d="M28 63h24m-12-13v13M5 43h70"/></symbol>
+    <symbol id="phone" viewBox="0 0 35 58"><rect x="2" y="1" width="31" height="56" rx="6"/><path d="M12 5h11m-10 47h9"/></symbol>
+    <symbol id="home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10H3Zm6 10v-7h6v7"/></symbol>
+    <symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="play" viewBox="0 0 24 24"><path d="m8 5 11 7-11 7Z" fill="currentColor" stroke="none"/></symbol>
+    <symbol id="pause" viewBox="0 0 24 24"><path d="M8 5v14m8-14v14" stroke-width="4"/></symbol>
+  </svg>
+
+  <header class="design-bar">
+    <div class="row">
+      <div class="brand-mark"><svg class="icon" aria-hidden="true"><use href="#wave"/></svg></div>
+      <div><div class="design-title">Transcript <span class="muted">/ Mac</span></div><div class="design-subtitle">同一份记忆，不同的工作空间。 · 交互设计稿 01</div></div>
+    </div>
+    <div class="design-controls" aria-label="设计预览控制">
+      <label for="appearance" class="muted">外观</label>
+      <select id="appearance"><option value="light">浅色</option><option value="dark">深色</option></select>
+      <button id="contrast-toggle" aria-pressed="false">增强对比度</button>
+      <button id="compare-toggle" aria-pressed="false">iPhone 对照</button>
+    </div>
+  </header>
+
+  <div class="workspace" id="workspace">
+    <section class="mac-window" aria-label="Mac App 设计预览">
+      <header class="titlebar">
+        <div class="window-controls" aria-hidden="true"><i></i><i></i><i></i></div>
+        <div class="toolbar row spread">
+          <span class="toolbar-title" id="toolbar-title">会议资料库</span>
+          <div class="row"><span class="muted">本地优先 · 设计示例</span><button class="quiet row" id="toolbar-device"><span class="dot danger" id="toolbar-dot"></span><span id="toolbar-status">未连接</span></button><button class="quiet" id="settings-open" aria-label="打开设置"><svg class="icon" aria-hidden="true"><use href="#settings"/></svg></button></div>
+        </div>
+      </header>
+      <div class="shell">
+        <aside class="sidebar">
+          <div class="sidebar-brand">Transcript<span class="tint">.</span></div>
+          <div>
+            <div class="nav-label">工作空间</div>
+            <nav class="navigation" aria-label="Mac 主导航">
+              <button class="nav-button" data-page="meetings" aria-current="page"><svg class="icon" aria-hidden="true"><use href="#library"/></svg>会议<span class="count">4</span></button>
+              <button class="nav-button" data-page="processing"><svg class="icon" aria-hidden="true"><use href="#tasks"/></svg>处理队列<span class="count">2</span></button>
+              <button class="nav-button" data-page="connection"><svg class="icon" aria-hidden="true"><use href="#devices"/></svg>设备连接</button>
+            </nav>
+          </div>
+          <div class="sidebar-footer">
+            <button class="device-pill" id="sidebar-device"><span class="row"><svg class="icon tint" aria-hidden="true"><use href="#devices"/></svg><strong>我的 iPhone</strong></span><small class="muted" id="sidebar-status">尚未配对 · 连接设备</small></button>
+            <div class="row muted" style="padding: 0 9px"><svg class="icon" aria-hidden="true"><use href="#check"/></svg><small>已保存的会议可离线查看</small></div>
+          </div>
+        </aside>
+
+        <main class="content">
+          <section id="page-meetings" aria-label="会议资料库">
+            <div class="meetings-layout">
+              <aside class="library" aria-label="会议列表">
+                <div class="library-header"><div class="row spread"><h2>全部会议</h2><span class="muted" id="meeting-count">4</span></div><div class="search"><svg class="icon" aria-hidden="true"><use href="#search"/></svg><input id="meeting-search" type="search" aria-label="搜索示例会议标题或内容" placeholder="搜索会议或内容"></div></div>
+                <div id="meeting-list"></div>
+                <p class="empty" id="empty-search" hidden>没有匹配的会议。<br>试试其他关键词，或清空搜索。</p>
+              </aside>
+              <article class="detail" aria-labelledby="meeting-heading">
+                <div class="row spread detail-kicker"><span class="eyebrow">MEETING NOTES</span><span class="badge" id="saved-label"><svg class="icon success" style="width:13px;height:13px" aria-hidden="true"><use href="#check"/></svg>已保存在 Mac</span></div>
+                <h1 id="meeting-heading"></h1>
+                <div class="detail-meta" id="detail-meta"></div>
+                <div class="detail-people"><span class="row"><i class="speaker-dot speaker-0"></i>小林</span><span class="row"><i class="speaker-dot speaker-1"></i>Otter</span><span class="row"><i class="speaker-dot speaker-5"></i>小周</span><span class="muted">3 位参与者</span></div>
+                <div class="tabs" aria-label="会议内容视图">
+                  <button class="tab" data-detail="transcript" aria-pressed="true">文字转写</button>
+                  <button class="tab" data-detail="insights" aria-pressed="false">说话人洞察</button>
+                  <button class="tab" data-detail="summary" aria-pressed="false">摘要 <small class="muted">示例</small></button>
+                </div>
+                <div id="detail-transcript" class="transcript"></div>
+                <div id="detail-insights" class="transcript" hidden>
+                  <h3>让每个声音都有位置。</h3>
+                  <p class="muted">颜色跟随身份，不随名字或排列顺序改变。</p>
+                  <div class="insight-row"><div class="row spread"><span class="row"><i class="speaker-dot speaker-0"></i>小林</span><span class="muted">45% 发言时长</span></div><div class="insight-track"><span class="speaker-0" style="width:45%"></span></div></div>
+                  <div class="insight-row"><div class="row spread"><span class="row"><i class="speaker-dot speaker-1"></i>Otter</span><span class="muted">32% 发言时长</span></div><div class="insight-track"><span class="speaker-1" style="width:32%"></span></div></div>
+                  <div class="insight-row"><div class="row spread"><span class="row"><i class="speaker-dot speaker-5"></i>小周</span><span class="muted">23% 发言时长</span></div><div class="insight-track"><span class="speaker-5" style="width:23%"></span></div></div>
+                  <small class="muted">以上为布局示例，不是实际说话人分析结果。</small>
+                </div>
+                <div id="detail-summary" class="transcript" hidden><span class="badge" style="justify-self:start">未来能力 · 示例内容</span><h3>本次会议的要点</h3><ul class="summary-list" id="summary-list"></ul><p class="muted">正式摘要需要模型生成与原文引用；本稿不运行 AI。</p></div>
+                <footer class="player">
+                  <div class="row"><button class="play-button primary" id="play-toggle" aria-label="预览播放状态" aria-pressed="false"><svg class="icon" aria-hidden="true"><use href="#play"/></svg></button><span id="play-time" class="muted">00:42</span><input class="timeline" id="timeline" aria-label="预览音频定位" type="range" min="0" max="2532" value="42"><span class="muted" id="duration">42:12</span></div>
+                  <div class="player-caption"><span>原始录音 · 播放器外观演示，无音频</span><span id="sync-label">待连接后同步</span></div>
+                </footer>
+              </article>
+            </div>
+          </section>
+
+          <section id="page-processing" class="page" hidden aria-labelledby="processing-heading">
+            <div class="row spread"><span class="eyebrow">ON YOUR MAC</span><span class="badge">任务状态示例</span></div>
+            <h1 id="processing-heading" style="margin-top:17px">交给 Mac，继续你的日常。</h1>
+            <p class="page-intro">已经可靠接收的会议，可在 iPhone 离线后继续处理。</p>
+            <h3 class="section-heading">进行中 <span class="muted">2</span></h3>
+            <div class="card task-card"><div class="row spread"><h3>用户访谈 · 第二轮</h3><span class="badge tint">重新转写 · 64%</span></div><p>36 分钟原始录音 · 已可靠接收 · Mac 本地处理</p><progress aria-label="重新转写进度" value="64" max="100"></progress><div class="steps"><span>✓ 已接收</span><strong>② 文字转写</strong><span>③ 说话人分析</span><span>④ 摘要与索引</span></div></div>
+            <div class="card task-card"><div class="row spread"><h3>品牌方向讨论</h3><span class="badge">排队中</span></div><p>等待当前任务完成。原始录音已保存，不需要保持手机在线。</p></div>
+            <h3 class="section-heading">需要关注</h3>
+            <div class="card task-card"><div class="row spread"><h3>季度复盘</h3><span class="badge warning">等待模型资源</span></div><p>转写已完成；分析模型尚未准备好。已有转写仍可阅读。</p><button id="resource-settings" style="margin-top:15px">查看模型状态</button></div>
+            <p class="inline-note">连接状态 ≠ 模型就绪状态。处理完成后，结果回传会单独显示“待同步”或“已同步”。这里不模拟真实计算进度。</p>
+          </section>
+
+          <section id="page-connection" class="page" hidden aria-labelledby="connection-heading">
+            <div class="row spread"><span class="eyebrow">BETTER TOGETHER</span><span class="badge">Bonjour · 局域网发现</span></div>
+            <h1 id="connection-heading" style="margin-top:17px">从 iPhone 开始，在 Mac 继续。</h1>
+            <p class="page-intro">手机随手记录，电脑安心整理。配对后，在两端继续同一场会议。</p>
+            <div class="connection-hero">
+              <div class="device-art" aria-hidden="true"><svg class="icon phone-icon"><use href="#phone"/></svg><span class="connection-line"><i class="dot"></i></span><svg class="icon"><use href="#mac"/></svg></div>
+              <div id="connection-body" aria-live="polite"></div>
+            </div>
+            <div id="connection-instructions">
+              <div class="instruction"><span class="instruction-number">1</span><div><h3>打开 iPhone 上的 Transcript</h3><p>在 Home → Connection 中查找 Mac。两端开启 Wi-Fi，并允许本地网络访问。</p></div></div>
+              <div class="instruction"><span class="instruction-number">2</span><div><h3>选择「我的 MacBook Pro」</h3><p>Bonjour 用于发现附近服务；设备名称不代表可信身份。</p></div></div>
+              <div class="instruction"><span class="instruction-number">3</span><div><h3>在两端核对并确认配对码</h3><p>身份验证完成后才允许传送会议内容。</p></div></div>
+            </div>
+            <p class="inline-note">设计边界：配对、加密身份验证、可信设备保存与文件传输尚未实现。下方只切换界面场景，不会连接真实设备。</p>
+            <div class="scenario"><label for="connection-scenario">预览场景</label><select id="connection-scenario"><option value="unpaired">未配对</option><option value="pairing">收到配对请求</option><option value="connected">已验证并连接</option><option value="offline">设备离线</option><option value="denied">本地网络权限关闭</option><option value="mismatch">设备身份不匹配</option></select></div>
+          </section>
+        </main>
+      </div>
+    </section>
+
+    <aside class="phone-section" id="phone-section" hidden aria-label="iPhone 同色对照">
+      <div class="phone-label eyebrow">IPHONE · SAME PALETTE</div>
+      <div class="phone">
+        <div class="phone-status"><span>9:41</span><span>▰</span></div><div class="island" aria-hidden="true"></div>
+        <div class="phone-body"><h2>Home</h2><div class="phone-connect row"><span class="dot danger" id="phone-status-dot"></span><span id="phone-status">Connect to Mac</span></div><div class="phone-search">⌕ &nbsp; 搜索会议标题或内容</div><div class="row tint" style="font-size:11px"><span>参与者 ﹀</span><span>日期 ﹀</span></div><div class="phone-section-title">最近会议</div><div class="phone-meeting"><h3>产品设计周会</h3><p>今天 10:00 · 42 分钟</p><div class="meeting-people" style="display:flex"><i class="speaker-dot speaker-0"></i><i class="speaker-dot speaker-1"></i><i class="speaker-dot speaker-5"></i><small>小林、Otter、小周</small></div></div><div class="phone-meeting"><h3>用户访谈 · 第二轮</h3><p>昨天 14:30 · 36 分钟</p></div></div>
+        <div class="phone-record" aria-label="iPhone 深蓝录音按钮色样"><svg class="icon" aria-hidden="true"><use href="#wave"/></svg></div>
+        <div class="phone-tabs" aria-label="iPhone 导航外观示例"><span><svg class="icon" aria-hidden="true"><use href="#home"/></svg>Home</span><span><svg class="icon" aria-hidden="true"><use href="#library"/></svg>Meetings</span><span><svg class="icon" aria-hidden="true"><use href="#settings"/></svg>Settings</span></div><div class="phone-home"></div>
+      </div>
+      <p class="phone-note">同一套 CSS 颜色变量，同时驱动 Mac 与 iPhone 对照稿。此处为 iOS 视觉示意，不是 App 截图。</p>
+    </aside>
+  </div>
+
+  <footer class="design-footer">
+    <div class="swatches"><span class="swatch"><i style="background:var(--brand)"></i>品牌蓝 #06229E</span><span class="swatch"><i style="background:var(--tint)"></i><span id="tint-label">交互蓝 #06229E</span></span><span class="swatch"><i style="background:var(--warm)"></i>iOS 设置背景</span><span class="swatch"><i style="background:var(--surface)"></i>中性内容面板</span></div>
+    <p>原生 macOS 布局方向 · 示例会议均为虚构<br>不是网页套壳方案，不包含真实网络、模型或音频处理。</p>
+  </footer>
+
+  <dialog id="settings-dialog" aria-labelledby="settings-heading">
+    <div class="row spread"><h2 id="settings-heading">设置</h2><button id="settings-close" aria-label="关闭设置">关闭</button></div>
+    <p>原生 App 将使用独立的 macOS Settings 窗口；这里展示视觉与信息结构。</p>
+    <div class="settings-row"><span>外观 · 两端对照</span><select id="settings-appearance" aria-label="设置外观"><option value="light">浅色</option><option value="dark">深色</option></select></div>
+    <div class="settings-row"><span>转写模型</span><span class="muted">待选型</span></div>
+    <div class="settings-row"><span>本地分析模型</span><span class="warning">未配置</span></div>
+    <div class="settings-row"><span>会议存储</span><span class="muted">此 Mac 本地</span></div>
+    <p>品牌蓝沿用 iOS。暗色模式只提升交互前景亮度，实心按钮始终保留深蓝与白色图标。</p>
+  </dialog>
+  <dialog id="forget-dialog" aria-labelledby="forget-heading">
+    <h2 id="forget-heading">忘记这台 iPhone？</h2><p>正式 App 将移除信任并停止自动重连；不会删除已接收的会议。本稿只重置连接场景。</p>
+    <div class="row center-actions"><button id="forget-cancel">保留设备</button><button id="forget-confirm" class="primary">忘记设备</button></div>
+  </dialog>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    const meetings = [
+      { id: "design", group: "今天", title: "产品设计周会", date: "9 月 6 日", time: "10:00", seconds: 2532, status: "待同步", text: [
+        "这次我们先把手机和电脑的体验连起来。手机负责随手记录，回到桌前，就能在 Mac 上继续整理同一场会议。",
+        "颜色要像同一个产品。保留现在的深蓝，其他部分尽量安静，让会议内容本身成为重点。",
+        "连接也应该简单。选中 Mac，核对配对码；成功之后回到会议，而不是一直停在设置页面。",
+        "那我们先把连接和接收的闭环做好。处理进度、同步状态各自说清楚，不让用户猜。"
+      ], summary: ["两端保留相同深蓝主色，让内容成为视觉中心。", "先完成发现、配对与接收闭环，再扩展模型处理。", "连接、任务进度和同步结果分别表达。"] },
+      { id: "interview", group: "昨天", title: "用户访谈 · 第二轮", date: "9 月 5 日", time: "14:30", seconds: 2160, status: "处理中", text: [
+        "我通常是在走路或者开会时用手机录音，晚上才会打开电脑整理。",
+        "最担心的是不知道文件有没有传过去。如果明确告诉我电脑已经保存了，我就可以放心离开。",
+        "摘要很有帮助，但我还是希望点一下就能回到原话。尤其是涉及日期和数字的时候。",
+        "所以原始录音要一直保留，结果有来源，进度有说明。"
+      ], summary: ["录音发生在手机，整理集中在桌面。", "可靠接收回执比模糊的进度动画更重要。", "摘要需要能追溯到原始录音。"] },
+      { id: "brand", group: "昨天", title: "品牌方向讨论", date: "9 月 5 日", time: "11:00", seconds: 1680, status: "排队中", text: [
+        "这套视觉应该是克制的，不需要把每个面板都涂成品牌色。",
+        "深蓝用于按钮和选中状态，人物颜色只作为识别辅助，不染整行文字。",
+        "桌面需要更高的信息密度，但阅读区域仍然要留出足够的空间。",
+        "浅色和深色都用相同的语义规则，不另做一套无关的主题。"
+      ], summary: ["品牌色集中在操作和选中状态。", "参与者身份使用稳定色点。", "用同一套语义规则适配浅色与深色。"] },
+      { id: "review", group: "更早", title: "季度复盘", date: "9 月 3 日", time: "09:00", seconds: 3300, status: "等待资源", text: [
+        "先回顾这一个季度已经验证的部分，再讨论下一阶段的目标。",
+        "基础录音和浏览应该独立于模型是否准备好，不能因为下载就挡住用户。",
+        "下一阶段优先验证连接稳定性，再看重新转写能带来多少收益。",
+        "我们用真实会议样本评估，保留原始数据，不把模型更大直接当作质量更好。"
+      ], summary: ["基础功能不依赖分析模型就绪。", "优先验证连接稳定性。", "通过真实会议样本评估处理质量。"] }
+    ];
+    let selectedMeeting = meetings[0];
+    let connection = "unpaired";
+    let phoneConfirmed = false;
+    let macConfirmed = false;
+    const clock = (seconds) => `${Math.floor(seconds / 60).toString().padStart(2, "0")}:${(seconds % 60).toString().padStart(2, "0")}`;
+    function setTheme(value) {
+      document.documentElement.dataset.theme = value;
+      $("appearance").value = value;
+      $("settings-appearance").value = value;
+      updateTintLabel();
+    }
+    function updateTintLabel() {
+      const dark = document.documentElement.dataset.theme === "dark";
+      const high = document.documentElement.dataset.contrast === "high";
+      $("tint-label").textContent = `交互蓝 ${dark ? (high ? "#C3D4FF" : "#90AEFF") : "#06229E"}`;
+    }
+    $("appearance").addEventListener("change", (event) => setTheme(event.target.value));
+    $("settings-appearance").addEventListener("change", (event) => setTheme(event.target.value));
+    $("contrast-toggle").addEventListener("click", () => {
+      const high = $("contrast-toggle").getAttribute("aria-pressed") !== "true";
+      $("contrast-toggle").setAttribute("aria-pressed", String(high));
+      document.documentElement.dataset.contrast = high ? "high" : "normal";
+      updateTintLabel();
+    });
+    $("compare-toggle").addEventListener("click", () => {
+      const show = $("phone-section").hidden;
+      $("phone-section").hidden = !show;
+      $("workspace").classList.toggle("compare", show);
+      $("compare-toggle").setAttribute("aria-pressed", String(show));
+    });
+    function showPage(page) {
+      for (const name of ["meetings", "processing", "connection"]) $("page-" + name).hidden = name !== page;
+      document.querySelector(".content").scrollTop = 0;
+      document.querySelectorAll("[data-page]").forEach((button) => {
+        if (button.dataset.page === page) button.setAttribute("aria-current", "page");
+        else button.removeAttribute("aria-current");
+      });
+      $("toolbar-title").textContent = { meetings: "会议资料库", processing: "处理队列", connection: "设备连接" }[page];
+    }
+    document.querySelectorAll("[data-page]").forEach((button) => button.addEventListener("click", () => showPage(button.dataset.page)));
+    $("sidebar-device").addEventListener("click", () => showPage("connection"));
+    $("toolbar-device").addEventListener("click", () => showPage("connection"));
+    for (const id of ["settings-open", "resource-settings"]) $(id).addEventListener("click", () => $("settings-dialog").showModal());
+    $("settings-close").addEventListener("click", () => $("settings-dialog").close());
+    document.querySelectorAll("dialog").forEach((dialog) => dialog.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        dialog.close();
+      }
+    }));
+    function renderMeetings() {
+      const query = $("meeting-search").value.trim().toLocaleLowerCase();
+      const filtered = meetings.filter((meeting) => [meeting.title, ...meeting.text].join(" ").toLocaleLowerCase().includes(query));
+      $("meeting-list").replaceChildren();
+      let group = "";
+      for (const meeting of filtered) {
+        if (meeting.group !== group) {
+          const label = document.createElement("p");
+          label.className = "group-title";
+          label.textContent = meeting.group;
+          $("meeting-list").append(label);
+          group = meeting.group;
+        }
+        const button = document.createElement("button");
+        button.className = "meeting";
+        button.dataset.meeting = meeting.id;
+        button.setAttribute("aria-pressed", String(meeting.id === selectedMeeting.id));
+        button.innerHTML = `<span class="meeting-title">${meeting.title}</span><span class="meeting-meta">${meeting.time}<span>·</span>${Math.floor(meeting.seconds / 60)} 分钟<span>·</span>${meeting.status}</span><span class="meeting-people"><i class="speaker-dot speaker-0"></i><i class="speaker-dot speaker-1"></i><i class="speaker-dot speaker-5"></i><small>小林、Otter、小周</small></span>`;
+        button.addEventListener("click", () => {
+          selectedMeeting = meeting;
+          renderMeetings();
+          renderDetail();
+          document.querySelector(`[data-meeting="${meeting.id}"]`).focus();
+        });
+        $("meeting-list").append(button);
+      }
+      $("empty-search").hidden = filtered.length !== 0;
+      $("meeting-count").textContent = String(filtered.length);
+    }
+    $("meeting-search").addEventListener("input", renderMeetings);
+    function selectDetail(name) {
+      for (const tab of ["transcript", "insights", "summary"]) $("detail-" + tab).hidden = tab !== name;
+      document.querySelectorAll("[data-detail]").forEach((button) => button.setAttribute("aria-pressed", String(button.dataset.detail === name)));
+    }
+    document.querySelectorAll("[data-detail]").forEach((button) => button.addEventListener("click", () => selectDetail(button.dataset.detail)));
+    function setPosition(seconds) {
+      $("timeline").value = String(seconds);
+      $("play-time").textContent = clock(seconds);
+      document.querySelectorAll(".utterance").forEach((row) => row.classList.toggle("active", Number(row.dataset.seconds) === seconds));
+    }
+    function renderDetail() {
+      $("meeting-heading").textContent = selectedMeeting.title;
+      $("detail-meta").textContent = `2026 年 ${selectedMeeting.date} · ${selectedMeeting.time}　/　${Math.floor(selectedMeeting.seconds / 60)} 分钟　/　来自我的 iPhone`;
+      $("duration").textContent = clock(selectedMeeting.seconds);
+      $("timeline").max = String(selectedMeeting.seconds);
+      $("play-toggle").setAttribute("aria-pressed", "false");
+      $("play-toggle").setAttribute("aria-label", "预览播放状态");
+      $("play-toggle").querySelector("use").setAttribute("href", "#play");
+      const speakers = [["小林", 0], ["Otter", 1], ["小周", 5], ["小林", 0]];
+      const positions = [42, 78, 124, 168];
+      $("detail-transcript").replaceChildren();
+      selectedMeeting.text.forEach((text, index) => {
+        const section = document.createElement("section");
+        section.className = "utterance";
+        section.dataset.seconds = String(positions[index]);
+        section.innerHTML = `<div class="row speaker-line"><i class="speaker-dot speaker-${speakers[index][1]}"></i><strong>${speakers[index][0]}</strong><button class="timestamp" aria-label="预览定位到 ${clock(positions[index])}">${clock(positions[index])}</button></div><p>${text}</p>`;
+        section.querySelector("button").addEventListener("click", () => setPosition(positions[index]));
+        $("detail-transcript").append(section);
+      });
+      $("summary-list").replaceChildren(...selectedMeeting.summary.map((text) => {
+        const item = document.createElement("li");
+        item.textContent = text;
+        return item;
+      }));
+      setPosition(42);
+      selectDetail("transcript");
+    }
+    $("timeline").addEventListener("input", (event) => setPosition(Number(event.target.value)));
+    $("play-toggle").addEventListener("click", () => {
+      const playing = $("play-toggle").getAttribute("aria-pressed") !== "true";
+      $("play-toggle").setAttribute("aria-pressed", String(playing));
+      $("play-toggle").setAttribute("aria-label", playing ? "预览暂停状态" : "预览播放状态");
+      $("play-toggle").querySelector("use").setAttribute("href", playing ? "#pause" : "#play");
+    });
+    function setConnection(value) {
+      connection = value;
+      phoneConfirmed = false;
+      macConfirmed = false;
+      renderConnection();
+    }
+    function renderConnection() {
+      const connected = connection === "connected";
+      const labels = { unpaired: "未连接", pairing: "等待双端确认", connected: "已连接", offline: "离线", denied: "权限关闭", mismatch: "身份验证失败" };
+      $("connection-scenario").value = connection;
+      $("toolbar-status").textContent = labels[connection];
+      $("toolbar-dot").className = "dot " + (connected ? "success" : "danger");
+      $("sidebar-status").textContent = connection === "unpaired" ? "尚未配对 · 连接设备" : labels[connection];
+      $("phone-status").textContent = connected ? "我的 MacBook Pro · Connected" : labels[connection] + " · Connect to Mac";
+      $("phone-status-dot").className = "dot " + (connected ? "success" : "danger");
+      $("sync-label").textContent = connected ? "已连接 · 等待同步回执" : "待连接后同步";
+      $("connection-instructions").hidden = connection !== "unpaired";
+      const views = {
+        unpaired: `<h2>连接你的 iPhone</h2><p>这台 Mac 的可发现名称</p><p><strong class="tint">我的 MacBook Pro</strong></p>`,
+        pairing: `<h2>确认是你的设备</h2><p>「我的 iPhone」请求配对。请核对两端显示的六位码。</p><div class="pair-code" aria-label="示例配对码 284 619">284 619</div><p id="pairing-status">${macConfirmed ? "Mac 已确认，等待 iPhone。" : phoneConfirmed ? "iPhone 已确认，等待 Mac。" : "两端都确认后才会建立可信连接。"}</p><div class="row center-actions"><button data-connection-action="reject">拒绝</button><button class="primary" data-connection-action="confirm-mac" ${macConfirmed ? "disabled" : ""}>${macConfirmed ? "Mac 已确认" : "配对码一致，确认"}</button></div><div class="scenario" style="justify-content:center"><span>仅演示控制：</span><button data-connection-action="confirm-phone" ${phoneConfirmed ? "disabled" : ""}>${phoneConfirmed ? "iPhone 已确认" : "模拟 iPhone 确认"}</button></div>`,
+        connected: `<h2 class="success">已连接到我的 iPhone</h2><p>示例：设备身份已验证，可以安全接收会议。</p><div class="row center-actions"><span class="badge success">连接可用</span><span class="badge warning">分析模型未配置</span></div><p>尚未同步 · 连接成功不等于会议已经送达。</p><div class="row center-actions"><button data-connection-action="meetings" class="primary">查看会议</button><button data-connection-action="forget">忘记设备…</button></div>`,
+        offline: `<h2>我的 iPhone 当前离线</h2><p>已接收的会议仍可查看和处理。设备再次可用时，验证保存的身份后再重连。</p><div class="row center-actions"><button data-connection-action="reconnect">预览重连成功</button><button data-connection-action="forget">忘记设备…</button></div>`,
+        denied: `<h2>需要本地网络权限</h2><p>请前往系统设置 → 隐私与安全性 → 本地网络，允许 Transcript 发现并连接设备。</p><p class="warning">系统权限只能由你在系统设置中更改。</p><div class="row center-actions"><button data-connection-action="reset">预览恢复后界面</button></div>`,
+        mismatch: `<h2 class="danger">设备身份与配对记录不一致</h2><p>已停止连接，不会发送任何会议内容。即使名称相同，也不会自动信任。</p><div class="row center-actions"><button data-connection-action="forget">忘记设备并重新配对…</button></div>`
+      };
+      $("connection-body").innerHTML = views[connection];
+    }
+    $("connection-scenario").addEventListener("change", (event) => setConnection(event.target.value));
+    $("connection-body").addEventListener("click", (event) => {
+      const button = event.target.closest("[data-connection-action]");
+      if (!button) return;
+      switch (button.dataset.connectionAction) {
+        case "confirm-mac": macConfirmed = true; break;
+        case "confirm-phone": phoneConfirmed = true; break;
+        case "reject": case "reset": setConnection("unpaired"); return;
+        case "reconnect": setConnection("connected"); return;
+        case "meetings": showPage("meetings"); return;
+        case "forget": $("forget-dialog").showModal(); return;
+      }
+      if (phoneConfirmed && macConfirmed) setConnection("connected");
+      else {
+        const action = button.dataset.connectionAction;
+        renderConnection();
+        $("connection-body").querySelector(`[data-connection-action="${action === "confirm-mac" ? "confirm-phone" : "confirm-mac"}"]`).focus();
+      }
+    });
+    $("forget-cancel").addEventListener("click", () => $("forget-dialog").close());
+    $("forget-confirm").addEventListener("click", () => { $("forget-dialog").close(); setConnection("unpaired"); });
+    setTheme("light");
+    renderMeetings();
+    renderDetail();
+    renderConnection();
+  </script>
+</body>
+</html>

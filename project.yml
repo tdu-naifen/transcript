@@ -18,6 +18,57 @@ packages:
     from: 0.12.4
 
 targets:
+  TranscriptMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: MacApp
+    dependencies:
+      - package: TranscriptCore
+        product: TranscriptCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.transcript.TranscriptMac
+        PRODUCT_NAME: TranscriptMac
+        INFOPLIST_FILE: MacApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MacApp/TranscriptMac.entitlements
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: YUU54K6BSS
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY: YES
+
+  TranscriptMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: MacAppTests
+    dependencies:
+      - target: TranscriptMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.transcript.TranscriptMacTests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: YUU54K6BSS
+
+  TranscriptMacUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: MacAppUITests
+    dependencies:
+      - target: TranscriptMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.transcript.TranscriptMacUITests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: YUU54K6BSS
+
   Transcript:
     type: application
     platform: iOS
@@ -107,6 +158,22 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
 
 schemes:
+  TranscriptMac:
+    build:
+      targets:
+        TranscriptMac: all
+        TranscriptMacTests: [test]
+        TranscriptMacUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - TranscriptMacTests
+        - TranscriptMacUITests
+    archive:
+      config: Release
+
   TranscriptTests:
     build:
       targets:
