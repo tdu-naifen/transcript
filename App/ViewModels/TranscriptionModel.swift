@@ -170,6 +170,7 @@ final class TranscriptionModel {
         }
         await eventTask?.value
         await diarizationTask?.value
+        await diarizer?.cleanup()
         if failure == nil, let processingFailure {
             failure = LiveRecordingDrainError(failures: [processingFailure])
         }

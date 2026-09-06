@@ -1,16 +1,21 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
-    "On-device": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "本机处理" } } } },
-    "Tap an animal name to edit it across all meetings. Tap its timeline to listen.": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "轻点动物名字可修改所有会议中的名称，轻点时间轴可播放对应音频。" } } } },
-    "Animals": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "动物身份" } } } },
-    "Play this animal's first contribution": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "播放此动物身份的第一段发言" } } } },
-    "Meeting icon": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "会议图标" } } } },
-    "One emoji": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "一个表情符号" } } } },
-    "Change icon": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "更换图标" } } } },
-    "Choose an emoji for this meeting. Leave empty to restore the default.": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "为这场会议选择一个表情符号。留空可恢复默认图标。" } } } },
-    "Speaker identities are not available yet. Speaker analysis uses voiceprints, separately from Apple transcription.": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "暂未获得说话人身份。说话人分析使用声纹，与 Apple 文字转写分别处理。" } } } },
-    "Transcribing with Apple Speech…": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在使用 Apple Speech 转写…" } } } },
+    "Animal identities": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "动物身份" } } } },
+    "Voiceprint resources are prepared separately from Apple Speech. Animal identities stay on this device.": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "声纹资源独立于 Apple 转写准备，识别出的动物身份仅保存在本机。" } } } },
+    "Preparing animal recognition resources…": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在准备动物身份识别资源…" } } } },
+    "Identifying animal voices…": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在辨认声音与动物身份…" } } } },
+    "Retry animal recognition": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "重试动物身份识别" } } } },
+    "Animals" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "动物身份"
+          }
+        }
+      }
+    },
     "Apple language resources are being prepared. This recording will save audio only; transcription will be available for the next recording." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -64,6 +69,27 @@
         }
       }
     },
+    "Change icon" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "更换图标"
+          }
+        }
+      }
+    },
+    "Choose an emoji for this meeting. Leave empty to restore the default." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "为这场会议选择一个表情符号。留空可恢复默认图标。"
+          }
+        }
+      }
+    },
     "Local network access is off. Enable Local Network for Transcript in Settings, then try again." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -75,12 +101,54 @@
         }
       }
     },
+    "Meeting icon" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会议图标"
+          }
+        }
+      }
+    },
     "No Mac found yet. Keep Transcript open on your Mac and connect both devices to the same local network." : {
       "localizations" : {
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
             "value" : "暂未找到 Mac。请保持 Mac 上的 Transcript 打开，并将两台设备连接到同一本地网络。"
+          }
+        }
+      }
+    },
+    "On-device" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本机处理"
+          }
+        }
+      }
+    },
+    "One emoji" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "一个表情符号"
+          }
+        }
+      }
+    },
+    "Play this animal's first contribution" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "播放此动物身份的第一段发言"
           }
         }
       }
@@ -125,6 +193,16 @@
         }
       }
     },
+    "Speaker identities are not available yet. Speaker analysis uses voiceprints, separately from Apple transcription." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂未获得说话人身份。说话人分析使用声纹，与 Apple 文字转写分别处理。"
+          }
+        }
+      }
+    },
     "Speech recognition access is off. Enable it in Settings to transcribe. Audio recording is still available." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -156,6 +234,16 @@
         }
       }
     },
+    "Tap an animal name to edit it across all meetings. Tap its timeline to listen." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "轻点动物名字可修改所有会议中的名称，轻点时间轴可播放对应音频。"
+          }
+        }
+      }
+    },
     "The audio could not be converted for Apple transcription." : {
       "extractionState" : "stale",
       "localizations" : {
@@ -174,6 +262,17 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "已发现这台 Mac，但安全配对尚未就绪。没有发送任何会议数据。"
+          }
+        }
+      }
+    },
+    "Transcribing with Apple Speech…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在使用 Apple Speech 转写…"
           }
         }
       }

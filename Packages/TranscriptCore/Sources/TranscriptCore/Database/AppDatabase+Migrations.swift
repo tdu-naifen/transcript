@@ -321,6 +321,14 @@ extension AppDatabase {
                 table.add(column: "emoji", .text)
             }
         }
+        migrator.registerMigration("v6_speaker_analysis_jobs") { db in
+            try db.create(table: "speakerAnalysisJob") { table in
+                table.primaryKey("meetingId", .text).references("meeting", onDelete: .cascade)
+                table.column("state", .text).notNull()
+                table.column("error", .text)
+                table.column("updatedAt", .datetime).notNull()
+            }
+        }
         return migrator
     }
 }

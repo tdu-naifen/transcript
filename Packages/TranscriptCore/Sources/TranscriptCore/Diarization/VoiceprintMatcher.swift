@@ -45,6 +45,17 @@ public struct VoiceprintMatchPolicy: Sendable, Equatable {
         self.minimumMargin = minimumMargin
         self.minimumCleanDuration = minimumCleanDuration
     }
+
+    func evaluate(candidates: [VoiceprintCandidate], cleanDuration: TimeInterval, generation: Int) -> VoiceprintMatchResult {
+        guard cleanDuration.isFinite, cleanDuration >= minimumCleanDuration else {
+            return .needsMoreAudio(candidates: candidates)
+        }
+        guard let first = candidates.first, first.score >= minimumSimilarity,
+              first.score - (candidates.dropFirst().first?.score ?? -1) >= minimumMargin else {
+            return .noMatch(candidates: candidates)
+        }
+        return .matched(speakerId: first.speakerId, evidence: .init(candidates: candidates, voiceprintGeneration: generation))
+    }
 }
 
 /// Exact O(N) matcher backed by a generation-invalidated, normalized in-memory snapshot.
@@ -75,20 +86,7 @@ public actor VoiceprintMatcher {
         guard let query = FloatVector.normalized(embedding), cleanDuration.isFinite,
               cleanDuration >= 0 else { return .noMatch(candidates: []) }
         let (ranked, generation) = try await rankedCandidates(for: query)
-        guard cleanDuration >= policy.minimumCleanDuration else {
-            return .needsMoreAudio(candidates: ranked)
-        }
-        guard let first = ranked.first, first.score >= policy.minimumSimilarity else {
-            return .noMatch(candidates: ranked)
-        }
-        let margin = first.score - (ranked.dropFirst().first?.score ?? -1)
-        guard margin >= policy.minimumMargin else { return .noMatch(candidates: ranked) }
-        return .matched(
-            speakerId: first.speakerId,
-            evidence: VoiceprintMatchEvidence(
-                candidates: ranked, voiceprintGeneration: generation
-            )
-        )
+        return policy.evaluate(candidates: ranked, cleanDuration: cleanDuration, generation: generation)
     }
 
     private func rankedCandidates(

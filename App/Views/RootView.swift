@@ -157,6 +157,9 @@ private struct ReadyView: View {
             }
         }
         .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.8), value: isRecordingExpanded)
+        .onChange(of: services.speakerAnalysis.revision) { _, _ in
+            Task { await library.reload() }
+        }
         .alert(acceptanceText("Confirm meeting name"), isPresented: $isMeetingNamingPresented) {
             TextField(acceptanceText("Meeting name"), text: $meetingName)
                 .accessibilityIdentifier("meetingNameField")

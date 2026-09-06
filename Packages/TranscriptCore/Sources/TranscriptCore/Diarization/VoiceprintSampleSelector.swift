@@ -57,6 +57,29 @@ public struct VoiceprintSampleSelector: Sendable {
     sampleRate: Int,
     finalizedSegments: [DiarizerSegment]
   ) throws -> VoiceprintSelectedSample {
+    let evidence = try evidence(
+      speakerIndex: speakerIndex, audioFrameCount: audio.count,
+      sampleRate: sampleRate, finalizedSegments: finalizedSegments
+    )
+    var samples: [Float] = []
+    samples.reserveCapacity(evidence.cleanFrameCount)
+    for range in evidence.ranges {
+      guard audio[range].allSatisfy(\.isFinite) else {
+        throw VoiceprintSampleSelectionError.nonFiniteAudio
+      }
+      samples.append(contentsOf: audio[range])
+    }
+    return VoiceprintSelectedSample(samples: samples, evidence: evidence)
+  }
+
+  /// Select ranges before reading a recording, so extraction need not retain the whole file.
+  public func evidence(
+    speakerIndex: Int,
+    audioFrameCount: Int,
+    sampleRate: Int,
+    finalizedSegments: [DiarizerSegment]
+  ) throws -> VoiceprintSampleEvidence {
+    guard audioFrameCount >= 0 else { throw VoiceprintSampleSelectionError.invalidConfiguration }
     guard sampleRate == Self.sampleRate else {
       throw VoiceprintSampleSelectionError.unsupportedSampleRate(sampleRate)
     }
@@ -84,11 +107,11 @@ public struct VoiceprintSampleSelector: Sendable {
     let valid = finalizedSegments.filter(\.isFinalized)
     let target = union(
       valid.filter { $0.speakerIndex == speakerIndex }.compactMap {
-        frameRange(for: $0, sampleRate: sampleRate, audioCount: audio.count, isExclusion: false)
+        frameRange(for: $0, sampleRate: sampleRate, audioCount: audioFrameCount, isExclusion: false)
       })
     let excluded = union(
       valid.filter { $0.speakerIndex != speakerIndex }.compactMap {
-        frameRange(for: $0, sampleRate: sampleRate, audioCount: audio.count, isExclusion: true)
+        frameRange(for: $0, sampleRate: sampleRate, audioCount: audioFrameCount, isExclusion: true)
       })
     let clean = subtract(excluded, from: target)
     let available = clean.reduce(0) { $0 + $1.count }
@@ -101,25 +124,16 @@ public struct VoiceprintSampleSelector: Sendable {
 
     var remaining = maximumFrames
     var selectedRanges: [Range<Int>] = []
-    var samples: [Float] = []
-    samples.reserveCapacity(min(available, maximumFrames))
     for range in clean where remaining > 0 {
       let end = min(range.upperBound, range.lowerBound + remaining)
       let selected = range.lowerBound..<end
-      guard audio[selected].allSatisfy(\.isFinite) else {
-        throw VoiceprintSampleSelectionError.nonFiniteAudio
-      }
       selectedRanges.append(selected)
-      samples.append(contentsOf: audio[selected])
       remaining -= selected.count
     }
-    return VoiceprintSelectedSample(
-      samples: samples,
-      evidence: VoiceprintSampleEvidence(
+    return VoiceprintSampleEvidence(
         ranges: selectedRanges,
-        cleanFrameCount: samples.count,
+        cleanFrameCount: selectedRanges.reduce(0) { $0 + $1.count },
         sampleRate: sampleRate
-      )
     )
   }
 

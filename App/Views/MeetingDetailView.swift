@@ -88,7 +88,7 @@ struct MeetingDetailView: View {
         }
         .tint(accent)
         .sheet(isPresented: $isEngineeringDetailPresented) {
-            EngineeringDetailSheet(meeting: model.meeting, audioURL: audioURL)
+            EngineeringDetailSheet(meeting: model.meeting, audioURL: model.audioURL)
         }
         .sheet(isPresented: $isInsightsPresented) {
             SpeakerInsightsView(model: model)
@@ -149,7 +149,7 @@ struct MeetingDetailView: View {
         .onChange(of: model.renamingSpeakerId) { _, speakerId in
             renameText = speakerId.flatMap { model.speakersById[$0]?.resolvedName } ?? ""
         }
-        .task { await model.load() }
+        .task(id: model.speakerAnalysis.revision) { await model.load() }
         .onDisappear {
             model.playback.stop()
             model.cancelReprocessing()
@@ -287,6 +287,23 @@ struct MeetingDetailView: View {
 
     private var participantsHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let state = model.speakerAnalysis.states[model.meeting.id] {
+                switch state {
+                case .preparing, .analyzing:
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text(state == .preparing ? "Preparing animal recognition resources…" : "Identifying animal voices…", tableName: "AppleSpeech")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                case .failed(let message):
+                    Text(message).font(.footnote).foregroundStyle(.secondary)
+                    Button {
+                        Task { await model.speakerAnalysis.enqueue(model.meeting, retry: true) }
+                    } label: { Text("Retry animal recognition", tableName: "AppleSpeech") }
+                case .complete: EmptyView()
+                }
+            }
             Button {
                 withAnimation { isParticipantsExpanded.toggle() }
             } label: {
