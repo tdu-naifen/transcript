@@ -6,7 +6,7 @@ import Observation
 @MainActor
 @Observable
 final class MacConnectionModel {
-    struct Device: Identifiable, Equatable {
+    struct Device: Identifiable, Equatable, Sendable {
         let id: String
         let name: String
     }
@@ -96,12 +96,20 @@ final class MacConnectionModel {
     var jobs: [Job] = []
     private(set) var pendingAction: Action?
     private(set) var actionError: String?
+    private(set) var localNetworkDenied = false
+    private(set) var discoveryTimedOut = false
     @ObservationIgnored private let onAction: ActionHandler?
+    @ObservationIgnored private let discovery: (any MacDiscovering)?
+    @ObservationIgnored private var discoveryTimeout: Task<Void, Never>?
 
-    init(onAction: ActionHandler? = nil) {
+    init(discovery: (any MacDiscovering)? = nil, onAction: ActionHandler? = nil) {
         self.onAction = onAction
+        self.discovery = discovery
+        if discovery != nil { connection = .unpaired }
+        discovery?.onUpdate = { [weak self] update in self?.applyDiscovery(update) }
     }
 
+    var canDiscover: Bool { discovery != nil || onAction != nil }
     var hasTransportActions: Bool { onAction != nil }
     var isConnected: Bool {
         if case .connected = connection { return true }
@@ -167,7 +175,15 @@ final class MacConnectionModel {
     /// Does not invent connection changes, task receipts, or cancellation acks.
     /// The adapter must publish authoritative state; returning alone is not an ack.
     func perform(_ action: Action) async {
-        guard pendingAction == nil, let onAction else { return }
+        guard pendingAction == nil else { return }
+        if discovery != nil, action == .discover || (action == .retryConnection && !isConnected) {
+            startDiscovery()
+            return
+        }
+        guard let onAction else {
+            actionError = Self.text("This Mac was discovered, but secure pairing is not available yet. No meeting data has been sent.")
+            return
+        }
         pendingAction = action
         actionError = nil
         defer { pendingAction = nil }
@@ -178,8 +194,47 @@ final class MacConnectionModel {
         }
     }
 
+    func stopDiscovery() {
+        discoveryTimeout?.cancel()
+        discoveryTimeout = nil
+        discovery?.stop()
+        if case .discovering = connection { connection = .unpaired }
+    }
+
+    private func startDiscovery() {
+        stopDiscovery()
+        devices = []
+        actionError = nil
+        localNetworkDenied = false
+        discoveryTimedOut = false
+        connection = .discovering
+        discovery?.start()
+        discoveryTimeout = Task { [weak self] in
+            do { try await Task.sleep(for: .seconds(15)) } catch { return }
+            guard let self, case .discovering = connection else { return }
+            discoveryTimedOut = devices.isEmpty
+        }
+    }
+
+    private func applyDiscovery(_ update: MacDiscoveryUpdate) {
+        guard case .discovering = connection else { return }
+        switch update {
+        case .devices(let devices):
+            self.devices = devices
+            if !devices.isEmpty { discoveryTimedOut = false }
+        case .permissionDenied:
+            stopDiscovery()
+            localNetworkDenied = true
+            connection = .failed(reason: Self.text("Local network access is off. Enable Local Network for Transcript in Settings, then try again."))
+        case .failed(let message):
+            stopDiscovery()
+            connection = .failed(reason: message)
+        }
+    }
+
     static func text(_ key: String) -> String {
-        LocalizationManager.shared.text(key)
+        let discoveryText = LocalizationManager.shared.text(key, table: "AppleSpeech")
+        return discoveryText == key ? LocalizationManager.shared.text(key) : discoveryText
     }
 
     #if DEBUG

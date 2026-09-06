@@ -11,6 +11,13 @@ final class TranscriptUITests: XCTestCase {
         app.launch()
 
         app.buttons["globalRecordButton"].tap()
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        for _ in 0..<2 {
+            let permission = springboard.buttons.matching(
+                NSPredicate(format: "label IN %@", ["Allow", "OK"])
+            ).firstMatch
+            if permission.waitForExistence(timeout: 3) { permission.tap() }
+        }
         XCTAssertTrue(app.descendants(matching: .any)["collapseRecordingButton"].waitForExistence(timeout: 5))
 
         app.buttons["collapseRecordingButton"].tap()
@@ -27,8 +34,8 @@ final class TranscriptUITests: XCTestCase {
         app.buttons["collapseRecordingButton"].tap()
 
         app.buttons["miniStopButton"].tap()
-        let nameField = app.textFields["meetingNameField"]
-        let saveButton = app.buttons["meetingNameSaveButton"]
+        let nameField = app.alerts["Confirm meeting name"].textFields["Meeting name"]
+        let saveButton = app.buttons.matching(identifier: "meetingNameSaveButton").firstMatch
         XCTAssertTrue(nameField.waitForExistence(timeout: 3))
         XCTAssertFalse(nameField.value as? String == "")
         replaceText(in: nameField, with: "")
@@ -37,6 +44,9 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertTrue(saveButton.isEnabled)
         saveButton.tap()
         XCTAssertTrue(app.buttons["globalRecordButton"].waitForExistence(timeout: 5))
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Confirmed Recording"].waitForExistence(timeout: 5))
     }
 
     func testSettingsAndSpeakerInsightsAreReachable() {
@@ -102,6 +112,62 @@ final class TranscriptUITests: XCTestCase {
             XCTAssertFalse(app.buttons["collapseRecordingButton"].exists, label)
             attachScreenshot(of: app, name: "fixture-tab-\(label)")
         }
+    }
+
+    func testAppleSettingsAndReadableRecorderInBothAppearances() {
+        for style in ["Light", "Dark"] {
+            let app = isolatedApp()
+            app.launchArguments = [
+                "-uiFixture", "1", "-appLanguage", "en",
+                "-uiFixtureSelectedTab", "settings",
+                "-uiFixtureAppearance", style.lowercased()
+            ]
+            app.launch()
+            XCTAssertTrue(app.staticTexts["Apple Speech"].waitForExistence(timeout: 5))
+            XCTAssertFalse(app.buttons["downloadModelButton"].exists)
+            XCTAssertFalse(app.staticTexts["Not downloaded"].exists)
+            attachScreenshot(of: app, name: "apple-settings-\(style)")
+            app.terminate()
+            app.launchArguments += ["-uiFixtureExpandRecording", "1"]
+            app.launch()
+            XCTAssertTrue(app.buttons["collapseRecordingButton"].waitForExistence(timeout: 5))
+            XCTAssertTrue(app.staticTexts["Apple Speech"].exists)
+            XCTAssertFalse(app.staticTexts["Nemotron"].exists)
+            XCTAssertFalse(app.alerts["Recording problem"].exists)
+            attachScreenshot(of: app, name: "apple-recorder-\(style)")
+            app.terminate()
+        }
+    }
+
+    func testFindMacStartsActualNetworkDiscovery() {
+        let app = isolatedApp()
+        app.launchArguments = ["-uiFixture", "1", "-appLanguage", "en", "-uiFixtureSelectedTab", "home"]
+        let monitor = addUIInterruptionMonitor(withDescription: "Local network permission") { alert in
+            for title in ["Allow", "允许", "OK"] where alert.buttons[title].exists {
+                alert.buttons[title].tap()
+                return true
+            }
+            return false
+        }
+        defer { removeUIInterruptionMonitor(monitor); app.terminate() }
+        app.launch()
+        let connection = app.buttons["homeConnectionButton"]
+        XCTAssertTrue(connection.waitForExistence(timeout: 5))
+        connection.tap()
+        let find = app.buttons["macFindDevicesButton"]
+        XCTAssertTrue(find.waitForExistence(timeout: 3))
+        XCTAssertTrue(find.isEnabled)
+        find.tap()
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let allow = springboard.buttons["Allow"]
+        if allow.waitForExistence(timeout: 3) { allow.tap() }
+        let stop = app.buttons["Stop searching"]
+        XCTAssertTrue(stop.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Mac connection is unavailable because this app has no transport service configured."].exists)
+        attachScreenshot(of: app, name: "real-bonjour-discovery")
+        stop.tap()
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: find)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 3), .completed)
     }
 
     func testHomeMeetingsSettingsTabsAndSearchHitReturn() {
@@ -539,7 +605,7 @@ final class TranscriptUITests: XCTestCase {
     private func realRecordingApp(expandCollapse: Bool) -> XCUIApplication {
         let app = isolatedApp(seedFixtures: false)
         if expandCollapse {
-            app.launchArguments = ["-uiFixtureSelectedTab", "recordings", "-uiFixtureExpandRecording", "0"]
+            app.launchArguments = ["-uiFixtureSelectedTab", "recordings", "-uiFixtureExpandRecording", "0", "-appLanguage", "en"]
         }
         return app
     }

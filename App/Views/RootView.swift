@@ -22,7 +22,21 @@ struct RootView: View {
         }
         .environment(\.locale, localization.resolvedLocale)
         .tint(AppColors.controlTint)
+        #if DEBUG
+        .preferredColorScheme(fixtureColorScheme)
+        #endif
     }
+
+    #if DEBUG
+    private var fixtureColorScheme: ColorScheme? {
+        guard UIFixture.isRequested else { return nil }
+        switch UserDefaults.standard.string(forKey: "uiFixtureAppearance") {
+        case "dark": return .dark
+        case "light": return .light
+        default: return nil
+        }
+    }
+    #endif
 }
 
 /// Default button clearance, shared with the top-level lists.
@@ -44,7 +58,7 @@ private struct ReadyView: View {
     @State private var homePath = NavigationPath()
     @State private var recordingsPath = NavigationPath()
     @State private var settingsPath = NavigationPath()
-    @State private var macConnection = MacConnectionModel()
+    @State private var macConnection = MacConnectionModel(discovery: BonjourMacDiscovery())
     @State private var isStartingRecording = false
     @State private var isStoppingRecording = false
     @State private var namingError: String?
@@ -115,6 +129,15 @@ private struct ReadyView: View {
                     SettingsView(services: services, path: $settingsPath)
                 }
             }
+            .tabViewBottomAccessory {
+                if hasRecordingSession && !isRecordingExpanded {
+                    RecordingMiniBar(
+                        model: recorder,
+                        onExpand: { withAnimation(.snappy) { isRecordingExpanded = true } },
+                        onStop: requestStop
+                    )
+                }
+            }
 
             if isRecordingExpanded {
                 RecordView(
@@ -125,15 +148,6 @@ private struct ReadyView: View {
                 )
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .zIndex(2)
-            }
-        }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
-            if hasRecordingSession && !isRecordingExpanded {
-                RecordingMiniBar(
-                    model: recorder,
-                    onExpand: { withAnimation(.snappy) { isRecordingExpanded = true } },
-                    onStop: requestStop
-                )
             }
         }
         .overlay {

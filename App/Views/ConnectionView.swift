@@ -26,7 +26,7 @@ struct ConnectionView: View {
                         Label("Find a Mac", systemImage: "magnifyingglass")
                             .frame(minHeight: 32)
                     }
-                    .disabled(!model.hasTransportActions || model.pendingAction != nil || model.isConnecting || isPairing)
+                    .disabled(!model.canDiscover || model.pendingAction != nil || model.isConnecting || isPairing)
                     .accessibilityIdentifier("macFindDevicesButton")
                 } header: {
                     Text("Pair with your Mac")
@@ -36,6 +36,10 @@ struct ConnectionView: View {
             if case .discovering = model.connection {
                 Section("Nearby Macs") {
                     if model.devices.isEmpty {
+                        if model.discoveryTimedOut {
+                            Text("No Mac found yet. Keep Transcript open on your Mac and connect both devices to the same local network.", tableName: "AppleSpeech")
+                                .accessibilityIdentifier("macDiscoveryEmpty")
+                        }
                         HStack {
                             ProgressView()
                             Text("Looking for a Mac")
@@ -56,10 +60,24 @@ struct ConnectionView: View {
                                     }
                                 }
                             }
-                            .disabled(!model.hasTransportActions || model.pendingAction != nil)
+                            .disabled(model.pendingAction != nil)
                             .accessibilityIdentifier("macDiscoveredDevice_\(device.id)")
                         }
                     }
+                    Button { model.stopDiscovery() } label: {
+                        Text("Stop searching", tableName: "AppleSpeech")
+                    }
+                }
+            }
+
+            if model.localNetworkDenied {
+                Section {
+                    Button("Open Settings") {
+                        if let url = URL(string: UIApplication.openSettingsURLString) {
+                            UIApplication.shared.open(url)
+                        }
+                    }
+                    .accessibilityIdentifier("macNetworkSettingsButton")
                 }
             }
 
@@ -98,7 +116,7 @@ struct ConnectionView: View {
             if canRetryConnection {
                 Section {
                     Button("Retry connection") { perform(.retryConnection) }
-                        .disabled(!model.hasTransportActions || model.pendingAction != nil)
+                        .disabled(!model.canDiscover || model.pendingAction != nil)
                         .accessibilityIdentifier("macRetryConnectionButton")
                 }
             }
@@ -123,6 +141,7 @@ struct ConnectionView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .tint(AppColors.controlTint)
+        .onDisappear { model.stopDiscovery() }
         .onChange(of: model.isConnected) { wasConnected, isConnected in
             // Only a pairing started on this screen may automatically navigate back.
             // A background reconnect must not disrupt the user's current navigation.
