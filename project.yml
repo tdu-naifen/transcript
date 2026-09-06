@@ -22,6 +22,7 @@ targets:
     type: application
     platform: iOS
     sources:
+      # Recursive: regenerate the ignored .xcodeproj after adding or removing App files.
       - path: App
     dependencies:
       - package: TranscriptCore

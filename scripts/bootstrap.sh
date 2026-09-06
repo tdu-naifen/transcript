@@ -110,6 +110,10 @@ cat <<'EOF'
 
 Bootstrap complete. Next steps:
 
+  # After pulling changes or adding/removing Swift files, refresh the ignored project.
+  # project.yml recursively includes App, including Views/Components.
+  xcodegen generate
+
   # Build the iOS app
   xcodebuild -project Transcript.xcodeproj -scheme Transcript \
     -destination 'platform=iOS Simulator,name=iPhone 17 Pro' \
