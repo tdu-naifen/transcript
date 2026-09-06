@@ -25,6 +25,7 @@ final class HomeModel {
     private var requestTask: Task<Void, Never>?
     private let searchHandler: SearchHandler?
     private var loadedMeetingIDs: Set<String> = []
+    private var requestedCursors: Set<SearchCursor> = []
 
     init(searchHandler: SearchHandler? = nil) {
         self.searchHandler = searchHandler
@@ -66,6 +67,7 @@ final class HomeModel {
         nextCursor = nil
         results = []
         loadedMeetingIDs = []
+        requestedCursors = []
         errorMessage = nil
         hasLoaded = false
         isLoading = false
@@ -75,6 +77,7 @@ final class HomeModel {
 
     func loadMore() {
         guard !isLoading, let cursor = nextCursor, let searchHandler else { return }
+        guard requestedCursors.insert(cursor).inserted else { return }
         startRequest(handler: searchHandler, cursor: cursor, generation: generation)
     }
 
