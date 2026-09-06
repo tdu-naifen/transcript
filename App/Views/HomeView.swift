@@ -62,12 +62,13 @@ struct HomeView: View {
                             Button("home.dates.edit") { showsDates = true }
                         } else if model.isLoading && model.results.isEmpty {
                             ProgressView("library.loading")
-                        } else if let error = model.errorMessage {
+                        } else if let error = model.errorMessage, model.results.isEmpty {
                             ContentUnavailableView(
                                 "home.search.failed.title", systemImage: "exclamationmark.triangle",
                                 description: Text(error)
                             )
                             .accessibilityIdentifier("homeSearchError")
+                            Button("Retry") { model.resetAndSearch() }
                         } else if model.results.isEmpty && model.hasLoaded {
                             ContentUnavailableView(
                                 "home.search.empty.title", systemImage: "magnifyingglass",
@@ -99,9 +100,17 @@ struct HomeView: View {
                                     }
                                 }
                             }
+                            if let error = model.errorMessage {
+                                Text(error)
+                                    .foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("homeSearchError")
+                            }
                             if model.nextCursor != nil {
-                                Button("home.search.loadMore") { model.loadMore() }
+                                Button(LocalizedStringKey(model.errorMessage == nil ? "home.search.loadMore" : "Retry")) {
+                                    model.loadMore()
+                                }
                                     .disabled(model.isLoading)
+                                    .accessibilityIdentifier("homeLoadMore")
                             }
                         }
                     }
@@ -173,7 +182,7 @@ struct HomeView: View {
             }
             .refreshable {
                 await library.reload()
-                if model.hasSearchConditions { model.resetAndSearch() }
+                if model.hasSearchConditions { await model.resetAndSearch()?.value }
             }
             .task { await library.reload() }
             .onChange(of: model.query) { _, _ in model.filtersChanged() }

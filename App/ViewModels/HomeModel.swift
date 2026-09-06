@@ -61,7 +61,8 @@ final class HomeModel {
         resetAndSearch()
     }
 
-    func resetAndSearch() {
+    @discardableResult
+    func resetAndSearch() -> Task<Void, Never>? {
         generation += 1
         requestTask?.cancel()
         nextCursor = nil
@@ -71,17 +72,18 @@ final class HomeModel {
         errorMessage = nil
         hasLoaded = false
         isLoading = false
-        guard hasSearchConditions, !isDateRangeInvalid, let searchHandler else { return }
-        startRequest(handler: searchHandler, cursor: nil, generation: generation)
+        guard hasSearchConditions, !isDateRangeInvalid, let searchHandler else { return nil }
+        return startRequest(handler: searchHandler, cursor: nil, generation: generation)
     }
 
-    func loadMore() {
-        guard !isLoading, let cursor = nextCursor, let searchHandler else { return }
-        guard requestedCursors.insert(cursor).inserted else { return }
-        startRequest(handler: searchHandler, cursor: cursor, generation: generation)
+    @discardableResult
+    func loadMore() -> Task<Void, Never>? {
+        guard !isLoading, let cursor = nextCursor, let searchHandler else { return nil }
+        guard !requestedCursors.contains(cursor) else { return nil }
+        return startRequest(handler: searchHandler, cursor: cursor, generation: generation)
     }
 
-    private func startRequest(handler: @escaping SearchHandler, cursor: SearchCursor?, generation: Int) {
+    private func startRequest(handler: @escaping SearchHandler, cursor: SearchCursor?, generation: Int) -> Task<Void, Never> {
         isLoading = true
         let request = SearchQuery(
             text: query.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -91,25 +93,32 @@ final class HomeModel {
             limit: 25,
             cursor: cursor
         )
-        requestTask = Task { [weak self] in
+        let task = Task { [weak self] in
+            defer {
+                if let self, self.generation == generation { self.isLoading = false }
+            }
             do {
                 let page = try await handler(request)
                 guard !Task.isCancelled else { return }
                 guard let self, self.generation == generation else { return }
+                if let cursor { self.requestedCursors.insert(cursor) }
                 let unique = page.results.filter { self.loadedMeetingIDs.insert($0.meeting.id).inserted }
                 if cursor == nil { self.results = unique } else { self.results += unique }
-                self.nextCursor = page.nextCursor
+                self.nextCursor = page.nextCursor.flatMap {
+                    self.requestedCursors.contains($0) ? nil : $0
+                }
                 self.hasLoaded = true
                 self.errorMessage = nil
-                self.isLoading = false
             } catch is CancellationError {
-                // Cancellation is an expected consequence of changing filters.
+                guard let self, self.generation == generation else { return }
+                self.hasLoaded = true
             } catch {
                 guard let self, self.generation == generation else { return }
                 self.errorMessage = error.localizedDescription
                 self.hasLoaded = true
-                self.isLoading = false
             }
         }
+        requestTask = task
+        return task
     }
 }
