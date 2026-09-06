@@ -31,7 +31,26 @@ struct RecordView: View {
                         .accessibilityLabel("Collapse recording")
                         .accessibilityIdentifier("collapseRecordingButton")
                         Spacer()
+                        Label {
+                            Text("On-device", tableName: "AppleSpeech")
+                        } icon: {
+                            Image(systemName: "iphone")
+                        }
+                            .font(.caption.weight(.medium))
+                            .foregroundStyle(.secondary)
                     }
+
+                    HStack(spacing: 10) {
+                        Text("M4A")
+                        Text("\((model.recordingSampleRate / 1_000).formatted()) kHz")
+                        Label(model.stateLabel, systemImage: model.isActive ? "record.circle" : "mic")
+                            .foregroundStyle(model.isActive ? Color.red : AppColors.controlTint)
+                    }
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 7)
+                    .background(.quaternary.opacity(0.35), in: Capsule())
 
                     Text(Format.clock(model.elapsed))
                         .font(.largeTitle.weight(.bold).monospacedDigit())
@@ -41,6 +60,15 @@ struct RecordView: View {
 
                     LevelMeterView(level: model.level, isActive: model.phase == .recording)
                         .frame(height: 26)
+                    HStack(spacing: 8) {
+                        Label("Apple Speech", systemImage: "waveform")
+                        Spacer(minLength: 4)
+                        Label(model.recordingLanguageLabel, systemImage: "globe")
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 8)
+                    .lineLimit(1)
                 }
                 .padding(.horizontal, 14)
                 .padding(.vertical, 10)
@@ -54,14 +82,6 @@ struct RecordView: View {
                         ZStack(alignment: .bottom) {
                             LiveTranscriptView(model: model.transcription)
                                 .frame(maxHeight: .infinity)
-
-                            LinearGradient(
-                                colors: [Color(uiColor: .secondarySystemGroupedBackground).opacity(0), Color(uiColor: .secondarySystemGroupedBackground)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                            .frame(height: 116)
-                            .allowsHitTesting(false)
 
                             HStack(spacing: 24) {
                                 PauseButton(isPaused: model.phase == .paused) {
@@ -77,7 +97,8 @@ struct RecordView: View {
                             }
                             .padding(.horizontal, 16)
                             .padding(.vertical, 10)
-                            .background(.ultraThinMaterial, in: Capsule())
+                            .background(.regularMaterial, in: Capsule())
+                            .overlay(Capsule().strokeBorder(.primary.opacity(0.06), lineWidth: 1))
                             .shadow(color: .black.opacity(0.1), radius: 16, y: 7)
                             .padding(.bottom, 16)
                         }

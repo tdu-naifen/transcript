@@ -9,7 +9,10 @@ struct FloatingRecordButton: View {
 
     @AppStorage(Self.xKey) private var normalizedX = 1.0
     @AppStorage(Self.yKey) private var normalizedY = 1.0
-    @GestureState private var translation = CGSize.zero
+    @State private var translation = CGSize.zero
+    @State private var isDragging = false
+    @GestureState private var gestureActive = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let action: () -> Void
 
     static func resetPosition(defaults: UserDefaults = .standard) {
@@ -32,15 +35,31 @@ struct FloatingRecordButton: View {
                 .frame(width: FloatingRecordButtonMetrics.diameter, height: FloatingRecordButtonMetrics.diameter)
                 .background(Self.accent, in: Circle())
                 .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
+                .scaleEffect(
+                    x: isDragging && !reduceMotion ? 1.10 : 1,
+                    y: isDragging && !reduceMotion ? 0.93 : 1
+                )
                 .contentShape(Circle())
                 .gesture(
                     DragGesture(minimumDistance: 10, coordinateSpace: .named("floatingRecorderArea"))
-                        .updating($translation) { value, state, _ in state = value.translation }
+                        .updating($gestureActive) { _, state, _ in state = true }
+                        .onChanged { value in
+                            isDragging = true
+                            translation = value.translation
+                        }
                         .onEnded { value in
-                            store(
-                                CGPoint(x: origin.x + value.translation.width, y: origin.y + value.translation.height),
-                                in: bounds
+                            let projected = CGSize(
+                                width: value.translation.width + (value.predictedEndTranslation.width - value.translation.width) * 0.15,
+                                height: value.translation.height + (value.predictedEndTranslation.height - value.translation.height) * 0.15
                             )
+                            withAnimation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.58)) {
+                                store(
+                                    CGPoint(x: origin.x + projected.width, y: origin.y + projected.height),
+                                    in: bounds
+                                )
+                                translation = .zero
+                                isDragging = false
+                            }
                         }
                         // A recognized drag consumes the touch even if it returns to its origin.
                         .exclusively(before: TapGesture().onEnded { action() })
@@ -57,6 +76,15 @@ struct FloatingRecordButton: View {
                 .accessibilityAction(named: Text("Move recording button down")) { move(x: 0, y: 0.15) }
                 .accessibilityAction(named: Text("Reset recording button position")) { Self.resetPosition() }
                 .position(position)
+                .onChange(of: gestureActive) { _, active in
+                    if !active && isDragging {
+                        withAnimation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.7)) {
+                            translation = .zero
+                            isDragging = false
+                        }
+                    }
+                }
+                .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.6), value: isDragging)
         }
         .coordinateSpace(name: "floatingRecorderArea")
     }

@@ -68,6 +68,7 @@ private struct ReadyView: View {
     @State private var meetingName = ""
     @State private var defaultMeetingName = ""
     @State private var isMeetingNamingPresented = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private static var debugInitialTab: AppTab {
         #if DEBUG
@@ -155,6 +156,7 @@ private struct ReadyView: View {
                 FloatingRecordButton(action: startRecording)
             }
         }
+        .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.8), value: isRecordingExpanded)
         .alert(acceptanceText("Confirm meeting name"), isPresented: $isMeetingNamingPresented) {
             TextField(acceptanceText("Meeting name"), text: $meetingName)
                 .accessibilityIdentifier("meetingNameField")
@@ -307,7 +309,8 @@ private struct RecordingMiniBar: View {
         .buttonStyle(.plain)
         .padding(.horizontal, 14)
         .padding(.vertical, 7)
-        .background(.regularMaterial)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 24, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 24, style: .continuous))
     }
 }
 

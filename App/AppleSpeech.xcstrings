@@ -1,6 +1,15 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "On-device": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "本机处理" } } } },
+    "Tap an animal name to edit it across all meetings. Tap its timeline to listen.": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "轻点动物名字可修改所有会议中的名称，轻点时间轴可播放对应音频。" } } } },
+    "Animals": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "动物身份" } } } },
+    "Play this animal's first contribution": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "播放此动物身份的第一段发言" } } } },
+    "Meeting icon": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "会议图标" } } } },
+    "One emoji": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "一个表情符号" } } } },
+    "Change icon": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "更换图标" } } } },
+    "Choose an emoji for this meeting. Leave empty to restore the default.": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "为这场会议选择一个表情符号。留空可恢复默认图标。" } } } },
+    "Speaker identities are not available yet. Speaker analysis uses voiceprints, separately from Apple transcription.": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "暂未获得说话人身份。说话人分析使用声纹，与 Apple 文字转写分别处理。" } } } },
     "Transcribing with Apple Speech…": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在使用 Apple Speech 转写…" } } } },
     "Apple language resources are being prepared. This recording will save audio only; transcription will be available for the next recording." : {
       "extractionState" : "stale",

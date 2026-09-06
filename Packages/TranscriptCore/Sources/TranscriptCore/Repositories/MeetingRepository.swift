@@ -20,6 +20,37 @@ public struct MeetingRepository: Sendable {
         }
     }
 
+    public enum IconError: LocalizedError {
+        case invalidEmoji
+        public var errorDescription: String? { "Choose one emoji, or leave the field empty to restore the default." }
+    }
+
+    public static func isValidEmoji(_ value: String) -> Bool {
+        let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let scalars = value.unicodeScalars
+        return value.isEmpty || (value.count == 1 && (
+            scalars.contains { $0.properties.isEmojiPresentation }
+                || (scalars.contains { $0.properties.isEmoji }
+                    && scalars.contains { $0.value == 0xFE0F || $0.value == 0x20E3 })
+        ))
+    }
+
+    @discardableResult
+    public func setEmoji(id: String, emoji: String, deviceId: String, now: Date = Date()) async throws -> Meeting {
+        let value = emoji.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard Self.isValidEmoji(value) else { throw IconError.invalidEmoji }
+        return try await database.writer.write { db in
+            guard var meeting = try Meeting.fetchOne(db, key: id) else {
+                throw RepositoryError.notFound(table: Meeting.databaseTableName, id: id)
+            }
+            meeting.emoji = value.isEmpty ? nil : value
+            meeting.updatedAt = now
+            meeting.originDeviceId = deviceId
+            try meeting.update(db)
+            return meeting
+        }
+    }
+
     /// Newest first.
     public func fetchAll() async throws -> [Meeting] {
         try await database.reader.read { db in

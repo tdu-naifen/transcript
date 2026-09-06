@@ -5,6 +5,8 @@ import GRDB
 public struct Meeting: Codable, Identifiable, Hashable, Sendable {
     public var id: String
     public var title: String
+    public var emoji: String?
+    public var displayEmoji: String { emoji ?? "📝" }
     public var startedAt: Date
     public var durationMs: Int
     /// Denormalized "primary language" summary; the truth is `utterance.localeIdentifier`
@@ -35,6 +37,7 @@ public struct Meeting: Codable, Identifiable, Hashable, Sendable {
     public init(
         id: String = UUID().uuidString,
         title: String,
+        emoji: String? = nil,
         startedAt: Date,
         durationMs: Int = 0,
         localeIdentifier: String? = nil,
@@ -52,6 +55,7 @@ public struct Meeting: Codable, Identifiable, Hashable, Sendable {
     ) {
         self.id = id
         self.title = title
+        self.emoji = emoji
         self.startedAt = startedAt
         self.durationMs = durationMs
         self.localeIdentifier = localeIdentifier

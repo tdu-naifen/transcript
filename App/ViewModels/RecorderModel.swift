@@ -84,6 +84,11 @@ final class RecorderModel {
     var isBusy: Bool { phase == .starting || phase == .stopping }
 
     var isActive: Bool { phase == .recording || phase == .paused }
+    var recordingSampleRate: Double { services.session.configuration.archiveQuality.archiveSampleRate }
+    var recordingLanguageLabel: String {
+        LocalizationManager.shared.resolvedLocale.localizedString(forIdentifier: services.recordingLocale.identifier)
+            ?? services.recordingLocale.identifier
+    }
 
     var stateLabel: String {
         let localization = LocalizationManager.shared

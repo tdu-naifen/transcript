@@ -316,6 +316,11 @@ extension AppDatabase {
             """)
         }
 
+        migrator.registerMigration("v5_meeting_emoji") { db in
+            try db.alter(table: "meeting") { table in
+                table.add(column: "emoji", .text)
+            }
+        }
         return migrator
     }
 }

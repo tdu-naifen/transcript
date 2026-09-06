@@ -170,6 +170,37 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 3), .completed)
     }
 
+    func testReferenceInsightsLayoutAndMeetingIconEditor() {
+        for style in ["light", "dark"] {
+            let app = isolatedApp()
+            app.launchArguments = [
+                "-uiFixture", "1", "-appLanguage", "en",
+                "-uiFixtureAppearance", style,
+                "-uiFixtureSelectedTab", "recordings",
+                "-uiFixtureOpenMeetingId", "fixture-meeting-review-90min"
+            ]
+            app.launch()
+            XCTAssertTrue(app.buttons["speakerInsightsButton"].waitForExistence(timeout: 5))
+            XCTAssertEqual(app.buttons.matching(identifier: "BackButton").count, 1)
+            XCTAssertFalse(app.buttons["meetingBackButton"].exists)
+            attachScreenshot(of: app, name: "reference-detail-\(style)")
+            app.buttons["speakerInsightsButton"].tap()
+            XCTAssertTrue(app.descendants(matching: .any)["speakerInsightsTimeAxis"].waitForExistence(timeout: 3))
+            XCTAssertTrue(app.buttons["speakerRenameButton.fixture-speaker-alexandra"].exists)
+            attachScreenshot(of: app, name: "reference-animal-insights-\(style)")
+            app.buttons["Done"].tap()
+            app.buttons["meetingOptionsButton"].tap()
+            app.buttons["meetingEmojiMenuItem"].tap()
+            let field = app.alerts["Meeting icon"].textFields["One emoji"]
+            XCTAssertTrue(field.waitForExistence(timeout: 3))
+            field.typeText("🦊")
+            app.buttons.matching(identifier: "meetingEmojiSaveButton").firstMatch.tap()
+            app.buttons["BackButton"].tap()
+            attachScreenshot(of: app, name: "reference-meeting-icons-\(style)")
+            app.terminate()
+        }
+    }
+
     func testHomeMeetingsSettingsTabsAndSearchHitReturn() {
         let app = launchFixture()
         let homeTab = app.tabBars.buttons["Home"].exists ? app.tabBars.buttons["Home"] : app.tabBars.buttons["主页"]
@@ -187,8 +218,8 @@ final class TranscriptUITests: XCTestCase {
         let hit = app.buttons["homeSearchHit"].firstMatch
         XCTAssertTrue(hit.waitForExistence(timeout: 5))
         hit.tap()
-        XCTAssertTrue(app.buttons["meetingBackButton"].waitForExistence(timeout: 5))
-        app.buttons["meetingBackButton"].tap()
+        XCTAssertTrue(app.buttons["BackButton"].waitForExistence(timeout: 5))
+        app.buttons["BackButton"].tap()
         XCTAssertEqual(search.value as? String, "latency")
         attachScreenshot(of: app, name: "home-search-hit-return")
     }
@@ -441,7 +472,7 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertFalse(app.buttons["meetingProcessByMacButton"].isEnabled)
         XCTAssertTrue(app.staticTexts["meetingMacUnavailableReason"].label.contains("no transport service"))
         attachScreenshot(of: app, name: "transcript-tail-seeked")
-        app.buttons["meetingBackButton"].tap()
+        app.buttons["BackButton"].tap()
         XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 3))
     }
 
@@ -467,16 +498,16 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertTrue(hit.waitForExistence(timeout: 3))
         XCTAssertTrue(hit.label.contains("latency"))
         hit.tap()
-        XCTAssertTrue(app.buttons["meetingBackButton"].waitForExistence(timeout: 3))
-        app.buttons["meetingBackButton"].tap()
+        XCTAssertTrue(app.buttons["BackButton"].waitForExistence(timeout: 3))
+        app.buttons["BackButton"].tap()
         XCTAssertEqual(search.value as? String, "latency")
         XCTAssertTrue(app.buttons["homeSpeakerFilter"].label.contains("1 speakers"))
         replaceText(in: search, with: "周会")
         XCTAssertTrue(app.staticTexts["Title match"].waitForExistence(timeout: 3))
         XCTAssertFalse(app.buttons["homeSearchHit"].exists)
         app.buttons["homeMeeting-fixture-meeting-standup"].tap()
-        XCTAssertTrue(app.buttons["meetingBackButton"].waitForExistence(timeout: 3))
-        app.buttons["meetingBackButton"].tap()
+        XCTAssertTrue(app.buttons["BackButton"].waitForExistence(timeout: 3))
+        app.buttons["BackButton"].tap()
         XCTAssertEqual(search.value as? String, "周会")
         XCTAssertTrue(app.buttons["homeSpeakerFilter"].label.contains("1 speakers"))
         attachScreenshot(of: app, name: "speaker-filter-title-match-return")
@@ -499,7 +530,7 @@ final class TranscriptUITests: XCTestCase {
         scrollTo(last, in: app)
         last.tap()
         XCTAssertTrue(app.navigationBars["Pagination 00"].waitForExistence(timeout: 3))
-        app.buttons["meetingBackButton"].tap()
+        app.buttons["BackButton"].tap()
         XCTAssertTrue(last.isHittable, "Returning retains the loaded page and scroll position")
         attachScreenshot(of: app, name: "home-paged-last-row-return")
         for _ in 0..<18 {

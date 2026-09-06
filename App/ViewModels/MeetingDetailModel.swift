@@ -195,6 +195,17 @@ final class MeetingDetailModel {
     }
 
     @discardableResult
+    func updateEmoji(_ emoji: String) async -> Bool {
+        do {
+            meeting = try await meetingRepository.setEmoji(id: meeting.id, emoji: emoji, deviceId: deviceId)
+            return true
+        } catch {
+            loadFailure = error.localizedDescription
+            return false
+        }
+    }
+
+    @discardableResult
     func renameMeeting(newTitle: String) async -> Bool {
         let trimmed = newTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return false }

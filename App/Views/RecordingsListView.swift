@@ -168,9 +168,8 @@ struct MeetingRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            Image(systemName: "waveform")
-                .font(.headline)
-                .foregroundStyle(Color(red: 6 / 255, green: 34 / 255, blue: 158 / 255))
+            Text(meeting.displayEmoji)
+                .font(.system(size: 27))
                 .frame(width: 40, height: 40)
                 .background(Color(.secondarySystemGroupedBackground), in: Circle())
                 .accessibilityHidden(true)
