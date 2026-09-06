@@ -245,6 +245,7 @@ Mac 重新转写可能改变分段，片段编辑不能仅锚定临时 segment I
 - AppServices 共享音频所有权；RecorderModel 在采集启动前同步撤销播放器并释放播放会话，启动中、采集中及收尾期间禁止旧详情激活或停用录音会话。
 - Home 分页失败可用同一 cursor 重试；成功页去重，过期成功/失败不改新筛选。实际 SearchRepository 集成覆盖 33 场会议、标题/说话人正文分型及日期筛选。
 - 中英切换使用所选语言资源 bundle，导航标题、tab 和控件即时更新，不重建导航状态；System 标签跟随系统语言。已删除搜索不可用的过时页脚。
-- 专用 Simulator 组合验证：37 个 App hosted tests（含原 14 个录音回归）及 9 个 fixture UI tests 全部通过。覆盖一次定位/重载、25 小时秋季 DST、浮动位置跨 tab/重启/旋转/复位、实际开关筛选、分页返回及末段完整可见并可播放。
-- 证据：`.build/ios-fix03-final.log`、`.build/ios-fix03-final.xcresult`、`.build/ios-fix03-final-attachments/`。音频为隔离生成的 WAV/AAC，UI 数据为 DEBUG 显式启用的内存 fixture；不是麦克风/模型声学 E2E。
+- 最终专用 Simulator 组合验证：38 个 App hosted tests（含原 14 个录音回归）及 9 个 fixture UI tests 全部通过。覆盖一次定位/重载、25 小时秋季 DST、浮动位置跨 tab/重启/旋转/复位、实际开关筛选、分页返回及末段完整可见并可播放。
+- 最终证据：`.build/ios-fix03-final3.log`、`.build/ios-fix03-final3.xcresult`、`.build/ios-fix03-final3-attachments/`。音频为隔离生成的 WAV/AAC，UI 数据为 DEBUG 显式启用的内存 fixture；不是麦克风/模型声学 E2E。
+- 隔离更正：收紧 fixture 启用条件后，旧转写测试曾意外回落到专用 Simulator 磁盘库，其故障注入污染了该库；重复验证在 `ios-fix03-final2` 暴露此问题。本轮已改为显式注入内存库，并隔离 hosted App 启动服务；最终回归通过。此前磁盘库未修补或删除，不能将该 Simulator 的正常启动视为已验收；需要另行授权恢复后再做非 fixture QA。
 - Mac 真实传输、持久回执、双端同步及本地网络隐私分支仍未验收；生产入口继续显示未配置服务原因，不伪造连接。以上为实现者验证，不代表独立 review/QA 通过，也不关闭本规格其余验收项。

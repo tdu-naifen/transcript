@@ -8,6 +8,7 @@ final class TranscriptUITests: XCTestCase {
 
     func testRecordingExpandsCollapsesAndStops() {
         let app = XCUIApplication()
+        app.launchEnvironment["TRANSCRIPT_UI_FIXTURE"] = "0"
         app.launchArguments = [
             "-uiFixtureSelectedTab", "recordings",
             "-uiFixtureExpandRecording", "0"
@@ -388,6 +389,7 @@ final class TranscriptUITests: XCTestCase {
 
     func testAcousticAcceptance() {
         let app = XCUIApplication()
+        app.launchEnvironment["TRANSCRIPT_UI_FIXTURE"] = "0"
         app.launch()
 
         let recordButton = app.buttons["globalRecordButton"]
