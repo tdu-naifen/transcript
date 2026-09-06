@@ -3,6 +3,7 @@ import TranscriptCore
 
 struct SettingsView: View {
     let services: AppServices
+    @Binding var path: NavigationPath
     @State private var models: ModelDownloadModel?
     @State private var localization = LocalizationManager.shared
 

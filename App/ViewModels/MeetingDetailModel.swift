@@ -41,8 +41,16 @@ final class MeetingDetailModel {
     private let isRecordingActive: Bool
     private let deviceId: String
     private var reprocessingTask: Task<Void, Never>?
+    private var pendingInitialSeekMs: Int?
 
-    init(meeting: Meeting, audioURL: URL?, services: AppServices, isRecordingActive: Bool = false) {
+    init(
+        meeting: Meeting,
+        audioURL: URL?,
+        services: AppServices,
+        isRecordingActive: Bool = false,
+        initialSeekMs: Int? = nil
+    ) {
+        self.pendingInitialSeekMs = initialSeekMs
         self.meeting = meeting
         self.playback = AudioPlaybackModel(
             url: audioURL,
@@ -85,10 +93,18 @@ final class MeetingDetailModel {
             let (utterances, speakers, meeting) = try await (
                 fetchedUtterances, fetchedSpeakers, fetchedMeeting
             )
+            try Task.checkCancellation()
             self.utterances = utterances
             if let meeting { self.meeting = meeting }
             applySpeakers(speakers.map(\.speaker))
             loadFailure = nil
+            // Consume once after data is ready, not on every appearance or reload.
+            if let initialSeekMs = pendingInitialSeekMs {
+                pendingInitialSeekMs = nil
+                playback.seekAndPlay(toMs: initialSeekMs)
+            }
+        } catch is CancellationError {
+            return
         } catch {
             loadFailure = String(describing: error)
         }
