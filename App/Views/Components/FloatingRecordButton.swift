@@ -35,10 +35,6 @@ struct FloatingRecordButton: View {
                 .frame(width: FloatingRecordButtonMetrics.diameter, height: FloatingRecordButtonMetrics.diameter)
                 .background(Self.accent, in: Circle())
                 .shadow(color: .black.opacity(0.18), radius: 12, y: 5)
-                .scaleEffect(
-                    x: isDragging && !reduceMotion ? 1.10 : 1,
-                    y: isDragging && !reduceMotion ? 0.93 : 1
-                )
                 .contentShape(Circle())
                 .gesture(
                     DragGesture(minimumDistance: 10, coordinateSpace: .named("floatingRecorderArea"))
@@ -48,13 +44,12 @@ struct FloatingRecordButton: View {
                             translation = value.translation
                         }
                         .onEnded { value in
-                            let projected = CGSize(
-                                width: value.translation.width + (value.predictedEndTranslation.width - value.translation.width) * 0.15,
-                                height: value.translation.height + (value.predictedEndTranslation.height - value.translation.height) * 0.15
-                            )
-                            withAnimation(reduceMotion ? nil : .spring(response: 0.5, dampingFraction: 0.58)) {
+                            withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
                                 store(
-                                    CGPoint(x: origin.x + projected.width, y: origin.y + projected.height),
+                                    FloatingRecordButtonGeometry.snappedToEdge(
+                                        CGPoint(x: origin.x + value.translation.width, y: origin.y + value.translation.height),
+                                        in: bounds
+                                    ),
                                     in: bounds
                                 )
                                 translation = .zero
@@ -78,13 +73,15 @@ struct FloatingRecordButton: View {
                 .position(position)
                 .onChange(of: gestureActive) { _, active in
                     if !active && isDragging {
-                        withAnimation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.7)) {
+                        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
                             translation = .zero
                             isDragging = false
                         }
                     }
                 }
-                .animation(reduceMotion ? nil : .spring(response: 0.25, dampingFraction: 0.6), value: isDragging)
+                .onAppear {
+                    normalizedX = normalizedX < 0.5 ? 0 : 1
+                }
         }
         .coordinateSpace(name: "floatingRecorderArea")
     }
@@ -98,12 +95,19 @@ struct FloatingRecordButton: View {
     }
 
     private func move(x: Double, y: Double) {
-        normalizedX = FloatingRecordButtonGeometry.fraction(FloatingRecordButtonGeometry.fraction(normalizedX) + x)
-        normalizedY = FloatingRecordButtonGeometry.fraction(FloatingRecordButtonGeometry.fraction(normalizedY) + y)
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.25)) {
+            if x != 0 { normalizedX = x < 0 ? 0 : 1 }
+            normalizedY = FloatingRecordButtonGeometry.fraction(FloatingRecordButtonGeometry.fraction(normalizedY) + y)
+        }
     }
 }
 
 enum FloatingRecordButtonGeometry {
+    static func snappedToEdge(_ point: CGPoint, in bounds: CGRect) -> CGPoint {
+        let position = clamped(point, to: bounds)
+        return CGPoint(x: position.x < bounds.midX ? bounds.minX : bounds.maxX, y: position.y)
+    }
+
     static func bounds(size: CGSize, insets: EdgeInsets) -> CGRect {
         let radius = FloatingRecordButtonMetrics.diameter / 2
         let minX = min(size.width / 2, insets.leading + radius + 16)

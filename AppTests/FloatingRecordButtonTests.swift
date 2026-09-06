@@ -4,6 +4,13 @@ import XCTest
 
 @MainActor
 final class FloatingRecordButtonTests: XCTestCase {
+    func testReleaseSnapsToClosestSideWithoutChangingSafeVerticalPosition() {
+        let bounds = CGRect(x: 48, y: 80, width: 300, height: 500)
+        XCTAssertEqual(FloatingRecordButtonGeometry.snappedToEdge(CGPoint(x: 100, y: 250), in: bounds), CGPoint(x: 48, y: 250))
+        XCTAssertEqual(FloatingRecordButtonGeometry.snappedToEdge(CGPoint(x: 270, y: 320), in: bounds), CGPoint(x: 348, y: 320))
+        XCTAssertEqual(FloatingRecordButtonGeometry.snappedToEdge(CGPoint(x: -100, y: 900), in: bounds), CGPoint(x: 48, y: 580))
+    }
+
     func testNormalizedPositionRoundTripsAndStaysInsideRotatedSafeBounds() {
         let portrait = FloatingRecordButtonGeometry.bounds(
             size: CGSize(width: 402, height: 874), insets: EdgeInsets(top: 62, leading: 0, bottom: 34, trailing: 0)

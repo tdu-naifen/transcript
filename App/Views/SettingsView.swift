@@ -81,8 +81,7 @@ struct SettingsView: View {
                             Text(option.displayName).tag(option)
                         }
                     }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
+                    .pickerStyle(.menu)
                     .accessibilityIdentifier("appLanguagePicker")
                 }
 

@@ -75,6 +75,9 @@ public struct SpeakerAnalysisRepository: Sendable {
         guard !modelIdentifier.isEmpty else { throw VoiceprintBindingError.invalidEmbedding }
         return try await database.writer.write { db in
             try Task.checkCancellation()
+            guard try Meeting.exists(db, key: meetingID) else {
+                throw RepositoryError.notFound(table: Meeting.databaseTableName, id: meetingID)
+            }
             let current = try Utterance.filter(Utterance.Columns.meetingId == meetingID).fetchAll(db)
             guard current.sorted(by: { $0.id < $1.id }) == expectedUtterances.sorted(by: { $0.id < $1.id }) else {
                 throw VoiceprintBindingError.staleExpectation

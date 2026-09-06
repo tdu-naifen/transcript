@@ -16,6 +16,10 @@ final class RecordingActivityLifecycleTests: XCTestCase {
         await fulfillment(of: [entered], timeout: 5)
         XCTAssertEqual(fixture.engine.stopCount, 1)
         XCTAssertEqual(fixture.recorder.phase, .stopping)
+        let protectedID = await fixture.services.session.activeMeetingId
+        XCTAssertEqual(protectedID, fixture.meeting.id)
+        let deletion = await LibraryModel(services: fixture.services).delete(fixture.meeting)
+        XCTAssertFalse(deletion, "A draining recording must remain protected until publication")
         await fixture.recorder.toggleRecording()
         XCTAssertNil(fixture.recorder.requestStop())
         XCTAssertEqual(activity.ending, [fixture.meeting.id])

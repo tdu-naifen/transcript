@@ -68,10 +68,11 @@ public actor RecordingSession {
 
     public var currentPhase: Phase { phase }
 
-    public var activeMeetingId: String? { active?.meetingId ?? pending?.token.meetingId }
+    private var sealingMeetingId: String?
+    public var activeMeetingId: String? { active?.meetingId ?? pending?.token.meetingId ?? sealingMeetingId }
 
     public func start(title: String, now: Date = Date()) async throws -> Meeting {
-        guard active == nil, pending == nil, !drainInProgress else {
+        guard active == nil, pending == nil, !drainInProgress, sealingMeetingId == nil else {
             throw AudioCaptureError.alreadyRecording
         }
 
@@ -159,7 +160,8 @@ public actor RecordingSession {
         guard let active else { throw AudioCaptureError.notRecording }
         guard !drainInProgress else { throw AudioCaptureError.alreadyRecording }
         drainInProgress = true
-        defer { drainInProgress = false }
+        sealingMeetingId = active.meetingId
+        defer { drainInProgress = false; sealingMeetingId = nil }
         self.active = nil
         phase = .idle
 
@@ -225,6 +227,8 @@ public actor RecordingSession {
     @discardableResult
     public func abort(now: Date = Date()) async throws -> Meeting? {
         guard let active else { return nil }
+        sealingMeetingId = active.meetingId
+        defer { sealingMeetingId = nil }
         self.active = nil
         phase = .idle
 

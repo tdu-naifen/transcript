@@ -46,6 +46,11 @@ struct RecordingsListView: View {
                                     Button(role: .destructive) { pendingDeletion = meeting } label: {
                                         Label("meetings.delete_local.action", systemImage: "trash")
                                     }
+                                    .contextMenu {
+                                        Button(role: .destructive) { pendingDeletion = meeting } label: {
+                                            Label("meetings.delete_local.action", systemImage: "trash")
+                                        }
+                                    }
                                     .disabled(model.deletingIDs.contains(meeting.id))
                                 }
                             }
@@ -74,30 +79,15 @@ struct RecordingsListView: View {
                     onProcessByMac: { macSubmissionMeeting = meeting },
                     macUnavailableReason: macConnection.submissionBlockReason(meetingID: meeting.id),
                     recordingIsActive: { isRecordingActive() },
-                    onMeetingRenamed: { Task { await model.reload() } }
+                    onMeetingRenamed: { Task { await model.reload() } },
+                    onDelete: { await model.delete($0) }
                 )
             }
             .navigationTitle(LocalizationManager.shared.text("meetings.title"))
             .fullScreenCover(item: $macSubmissionMeeting) { meeting in
                 MacSubmissionView(meeting: meeting, model: macConnection)
             }
-            .confirmationDialog(
-                "meetings.delete_local.title",
-                isPresented: Binding(
-                    get: { pendingDeletion != nil },
-                    set: { if !$0 { pendingDeletion = nil } }
-                ),
-                titleVisibility: .visible,
-                presenting: pendingDeletion
-            ) { meeting in
-                Button("meetings.delete_local.action", role: .destructive) {
-                    pendingDeletion = nil
-                    Task { await model.delete(meeting) }
-                }
-                Button("common.cancel", role: .cancel) { pendingDeletion = nil }
-            } message: { meeting in
-                Text("\(meeting.title)\n\(Text("meetings.delete_local.scope"))")
-            }
+            .modifier(MeetingDeletionConfirmation(meeting: $pendingDeletion) { await model.delete($0) })
             .refreshable { await model.reload() }
             .task {
                 await model.reload()

@@ -4,11 +4,16 @@ import TranscriptCore
 /// Meeting detail screen (UI.md §3): transcript in forward order with tap-to-seek
 /// playback, participants folded into the header, engineering info behind `⋯`.
 struct MeetingDetailView: View {
+    @Environment(\.dismiss) private var dismiss
     let meeting: Meeting
     let audioURL: URL?
     let onMeetingRenamed: () -> Void
     let onProcessByMac: (() -> Void)?
     let macUnavailableReason: String?
+    let onDelete: ((Meeting) async -> Bool)?
+    @State private var pendingDeletion: Meeting?
+    @State private var isDeleting = false
+    @State private var deletionFailed = false
 
     @State private var model: MeetingDetailModel
     @State private var isParticipantsExpanded = Self.debugStartExpanded
@@ -46,13 +51,15 @@ struct MeetingDetailView: View {
         macUnavailableReason: String? = nil,
         initialSeekMs: Int? = nil,
         recordingIsActive: (@MainActor () -> Bool)? = nil,
-        onMeetingRenamed: @escaping () -> Void = {}
+        onMeetingRenamed: @escaping () -> Void = {},
+        onDelete: ((Meeting) async -> Bool)? = nil
     ) {
         self.meeting = meeting
         self.audioURL = audioURL
         self.onMeetingRenamed = onMeetingRenamed
         self.onProcessByMac = onProcessByMac
         self.macUnavailableReason = macUnavailableReason
+        self.onDelete = onDelete
         _model = State(initialValue: MeetingDetailModel(
             meeting: meeting,
             audioURL: audioURL,
@@ -87,6 +94,23 @@ struct MeetingDetailView: View {
             ToolbarItem(placement: .topBarTrailing) { meetingOptions }
         }
         .tint(accent)
+        .modifier(MeetingDeletionConfirmation(meeting: $pendingDeletion) { meeting in
+            guard !isDeleting, let onDelete else { return }
+            isDeleting = true
+            model.playback.stop()
+            model.cancelReprocessing()
+            if await onDelete(meeting) {
+                dismiss()
+            } else {
+                deletionFailed = true
+            }
+            isDeleting = false
+        })
+        .alert(Text("library.delete_failed"), isPresented: $deletionFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The meeting was not deleted. Stop any active recording and try again.", tableName: "MeetingDeletion")
+        }
         .sheet(isPresented: $isEngineeringDetailPresented) {
             EngineeringDetailSheet(meeting: model.meeting, audioURL: model.audioURL)
         }
@@ -195,6 +219,14 @@ struct MeetingDetailView: View {
             .accessibilityIdentifier("speakerInsightsMenuItem")
             Button("Details", systemImage: "info.circle") {
                 isEngineeringDetailPresented = true
+            }
+            if onDelete != nil {
+                Divider()
+                Button(role: .destructive) { pendingDeletion = model.meeting } label: {
+                    Label("meetings.delete_local.action", systemImage: "trash")
+                }
+                .disabled(isDeleting)
+                .accessibilityIdentifier("meetingDeleteMenuItem")
             }
         } label: {
             Image(systemName: "ellipsis")

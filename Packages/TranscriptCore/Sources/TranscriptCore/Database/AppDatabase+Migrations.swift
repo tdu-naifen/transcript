@@ -329,6 +329,21 @@ extension AppDatabase {
                 table.column("updatedAt", .datetime).notNull()
             }
         }
+        migrator.registerMigration("v7_meeting_deletion_slot_revision") { db in
+            try db.execute(sql: """
+                DROP TRIGGER meetingSpeaker_slot_revision_ad;
+                CREATE TRIGGER meetingSpeaker_slot_revision_ad
+                AFTER DELETE ON meetingSpeaker
+                WHEN old.displayIndex >= 0
+                    AND EXISTS (SELECT 1 FROM meeting WHERE id = old.meetingId)
+                BEGIN
+                    INSERT INTO meetingSpeakerSlotRevision(meetingId, displayIndex, revision)
+                    VALUES (old.meetingId, old.displayIndex, 1)
+                    ON CONFLICT(meetingId, displayIndex)
+                    DO UPDATE SET revision = revision + 1;
+                END;
+                """)
+        }
         return migrator
     }
 }

@@ -201,6 +201,64 @@ final class TranscriptUITests: XCTestCase {
         }
     }
 
+    func testMeetingDetailDeletionCanCancelThenDeleteAndRefreshSearch() {
+        let app = isolatedApp()
+        app.launchArguments = ["-uiFixture", "1", "-appLanguage", "en", "-uiFixtureSelectedTab", "home"]
+        app.launch()
+        let search = app.textFields["homeSearchField"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("latency")
+        let hit = app.buttons["homeSearchHit"].firstMatch
+        XCTAssertTrue(hit.waitForExistence(timeout: 5))
+        hit.tap()
+        app.buttons["meetingOptionsButton"].tap()
+        let delete = app.buttons["meetingDeleteMenuItem"]
+        XCTAssertTrue(delete.waitForExistence(timeout: 3))
+        delete.tap()
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["meetingOptionsButton"].exists)
+        app.buttons["meetingOptionsButton"].tap()
+        app.buttons["meetingDeleteMenuItem"].tap()
+        let confirm = app.buttons.matching(identifier: "confirmMeetingDeletion").firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        confirm.tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "homeSearchEmpty").firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["homeSearchHit"].exists)
+        attachScreenshot(of: app, name: "meeting-deleted-search-refreshed")
+        app.terminate()
+    }
+
+    func testIdleAccessoryHiddenLanguageMenuAndEdgeSnapping() {
+        let app = isolatedApp()
+        app.launchArguments = ["-uiFixture", "1", "-appLanguage", "en", "-uiFixtureSelectedTab", "home"]
+        app.launch()
+        let record = app.buttons["globalRecordButton"]
+        XCTAssertTrue(record.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["recordingMiniBar"].exists)
+        attachScreenshot(of: app, name: "idle-home-no-accessory")
+        let start = record.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let destination = app.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.55))
+        start.press(forDuration: 0.1, thenDragTo: destination)
+        let snapped = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in record.frame.midX < app.frame.width * 0.2 }, object: nil
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [snapped], timeout: 3), .completed)
+        XCTAssertFalse(app.buttons["recordingMiniBar"].exists)
+        XCTAssertFalse(app.buttons["collapseRecordingButton"].exists)
+        app.tabBars.buttons["Settings"].tap()
+        let language = app.buttons["appLanguagePicker"]
+        XCTAssertTrue(language.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["简体中文"].exists)
+        language.tap()
+        XCTAssertTrue(app.buttons["简体中文"].waitForExistence(timeout: 3))
+        app.buttons["简体中文"].tap()
+        XCTAssertTrue(app.navigationBars["设置"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["recordingMiniBar"].exists)
+        attachScreenshot(of: app, name: "compact-language-no-accessory")
+        app.terminate()
+    }
+
     func testHomeMeetingsSettingsTabsAndSearchHitReturn() {
         let app = launchFixture()
         let homeTab = app.tabBars.buttons["Home"].exists ? app.tabBars.buttons["Home"] : app.tabBars.buttons["主页"]
@@ -272,6 +330,7 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["主页"].waitForExistence(timeout: 5))
         let settings = app.tabBars.buttons["设置"].exists ? app.tabBars.buttons["设置"] : app.tabBars.buttons["Settings"]
         settings.tap()
+        app.buttons["appLanguagePicker"].tap()
         let english = app.buttons["English"]
         XCTAssertTrue(english.waitForExistence(timeout: 3))
         english.tap()
@@ -287,10 +346,13 @@ final class TranscriptUITests: XCTestCase {
         app.tabBars.buttons["Meetings"].tap()
         XCTAssertTrue(app.navigationBars["Meetings"].waitForExistence(timeout: 3))
         app.tabBars.buttons["Settings"].tap()
+        app.buttons["appLanguagePicker"].tap()
         app.buttons["简体中文"].tap()
         XCTAssertTrue(app.navigationBars["设置"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["resetFloatingRecordButton"].label.contains("恢复"))
+        app.buttons["appLanguagePicker"].tap()
         XCTAssertTrue(app.buttons["System"].exists, "System choice follows system English, not the app override")
+        app.buttons["简体中文"].tap()
         app.tabBars.buttons["主页"].tap()
         XCTAssertTrue(app.navigationBars["主页"].waitForExistence(timeout: 3))
         XCTAssertEqual(app.buttons["homeSpeakerFilter"].label, "说话人")
@@ -310,8 +372,10 @@ final class TranscriptUITests: XCTestCase {
         ]
         app.launch()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        app.buttons["appLanguagePicker"].tap()
         XCTAssertTrue(app.buttons["跟随系统"].exists)
         XCTAssertFalse(app.buttons["System"].exists)
+        app.buttons["English"].tap()
         XCTAssertTrue(app.buttons["resetFloatingRecordButton"].label.contains("Reset"))
         attachScreenshot(of: app, name: "english-app-chinese-system-option")
     }
@@ -333,8 +397,8 @@ final class TranscriptUITests: XCTestCase {
         attachScreenshot(of: app, name: "appearance-home-selected-controls")
         app.tabBars.buttons["Settings"].tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["downloadModelButton"].isHittable)
-        XCTAssertTrue(app.buttons["English"].isHittable)
+        XCTAssertFalse(app.buttons["downloadModelButton"].exists)
+        XCTAssertTrue(app.buttons["appLanguagePicker"].isHittable)
         attachScreenshot(of: app, name: "appearance-settings-controls")
     }
 
@@ -350,14 +414,13 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertTrue(description.waitForExistence(timeout: 3))
         attachScreenshot(of: app, name: "settings-chinese-model-description")
         let chinese = description.label
-        XCTAssertTrue(chinese.contains("Nemotron 3.5 ASR"))
-        XCTAssertTrue(chinese.contains("流式"))
-        let ordinaryCopy = chinese.replacingOccurrences(of: "Nemotron 3.5 ASR", with: "")
-            .replacingOccurrences(of: "MB", with: "")
-        XCTAssertNil(ordinaryCopy.range(of: "[A-Za-z]", options: .regularExpression))
+        XCTAssertTrue(chinese.contains("Apple Speech"))
+        XCTAssertTrue(chinese.contains("无需下载"))
+        app.buttons["appLanguagePicker"].tap()
         app.buttons["English"].tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 3))
-        XCTAssertTrue(description.label.contains("downloaded once"))
+        XCTAssertTrue(description.label.contains("No Nemotron download is required"))
+        app.buttons["appLanguagePicker"].tap()
         app.buttons["简体中文"].tap()
         XCTAssertTrue(app.navigationBars["设置"].waitForExistence(timeout: 3))
         XCTAssertEqual(description.label, chinese)

@@ -1,0 +1,12 @@
+{
+  "sourceLanguage": "en",
+  "strings": {
+    "Stop this recording before deleting the meeting.": {
+      "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "请先停止这场会议的录音，再删除会议。" } } }
+    },
+    "The meeting was not deleted. Stop any active recording and try again.": {
+      "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "会议尚未删除。请先停止正在进行的录音，然后重试。" } } }
+    }
+  },
+  "version": "1.0"
+}
