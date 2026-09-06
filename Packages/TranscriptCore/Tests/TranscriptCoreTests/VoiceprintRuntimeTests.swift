@@ -228,7 +228,8 @@ import Testing
         let vector = try #require(result.embedding)
         #expect(result.evidence.cleanFrameCount == audio.count)
         #expect(vector.count == 192)
-        #expect(vector.allSatisfy(\.isFinite))
+        let allValuesAreFinite = vector.allSatisfy { $0.isFinite }
+        #expect(allValuesAreFinite)
         #expect(abs(vector.reduce(Float.zero) { $0 + $1 * $1 } - 1) < 0.001)
         return vector
     }

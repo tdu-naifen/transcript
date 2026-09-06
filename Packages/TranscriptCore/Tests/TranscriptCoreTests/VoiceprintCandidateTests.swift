@@ -25,7 +25,8 @@ import Testing
             return
         }
         #expect(speakerId == first.id)
-        #expect(evidence.voiceprintGeneration == try await speakers.voiceprintGeneration())
+        let generation = try await speakers.voiceprintGeneration()
+        #expect(evidence.voiceprintGeneration == generation)
         #expect(evidence.candidates.map(\.speakerId) == [first.id, second.id])
         #expect(evidence.candidates[0].score > evidence.candidates[1].score)
     }
