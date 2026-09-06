@@ -7,6 +7,13 @@ struct SettingsView: View {
     @State private var models: ModelDownloadModel?
     @State private var localization = LocalizationManager.shared
 
+    static var modelDescription: String {
+        LocalizationManager.shared.text(
+            "Nemotron 3.5 ASR streaming, 2240 ms tier. Roughly 665 MB, downloaded once "
+                + "and kept in Application Support. Recording works without it."
+        )
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -17,8 +24,8 @@ struct SettingsView: View {
                 } header: {
                     Text("Transcription model")
                 } footer: {
-                    Text("Nemotron 3.5 ASR streaming, 2240 ms tier. Roughly 665 MB, downloaded once "
-                        + "and kept in Application Support. Recording works without it.")
+                    Text(Self.modelDescription)
+                        .accessibilityIdentifier("transcriptionModelDescription")
                 }
 
                 Section("App Language") {

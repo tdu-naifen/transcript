@@ -3,6 +3,26 @@ import XCTest
 
 @MainActor
 final class LocalizationTests: XCTestCase {
+    func testModelDescriptionLocalizesOrdinaryCopyButKeepsModelName() {
+        let localization = LocalizationManager.shared
+        let original = localization.language
+        defer { localization.language = original }
+        for language in [AppLanguage.zhHans, .en, .zhHans] {
+            localization.language = language
+            let description = SettingsView.modelDescription
+            XCTAssertTrue(description.contains("Nemotron 3.5 ASR"))
+            XCTAssertTrue(description.contains("665 MB"))
+            if language == .zhHans {
+                XCTAssertTrue(description.contains("流式"))
+                let ordinaryCopy = description.replacingOccurrences(of: "Nemotron 3.5 ASR", with: "")
+                    .replacingOccurrences(of: "MB", with: "")
+                XCTAssertNil(ordinaryCopy.range(of: "[A-Za-z]", options: .regularExpression))
+            } else {
+                XCTAssertTrue(description.contains("downloaded once"))
+            }
+        }
+    }
+
     func testResolvedNavigationAndControlsSwitchInBothDirections() {
         let localization = LocalizationManager.shared
         let original = localization.language

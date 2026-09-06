@@ -205,6 +205,31 @@ final class TranscriptUITests: XCTestCase {
         attachScreenshot(of: app, name: "appearance-settings-controls")
     }
 
+    func testChineseModelDescriptionHasNoEnglishExplanatoryCopyAndSwitchesLive() {
+        let app = isolatedApp()
+        app.launchArguments = [
+            "-uiFixtureSelectedTab", "settings", "-appLanguage", "zhHans",
+            "-AppleLanguages", "(en)", "-AppleLocale", "en_US"
+        ]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["设置"].waitForExistence(timeout: 5))
+        let description = app.staticTexts["transcriptionModelDescription"]
+        XCTAssertTrue(description.waitForExistence(timeout: 3))
+        attachScreenshot(of: app, name: "settings-chinese-model-description")
+        let chinese = description.label
+        XCTAssertTrue(chinese.contains("Nemotron 3.5 ASR"))
+        XCTAssertTrue(chinese.contains("流式"))
+        let ordinaryCopy = chinese.replacingOccurrences(of: "Nemotron 3.5 ASR", with: "")
+            .replacingOccurrences(of: "MB", with: "")
+        XCTAssertNil(ordinaryCopy.range(of: "[A-Za-z]", options: .regularExpression))
+        app.buttons["English"].tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 3))
+        XCTAssertTrue(description.label.contains("downloaded once"))
+        app.buttons["简体中文"].tap()
+        XCTAssertTrue(app.navigationBars["设置"].waitForExistence(timeout: 3))
+        XCTAssertEqual(description.label, chinese)
+    }
+
     func testFloatingPositionSurvivesTabsRelaunchRotationAndReset() {
         XCUIDevice.shared.orientation = .portrait
         defer { XCUIDevice.shared.orientation = .portrait }

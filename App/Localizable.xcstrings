@@ -443,7 +443,7 @@
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Nemotron 3.5 ASR 流式模型，2240 ms 分块。约 665 MB，仅需下载一次，保存在应用支持目录中。不下载也可以正常录音。"
+            "value" : "Nemotron 3.5 ASR 流式模型，2240 毫秒档位。约 665 MB，仅需下载一次，保存在应用专用存储中。不下载也可以录音。"
           }
         }
       }
