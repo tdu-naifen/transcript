@@ -106,7 +106,7 @@ local_agent_takeover:
       implementation: "Speaker repository and live/detail projections"
       owner: orchestrator
       dependencies: ["BUG-001", "identity policy"]
-      status: reviewing
+      status: verifying
       acceptance: "Stable entities across live/detail/restart; global names propagate without fabricated identities."
       evidence: "DB speaker/revision work reviewed and actual Simulator coverage is reported; iOS/main projection integration remains under verification."
       next: "Complete iOS review/QA and target-branch integration."
@@ -268,7 +268,7 @@ local_agent_takeover:
       implementation: "Main App UI WIP"
       owner: orchestrator
       dependencies: ["UI handoff", "SEARCH", "SYNC-TRANSPORT"]
-      status: verifying
+      status: reviewing
       acceptance: "Three tabs with real services, nonblocking submission and localized accessible navigation/state."
       evidence: "Local iOS commits 296b4d0/f4672ed/a4119c5/7b5d228/4b04afe/840fb64 cover Home, Meetings search/navigation, floating/detail/presentation; writer reports 17 hosted + 3 UI passes. IOS-REVIEW-01 returned three unresolved findings: cancel search loading can stick; Detail recording-state initialization snapshot conflicts with playback; new localization keys lack catalog entries. IOS-QA-01 remains read-only and running."
       next: "iOS writer must fix the three review findings and await independent QA; do not mark complete or integrate as accepted."
