@@ -4,6 +4,7 @@ import Network
 @MainActor
 protocol MacDiscovering: AnyObject {
     var onUpdate: (@MainActor (MacDiscoveryUpdate) -> Void)? { get set }
+    func endpoint(for deviceID: String) -> NWEndpoint?
     func start()
     func stop()
 }
@@ -19,6 +20,7 @@ enum MacDiscoveryUpdate: Sendable {
 final class BonjourMacDiscovery: MacDiscovering {
     var onUpdate: (@MainActor (MacDiscoveryUpdate) -> Void)?
     private var browser: NWBrowser?
+    private var endpoints: [String: NWEndpoint] = [:]
     private var generation = UUID()
     private let queue = DispatchQueue(label: "com.transcript.mac-discovery")
 
@@ -49,15 +51,19 @@ final class BonjourMacDiscovery: MacDiscovering {
             }
         }
         browser.browseResultsChangedHandler = { [weak self] results, _ in
-            let devices = results.compactMap { result -> MacConnectionModel.Device? in
+            let candidates = results.compactMap { result -> (MacConnectionModel.Device, NWEndpoint)? in
                 guard case .service(let name, let type, let domain, let interface) = result.endpoint else { return nil }
-                return .init(
+                let device = MacConnectionModel.Device(
                     id: "\(name).\(type).\(domain)@\(interface?.name ?? "")",
                     name: name
                 )
-            }.sorted { $0.id < $1.id }
+                return (device, result.endpoint)
+            }
             Task { @MainActor in
                 guard let self, self.generation == generation else { return }
+                let unique = Dictionary(candidates.map { ($0.0.id, $0) }, uniquingKeysWith: { first, _ in first })
+                self.endpoints = unique.mapValues(\.1)
+                let devices = unique.values.map(\.0).sorted { $0.id < $1.id }
                 self.onUpdate?(.devices(devices))
             }
         }
@@ -68,5 +74,8 @@ final class BonjourMacDiscovery: MacDiscovering {
         generation = UUID()
         browser?.cancel()
         browser = nil
+        endpoints = [:]
     }
+
+    func endpoint(for deviceID: String) -> NWEndpoint? { endpoints[deviceID] }
 }

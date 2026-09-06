@@ -1,0 +1,108 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Saved Mac trust is invalid or contains multiple Macs. Resolve secure storage before pairing." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "保存的 Mac 信任数据无效或包含多台 Mac。请先处理安全存储问题，再进行配对。" } }
+      }
+    },
+    "Secure identity storage is unavailable. Check device access and try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "安全身份存储不可用。请确认设备已解锁后重试。" } }
+      }
+    },
+    "The Mac could not be forgotten. Secure storage is unavailable; its trust has not been removed." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法解除与 Mac 的配对。安全存储不可用，已保存的信任尚未移除。" } }
+      }
+    },
+    "Pairing did not finish on both devices. Unpair on both devices and explicitly pair again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "配对未在两端完成。请在两台设备上解除配对，再重新确认配对。" } }
+      }
+    },
+    "The trusted Mac could not reconnect. Check that it is online and still trusts this iPhone. If trust was removed, unpair on both devices and explicitly pair again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法重新连接受信任的 Mac。请确认 Mac 在线且仍信任这台 iPhone；若信任已移除，请在两端解除配对后重新确认配对。" } }
+      }
+    },
+    "This Mac does not match the saved identity. Unpair explicitly before pairing a different Mac." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "这台 Mac 与保存的身份不符。如需连接另一台 Mac，请先明确解除原配对。" } }
+      }
+    },
+    "Pairing was rejected. Compare the codes on both devices before trying again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "配对已被拒绝。重试前请比对两台设备上的验证码。" } }
+      }
+    },
+    "The secure connection timed out. Keep both devices open and try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "安全连接已超时。请保持两台设备上的 App 打开后重试。" } }
+      }
+    },
+    "The secure connection could not be verified. Check the Mac and try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法验证安全连接。请检查 Mac 后重试。" } }
+      }
+    },
+    "Enable pairing on the Mac, then try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请先在 Mac 上启用配对，再重试。" } }
+      }
+    },
+    "The Mac connection failed. Keep both devices open and try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 连接失败。请保持两台设备上的 App 打开后重试。" } }
+      }
+    },
+    "Transcript uses your local network to find and securely pair with your Mac. Meeting transfer is not available yet." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Transcript 使用本地网络查找 Mac 并进行安全配对。目前尚不支持传输会议。" } }
+      }
+    },
+    "Securely paired. Meeting transfer is not available in this version." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已安全配对。当前版本尚不支持传输会议。" } }
+      }
+    },
+    "This connection supports pairing only. Meeting transfer is not available yet." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此连接仅支持配对，目前尚不支持传输会议。" } }
+      }
+    },
+    "Secure pairing is unavailable. Reopen the app and try again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "安全配对暂不可用。请重新打开 App 后重试。" } }
+      }
+    },
+    "This Mac is no longer in the discovery results. Find your Mac again." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "发现结果中已没有这台 Mac，请重新查找。" } }
+      }
+    },
+    "Reject pairing" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "拒绝配对" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

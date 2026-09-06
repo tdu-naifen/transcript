@@ -19,7 +19,7 @@ struct ConnectionView: View {
             if !model.isConnected {
                 Section {
                     Label("Open Transcript on your Mac", systemImage: "desktopcomputer")
-                    Text("Transcript uses your local network to discover your Mac and transfer meeting audio and results. iOS may ask for local network access.")
+                    Text("Transcript uses your local network to find and securely pair with your Mac. Meeting transfer is not available yet.", tableName: "MacPairing")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     Button(action: { perform(.discover) }) {
@@ -110,6 +110,17 @@ struct ConnectionView: View {
                     }
                     .disabled(pairing.confirmedOnPhone || !model.hasTransportActions || model.pendingAction != nil)
                     .accessibilityIdentifier("macConfirmPairingButton")
+                    Button(role: .destructive) { perform(.cancelPairing) } label: {
+                        Text("Reject pairing", tableName: "MacPairing")
+                    }
+                    .accessibilityIdentifier("macRejectPairingButton")
+                }
+            }
+
+            if case .connecting = model.connection {
+                Section {
+                    Button("Cancel", role: .cancel) { perform(.cancelPairing) }
+                        .accessibilityIdentifier("macCancelConnectionButton")
                 }
             }
 
@@ -141,7 +152,7 @@ struct ConnectionView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .tint(AppColors.controlTint)
-        .onDisappear { model.stopDiscovery() }
+        .onDisappear { model.endConnectionPresentation() }
         .onChange(of: model.isConnected) { wasConnected, isConnected in
             // Only a pairing started on this screen may automatically navigate back.
             // A background reconnect must not disrupt the user's current navigation.
@@ -168,6 +179,7 @@ struct ConnectionView: View {
     }
 
     private var canUnpair: Bool {
+        if model.trustedDevice != nil { return true }
         switch model.connection {
         case .offline, .connected: return true
         default: return false

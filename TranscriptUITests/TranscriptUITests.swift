@@ -452,7 +452,7 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertEqual(app.buttons["homeDateFilter"].label, "Date")
         XCTAssertFalse(app.staticTexts["home.search.unavailable.description"].exists)
         attachScreenshot(of: app, name: "live-language-en-home")
-        assertConnectionUnavailable(in: app, reason: "no transport service")
+        assertConnectionUnpaired(in: app, reason: "Open Transcript on your Mac, then look for it on your local network.")
         app.tabBars.buttons["Meetings"].tap()
         XCTAssertTrue(app.navigationBars["Meetings"].waitForExistence(timeout: 3))
         app.tabBars.buttons["Settings"].tap()
@@ -468,7 +468,7 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertEqual(app.buttons["homeSpeakerFilter"].label, "说话人")
         XCTAssertEqual(app.buttons["homeDateFilter"].label, "日期")
         attachScreenshot(of: app, name: "live-language-zh-home")
-        assertConnectionUnavailable(in: app, reason: "尚未配置传输服务")
+        assertConnectionUnpaired(in: app, reason: "请在 Mac 上打开 Transcript，然后在本地网络中查找。")
         app.tabBars.buttons["会议"].tap()
         XCTAssertTrue(app.navigationBars["会议"].waitForExistence(timeout: 3))
         attachScreenshot(of: app, name: "live-language-zh-meetings")
@@ -599,13 +599,14 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [rotated], timeout: 5), .completed)
     }
 
-    private func assertConnectionUnavailable(in app: XCUIApplication, reason: String) {
+    private func assertConnectionUnpaired(in app: XCUIApplication, reason: String) {
         app.buttons["homeConnectionButton"].tap()
         let explanation = app.staticTexts["macConnectionExplanation"]
         XCTAssertTrue(explanation.waitForExistence(timeout: 3))
-        XCTAssertTrue(explanation.label.contains(reason))
-        XCTAssertFalse(app.buttons["macFindDevicesButton"].isEnabled)
+        XCTAssertEqual(explanation.label, reason)
+        XCTAssertTrue(app.buttons["macFindDevicesButton"].isEnabled)
         XCTAssertFalse(app.staticTexts["Connected"].exists)
+        XCTAssertFalse(app.staticTexts["已连接"].exists)
         tapDone(in: app)
     }
 

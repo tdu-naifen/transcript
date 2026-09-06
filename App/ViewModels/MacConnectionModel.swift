@@ -1,4 +1,5 @@
 import Foundation
+import Network
 import Observation
 
 /// App presentation only. A long-lived service must publish verified snapshots and
@@ -83,6 +84,7 @@ final class MacConnectionModel {
         case discover
         case selectDevice(String)
         case confirmPairing
+        case cancelPairing
         case retryConnection
         case unpair
         case retryTask(String)
@@ -98,15 +100,127 @@ final class MacConnectionModel {
     private(set) var actionError: String?
     private(set) var localNetworkDenied = false
     private(set) var discoveryTimedOut = false
-    @ObservationIgnored private let onAction: ActionHandler?
+    private(set) var trustedDevice: Device?
+    /// Pairing v1 has no application-data messages or transfer negotiation.
+    let supportsMeetingTransfer = false
+    @ObservationIgnored private var onAction: ActionHandler?
     @ObservationIgnored private let discovery: (any MacDiscovering)?
     @ObservationIgnored private var discoveryTimeout: Task<Void, Never>?
+    @ObservationIgnored private var pairingClient: IOSMacPairingClient?
+    @ObservationIgnored private var lastEndpoint: NWEndpoint?
+    @ObservationIgnored private var selectedCandidate: Device?
+    @ObservationIgnored private var actionGeneration = UUID()
 
     init(discovery: (any MacDiscovering)? = nil, onAction: ActionHandler? = nil) {
         self.onAction = onAction
         self.discovery = discovery
         if discovery != nil { connection = .unpaired }
         discovery?.onUpdate = { [weak self] update in self?.applyDiscovery(update) }
+    }
+
+    func enablePairing(using suppliedClient: IOSMacPairingClient? = nil) {
+        guard pairingClient == nil, onAction == nil, discovery != nil else { return }
+        do {
+            let client = try suppliedClient ?? Self.makePairingClient()
+            pairingClient = client
+            client.onUpdate = { [weak self] state in self?.applyPairing(state) }
+            onAction = { [weak self] action in
+                guard let self else { throw CancellationError() }
+                try self.handlePairingAction(action)
+            }
+            try client.restoreTrust()
+            trustedDevice = client.pairedPeer.map(Self.device)
+            connection = trustedDevice.map(Connection.offline) ?? .unpaired
+        } catch {
+            connection = .failed(reason: Self.text(error.localizedDescription))
+        }
+    }
+
+    private static func makePairingClient() throws -> IOSMacPairingClient {
+        var namespace = "com.transcript.ios.pairing.v1"
+        #if DEBUG
+        if let runID = try TestStorageConfiguration.resolve().runID {
+            namespace += ".test.\(runID.uuidString)"
+        }
+        #endif
+        return IOSMacPairingClient(
+            store: MacPairingKeychainStore(service: namespace), name: "iPhone"
+        )
+    }
+
+    private func handlePairingAction(_ action: Action) throws {
+        guard let client = pairingClient else { throw PairingActionError.unavailable }
+        switch action {
+        case .selectDevice(let id):
+            guard let endpoint = discovery?.endpoint(for: id),
+                  let candidate = devices.first(where: { $0.id == id }) else {
+                throw PairingActionError.candidateUnavailable
+            }
+            selectedCandidate = candidate
+            lastEndpoint = endpoint
+            stopDiscovery()
+            client.connect(to: endpoint)
+        case .confirmPairing:
+            client.approve()
+        case .cancelPairing:
+            stopDiscovery()
+            client.disconnect()
+        case .retryConnection:
+            if let lastEndpoint {
+                client.connect(to: lastEndpoint)
+            } else {
+                startDiscovery()
+            }
+        case .unpair:
+            try client.unpair()
+            trustedDevice = client.pairedPeer.map(Self.device)
+            selectedCandidate = nil
+            lastEndpoint = nil
+        case .discover:
+            startDiscovery()
+        case .retryTask, .requestCancellation:
+            throw PairingActionError.transferUnavailable
+        }
+    }
+
+    private func applyPairing(_ state: IOSMacPairingClient.State) {
+        trustedDevice = pairingClient?.pairedPeer.map(Self.device)
+        switch state {
+        case .idle:
+            connection = trustedDevice.map(Connection.offline) ?? .unpaired
+        case .connecting:
+            connection = .connecting(trustedDevice ?? selectedCandidate)
+        case .awaitingApproval(let peer, let code, let approvedLocally):
+            connection = .pairing(Pairing(
+                device: Self.device(peer), code: code,
+                confirmedOnPhone: approvedLocally, confirmedOnMac: false
+            ))
+        case .connected(let peer):
+            connection = .connected(Self.device(peer), modelReady: nil)
+        case .disconnected(let peer):
+            connection = peer.map { .offline(Self.device($0)) } ?? .unpaired
+        case .failed(let message):
+            connection = .failed(reason: Self.text(message))
+        }
+    }
+
+    private static func device(_ peer: MacPairedDevice) -> Device {
+        Device(id: peer.id, name: peer.name)
+    }
+
+    func endConnectionPresentation() {
+        stopDiscovery()
+        switch connection {
+        case .pairing, .connecting:
+            pairingClient?.disconnect()
+        default:
+            break
+        }
+    }
+
+    func suspendConnection() {
+        stopDiscovery()
+        pairingClient?.disconnect()
     }
 
     var canDiscover: Bool { discovery != nil || onAction != nil }
@@ -155,6 +269,9 @@ final class MacConnectionModel {
         case .connecting:
             return Self.text("Verifying the Mac's identity and connection.")
         case .connected(_, let modelReady):
+            guard supportsMeetingTransfer else {
+                return Self.text("Securely paired. Meeting transfer is not available in this version.")
+            }
             switch modelReady {
             case true: return Self.text("Mac connected · Processing model ready")
             case false: return Self.text("Mac connected · Processing model not ready")
@@ -166,6 +283,9 @@ final class MacConnectionModel {
 
     func submissionBlockReason(meetingID: String) -> String? {
         guard isConnected else { return explanation }
+        guard supportsMeetingTransfer else {
+            return Self.text("This connection supports pairing only. Meeting transfer is not available yet.")
+        }
         guard !jobs.contains(where: { $0.meetingID == meetingID && !$0.isFinished }) else {
             return Self.text("This meeting already has an active Mac task.")
         }
@@ -175,8 +295,12 @@ final class MacConnectionModel {
     /// Does not invent connection changes, task receipts, or cancellation acks.
     /// The adapter must publish authoritative state; returning alone is not an ack.
     func perform(_ action: Action) async {
+        if action == .cancelPairing {
+            actionGeneration = UUID()
+            pendingAction = nil
+        }
         guard pendingAction == nil else { return }
-        if discovery != nil, action == .discover || (action == .retryConnection && !isConnected) {
+        if discovery != nil, action == .discover || (action == .retryConnection && !isConnected && pairingClient == nil) {
             startDiscovery()
             return
         }
@@ -185,12 +309,14 @@ final class MacConnectionModel {
             return
         }
         pendingAction = action
+        let generation = UUID()
+        actionGeneration = generation
         actionError = nil
-        defer { pendingAction = nil }
+        defer { if actionGeneration == generation { pendingAction = nil } }
         do {
             try await onAction(action)
         } catch {
-            actionError = error.localizedDescription
+            if actionGeneration == generation { actionError = Self.text(error.localizedDescription) }
         }
     }
 
@@ -203,6 +329,7 @@ final class MacConnectionModel {
 
     private func startDiscovery() {
         stopDiscovery()
+        pairingClient?.disconnect()
         devices = []
         actionError = nil
         localNetworkDenied = false
@@ -233,8 +360,24 @@ final class MacConnectionModel {
     }
 
     static func text(_ key: String) -> String {
+        let pairingText = LocalizationManager.shared.text(key, table: "MacPairing")
+        if pairingText != key { return pairingText }
         let discoveryText = LocalizationManager.shared.text(key, table: "AppleSpeech")
         return discoveryText == key ? LocalizationManager.shared.text(key) : discoveryText
+    }
+
+    private enum PairingActionError: LocalizedError {
+        case unavailable
+        case candidateUnavailable
+        case transferUnavailable
+
+        var errorDescription: String? {
+            switch self {
+            case .unavailable: "Secure pairing is unavailable. Reopen the app and try again."
+            case .candidateUnavailable: "This Mac is no longer in the discovery results. Find your Mac again."
+            case .transferUnavailable: "This connection supports pairing only. Meeting transfer is not available yet."
+            }
+        }
     }
 
     #if DEBUG
