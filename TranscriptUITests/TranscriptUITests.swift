@@ -80,6 +80,8 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertTrue(homeTab.waitForExistence(timeout: 5))
         XCTAssertTrue(meetingsTab.exists)
         XCTAssertTrue(settingsTab.exists)
+        XCTAssertFalse(app.staticTexts["home.title"].exists)
+        XCTAssertTrue(app.navigationBars["Home"].exists || app.navigationBars["主页"].exists)
 
         let search = app.textFields["homeSearchField"]
         search.tap()
@@ -97,6 +99,7 @@ final class TranscriptUITests: XCTestCase {
         let app = launchFixture()
         let speakerFilter = app.buttons["homeSpeakerFilter"]
         XCTAssertTrue(speakerFilter.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["home.title"].exists)
         speakerFilter.tap()
         let speaker = app.switches["homeSpeaker-fixture-speaker-alexandra"]
         XCTAssertTrue(speaker.waitForExistence(timeout: 3))
