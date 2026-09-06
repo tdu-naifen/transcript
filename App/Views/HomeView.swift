@@ -88,7 +88,7 @@ struct HomeView: View {
                                     }
                                     .accessibilityIdentifier("homeMeeting-\(result.meeting.id)")
                                     .swipeActions(allowsFullSwipe: false) {
-                                        deleteButton(result.meeting)
+                                        deleteButton(result.meeting, role: nil).tint(.red)
                                     }
                                     .contextMenu { deleteButton(result.meeting) }
                                     if result.titleMatched {
@@ -140,7 +140,10 @@ struct HomeView: View {
                                 NavigationLink(value: meeting) {
                                     MeetingRow(meeting: meeting, participants: library.participants[meeting.id] ?? [])
                                 }
-                                .swipeActions(allowsFullSwipe: false) { deleteButton(meeting) }
+                                .accessibilityIdentifier("homeMeeting-\(meeting.id)")
+                                .swipeActions(allowsFullSwipe: false) {
+                                    deleteButton(meeting, role: nil).tint(.red)
+                                }
                                 .contextMenu { deleteButton(meeting) }
                             }
                         }
@@ -230,11 +233,17 @@ struct HomeView: View {
             )
     }
 
-    private func deleteButton(_ meeting: Meeting) -> some View {
-        Button(role: .destructive) { pendingDeletion = meeting } label: {
-            Label("meetings.delete_local.action", systemImage: "trash")
+    private func deleteButton(_ meeting: Meeting, role: ButtonRole? = .destructive) -> some View {
+        // Swipe confirmation must not optimistically remove a row before the user confirms.
+        Button(role: role) { pendingDeletion = meeting } label: {
+            Label {
+                Text("meetings.delete.action", tableName: "MeetingDeletion")
+            } icon: {
+                Image(systemName: "trash")
+            }
         }
         .disabled(library.deletingIDs.contains(meeting.id))
+        .accessibilityIdentifier("deleteMeeting-\(meeting.id)")
     }
 
     private var searchField: some View {

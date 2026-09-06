@@ -7,21 +7,25 @@ struct MeetingDeletionConfirmation: ViewModifier {
 
     func body(content: Content) -> some View {
         content.alert(
-            LocalizationManager.shared.text("meetings.delete_local.title"),
+            LocalizationManager.shared.text("meetings.delete.title", table: "MeetingDeletion"),
             isPresented: Binding(
                 get: { meeting != nil },
                 set: { if !$0 { meeting = nil } }
             ),
             presenting: meeting
         ) { selected in
-            Button(LocalizationManager.shared.text("meetings.delete_local.action"), role: .destructive) {
+            Button(LocalizationManager.shared.text("meetings.delete.action", table: "MeetingDeletion"), role: .destructive) {
                 meeting = nil
                 Task { await delete(selected) }
             }
             .accessibilityIdentifier("confirmMeetingDeletion")
             Button(LocalizationManager.shared.text("common.cancel"), role: .cancel) { meeting = nil }
         } message: { selected in
-            Text("\(selected.title)\n\(Text("meetings.delete_local.scope"))")
+            if selected.syncedToMacAt != nil || selected.audioVerifiedOnMacAt != nil {
+                Text("\(selected.title)\n\(Text("meetings.delete.scope", tableName: "MeetingDeletion"))\n\n\(Text("meetings.delete.remoteUnavailable", tableName: "MeetingDeletion"))")
+            } else {
+                Text("\(selected.title)\n\(Text("meetings.delete.scope", tableName: "MeetingDeletion"))")
+            }
         }
     }
 }

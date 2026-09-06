@@ -223,7 +223,11 @@ struct MeetingDetailView: View {
             if onDelete != nil {
                 Divider()
                 Button(role: .destructive) { pendingDeletion = model.meeting } label: {
-                    Label("meetings.delete_local.action", systemImage: "trash")
+                    Label {
+                        Text("meetings.delete.action", tableName: "MeetingDeletion")
+                    } icon: {
+                        Image(systemName: "trash")
+                    }
                 }
                 .disabled(isDeleting)
                 .accessibilityIdentifier("meetingDeleteMenuItem")

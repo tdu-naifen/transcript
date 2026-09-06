@@ -201,6 +201,116 @@ final class TranscriptUITests: XCTestCase {
         }
     }
 
+    func testHomeSwipeDeletionCancelThenConfirmRefillsRecentAndSurvivesTabReload() {
+        let app = isolatedApp()
+        app.launchArguments = [
+            "-uiFixture", "1", "-uiFixturePagination", "1",
+            "-appLanguage", "en", "-uiFixtureSelectedTab", "home"
+        ]
+        app.launch()
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "homeMeeting-"))
+        let firstID = "fixture-page-29"
+        let row = app.buttons["homeMeeting-\(firstID)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertEqual(rows.count, 5)
+        let originalIDs = rows.allElementsBoundByIndex.map(\.identifier)
+
+        showSwipeDeletion(in: app, row: row, meetingID: firstID)
+        app.alerts.buttons["Cancel"].tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        XCTAssertEqual(rows.allElementsBoundByIndex.map(\.identifier), originalIDs)
+
+        showSwipeDeletion(in: app, row: row, meetingID: firstID)
+        app.alerts.buttons.matching(identifier: "confirmMeetingDeletion").firstMatch.tap()
+        XCTAssertTrue(row.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["homeMeeting-fixture-page-24"].waitForExistence(timeout: 5))
+        XCTAssertEqual(rows.count, 5)
+        app.tabBars.buttons["Meetings"].tap()
+        XCTAssertTrue(app.buttons["meetingRow-fixture-page-28"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["meetingRow-\(firstID)"].exists)
+        app.tabBars.buttons["Home"].tap()
+        XCTAssertTrue(app.buttons["homeMeeting-fixture-page-24"].waitForExistence(timeout: 5))
+        XCTAssertEqual(rows.count, 5)
+        XCTAssertFalse(row.exists)
+        attachScreenshot(of: app, name: "home-swipe-delete-recent-refilled")
+    }
+
+    func testRecordingsSwipeDeletionCancelThenDeleteLastRowsAndSections() {
+        let app = isolatedApp()
+        app.launchArguments = ["-uiFixture", "1", "-appLanguage", "en", "-uiFixtureSelectedTab", "recordings"]
+        app.launch()
+        let ids = [
+            "fixture-meeting-solo-memo", "fixture-meeting-client-call",
+            "fixture-meeting-standup", "fixture-meeting-1on1", "fixture-meeting-review-90min"
+        ]
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "meetingRow-"))
+        let first = app.buttons["meetingRow-\(ids[0])"]
+        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        XCTAssertEqual(rows.count, ids.count)
+        showSwipeDeletion(in: app, row: first, meetingID: ids[0])
+        app.alerts.buttons["Cancel"].tap()
+        XCTAssertTrue(first.waitForExistence(timeout: 3))
+        XCTAssertEqual(rows.count, ids.count)
+
+        for (index, id) in ids.enumerated() {
+            let row = app.buttons["meetingRow-\(id)"]
+            XCTAssertTrue(row.waitForExistence(timeout: 5))
+            showSwipeDeletion(in: app, row: row, meetingID: id)
+            app.alerts.buttons.matching(identifier: "confirmMeetingDeletion").firstMatch.tap()
+            XCTAssertTrue(row.waitForNonExistence(timeout: 5))
+            XCTAssertEqual(rows.count, ids.count - index - 1)
+        }
+        let empty = app.descendants(matching: .any).matching(identifier: "meetingsEmpty").firstMatch
+        XCTAssertTrue(empty.waitForExistence(timeout: 5))
+        app.tabBars.buttons["Home"].tap()
+        XCTAssertTrue(app.textFields["homeSearchField"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "homeMeeting-")).count, 0)
+        app.tabBars.buttons["Meetings"].tap()
+        XCTAssertTrue(empty.waitForExistence(timeout: 5))
+        XCTAssertEqual(rows.count, 0)
+        attachScreenshot(of: app, name: "recordings-swipe-delete-last-section")
+    }
+
+    func testSearchSwipeDeletionCancelPreservesHitsThenConfirmRemovesSection() {
+        let app = isolatedApp()
+        app.launchArguments = ["-uiFixture", "1", "-appLanguage", "en", "-uiFixtureSelectedTab", "home"]
+        app.launch()
+        let search = app.textFields["homeSearchField"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("latency\n")
+        let id = "fixture-meeting-standup"
+        let row = app.buttons["homeMeeting-\(id)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        let hits = app.buttons.matching(identifier: "homeSearchHit")
+        XCTAssertGreaterThan(hits.count, 0)
+        let originalHits = hits.allElementsBoundByIndex.map(\.label)
+        showSwipeDeletion(in: app, row: row, meetingID: id)
+        app.alerts.buttons["Cancel"].tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        XCTAssertEqual(hits.allElementsBoundByIndex.map(\.label), originalHits)
+        showSwipeDeletion(in: app, row: row, meetingID: id)
+        app.alerts.buttons.matching(identifier: "confirmMeetingDeletion").firstMatch.tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "homeSearchEmpty").firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(row.exists)
+        XCTAssertEqual(hits.count, 0)
+        app.tabBars.buttons["Meetings"].tap()
+        XCTAssertTrue(app.buttons["meetingRow-fixture-meeting-solo-memo"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["meetingRow-\(id)"].exists)
+        app.tabBars.buttons["Home"].tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "homeSearchEmpty").firstMatch.waitForExistence(timeout: 5))
+        attachScreenshot(of: app, name: "search-swipe-delete-last-result")
+    }
+
+    private func showSwipeDeletion(in app: XCUIApplication, row: XCUIElement, meetingID: String) {
+        row.swipeLeft()
+        let delete = app.buttons.matching(identifier: "deleteMeeting-\(meetingID)").firstMatch
+        XCTAssertTrue(delete.waitForExistence(timeout: 3))
+        delete.tap()
+        XCTAssertTrue(app.alerts.buttons.matching(identifier: "confirmMeetingDeletion").firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.alerts.buttons["Cancel"].exists)
+    }
+
     func testMeetingDetailDeletionCanCancelThenDeleteAndRefreshSearch() {
         let app = isolatedApp()
         app.launchArguments = ["-uiFixture", "1", "-appLanguage", "en", "-uiFixtureSelectedTab", "home"]

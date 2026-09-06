@@ -1,6 +1,34 @@
 {
   "sourceLanguage": "en",
   "strings": {
+    "meetings.delete.action" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete meeting" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "删除会议" } }
+      }
+    },
+    "meetings.delete.title" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Delete meeting?" } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "删除会议？" } }
+      }
+    },
+    "meetings.delete.scope" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Permanently delete this meeting, its audio, transcript, and insights. Animal identities, names, and voiceprints are kept. This cannot be undone." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "永久删除这场会议及其音频、转写和分析结果。保留动物身份、名字和声纹。此操作无法撤销。" } }
+      }
+    },
+    "meetings.delete.remoteUnavailable" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "This meeting has been sent to a Mac. Deleting its Mac copy is not supported yet; it must be deleted on the Mac separately." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "这场会议已发送到 Mac。目前尚不支持联动删除 Mac 副本，需要在 Mac 上另行删除。" } }
+      }
+    },
     "Stop this recording before deleting the meeting.": {
       "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "请先停止这场会议的录音，再删除会议。" } } }
     },

@@ -26,6 +26,7 @@ struct RecordingsListView: View {
                             "meetings.empty.title", systemImage: "waveform",
                             description: Text("meetings.empty.description")
                         )
+                        .accessibilityIdentifier("meetingsEmpty")
                     }
                 } else {
                     ForEach(dateGroups) { group in
@@ -43,15 +44,28 @@ struct RecordingsListView: View {
                                 }
                                 .disabled(model.deletingIDs.contains(meeting.id))
                                 .swipeActions(allowsFullSwipe: false) {
-                                    Button(role: .destructive) { pendingDeletion = meeting } label: {
-                                        Label("meetings.delete_local.action", systemImage: "trash")
+                                    // Only the confirmation performs deletion; keep the row until then.
+                                    Button { pendingDeletion = meeting } label: {
+                                        Label {
+                                            Text("meetings.delete.action", tableName: "MeetingDeletion")
+                                        } icon: {
+                                            Image(systemName: "trash")
+                                        }
                                     }
-                                    .contextMenu {
-                                        Button(role: .destructive) { pendingDeletion = meeting } label: {
-                                            Label("meetings.delete_local.action", systemImage: "trash")
+                                    .tint(.red)
+                                    .disabled(model.deletingIDs.contains(meeting.id))
+                                    .accessibilityIdentifier("deleteMeeting-\(meeting.id)")
+                                }
+                                .contextMenu {
+                                    Button(role: .destructive) { pendingDeletion = meeting } label: {
+                                        Label {
+                                            Text("meetings.delete.action", tableName: "MeetingDeletion")
+                                        } icon: {
+                                            Image(systemName: "trash")
                                         }
                                     }
                                     .disabled(model.deletingIDs.contains(meeting.id))
+                                    .accessibilityIdentifier("deleteMeeting-\(meeting.id)")
                                 }
                             }
                         } header: {
