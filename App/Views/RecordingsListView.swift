@@ -6,6 +6,9 @@ struct RecordingsListView: View {
     let services: AppServices
     @Binding var path: NavigationPath
     let isRecordingActive: () -> Bool
+    #if DEBUG
+    @State private var didOpenFixtureMeeting = false
+    #endif
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -66,9 +69,10 @@ struct RecordingsListView: View {
     /// `-uiFixtureOpenMeetingId fixture-meeting-review-90min` alongside `-uiFixture 1`.
     private func openFixtureMeetingIfRequested() {
         #if DEBUG
-        guard path.isEmpty,
+        guard !didOpenFixtureMeeting, path.isEmpty,
               let id = UserDefaults.standard.string(forKey: "uiFixtureOpenMeetingId"),
               let meeting = model.meetings.first(where: { $0.id == id }) else { return }
+        didOpenFixtureMeeting = true
         path.append(meeting)
         #endif
     }

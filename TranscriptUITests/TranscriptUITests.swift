@@ -47,6 +47,7 @@ final class TranscriptUITests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = [
             "-uiFixture", "1",
+            "-appLanguage", "en",
             "-uiFixtureSelectedTab", "recordings",
             "-uiFixtureOpenMeetingId", "fixture-meeting-review-90min"
         ]
@@ -58,18 +59,53 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertTrue(app.otherElements["speakerInsightsSheet"].waitForExistence(timeout: 3))
 
         app.buttons["speakerRenameButton.fixture-speaker-alexandra"].tap()
-        XCTAssertTrue(app.textFields["speakerNameField"].waitForExistence(timeout: 2))
-        app.buttons["speakerNameSaveButton"].tap()
+        let renameAlert = app.alerts["Edit speaker name"]
+        XCTAssertTrue(renameAlert.waitForExistence(timeout: 2))
+        // UIKit's alert text field does not preserve the SwiftUI identifier on iOS 26.
+        XCTAssertTrue(renameAlert.textFields["Speaker name"].waitForExistence(timeout: 2))
+        let saveButton = renameAlert.buttons.matching(identifier: "speakerNameSaveButton").firstMatch
+        XCTAssertTrue(saveButton.isEnabled)
+        saveButton.tap()
 
         app.buttons["Done"].tap()
-        XCTAssertTrue(app.buttons["meetingBackButton"].waitForExistence(timeout: 3))
-        app.buttons["meetingBackButton"].tap()
+        let backButton = app.buttons.matching(
+            NSPredicate(format: "identifier IN %@", ["meetingBackButton", "BackButton"])
+        ).firstMatch
+        XCTAssertTrue(backButton.waitForExistence(timeout: 3))
+        backButton.tap()
         let settingsTab = app.tabBars.buttons["Settings"].exists
             ? app.tabBars.buttons["Settings"]
             : app.tabBars.buttons["设置"]
         XCTAssertTrue(settingsTab.waitForExistence(timeout: 3))
         settingsTab.tap()
         XCTAssertTrue(app.descendants(matching: .any)["appLanguagePicker"].waitForExistence(timeout: 3))
+    }
+
+    func testFixtureTabsKeepFloatingRecordButtonVisible() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-uiFixture", "1",
+            "-appLanguage", "en",
+            "-uiFixtureSelectedTab", "recordings",
+            "-floatingRecordButton.normalizedX", "1",
+            "-floatingRecordButton.normalizedY", "1"
+        ]
+        app.launch()
+
+        let recordButton = app.buttons["globalRecordButton"]
+        XCTAssertTrue(recordButton.waitForExistence(timeout: 5))
+        let tabs = app.tabBars.buttons
+        XCTAssertGreaterThanOrEqual(tabs.count, 2)
+        for index in 0..<tabs.count {
+            let tab = tabs.element(boundBy: index)
+            let label = tab.label
+            tab.tap()
+            XCTAssertTrue(recordButton.waitForExistence(timeout: 3), label)
+            XCTAssertTrue(recordButton.isHittable, label)
+            XCTAssertFalse(app.buttons["recordingMiniBar"].exists, label)
+            XCTAssertFalse(app.buttons["collapseRecordingButton"].exists, label)
+            attachScreenshot(of: app, name: "fixture-tab-\(label)")
+        }
     }
 
     func testAcousticAcceptance() {
