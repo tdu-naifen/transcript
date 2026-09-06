@@ -24,8 +24,8 @@
 - 缺少 embedding、旧记录缺少模型版本、向量损坏或非有限数分别提示；不生成看似真实的随机声纹填补空白。
 - 声纹属于敏感生物特征，本页本地只读，不新增导出、跨设备发送或后台上传权限。
 - 已实现 [MacVoiceprintsView](MacApp/Voiceprints/MacVoiceprintsView.swift)，侧栏入口“声纹资料”与 `⌘4`；从全局仓库独立加载，不读取只读示例会议作为真实身份。
-- 验证：8 个声纹数据 / 向量 / 搜索 / 错误恢复测试与 1 个原生导航测试通过。会议删除保留测试显式先移除 meetingSpeaker 关联，再删除会议，规避当前分支旧 slot-revision trigger 的外键问题；该测试不等于修复了由 iOS owner 负责的生产删除入口。
-- 分支集成说明：本 worktree 基于 `c90a482`，未包含 main 的 `7616500` / `v7_meeting_deletion_slot_revision` 修复。上述预删关联仅为旧分支测试临时适配；合入 main 修复后必须移除。正式契约是只调用一次 `MeetingRepository.delete`，由数据库事务级联会议子记录；成功后才能清理音频，失败不得删音频。这里不表示 main 仍有该删除缺陷。
+- 验证：8 个声纹数据 / 向量 / 搜索 / 错误恢复测试与 1 个原生导航测试通过。已集成本地 main 的 `7616500` / v7 修复与 `9b1aea3` 直接删除回归，移除旧分支测试的临时预删关联步骤。正式契约是只调用一次 `MeetingRepository.delete`，由数据库事务级联会议子记录；成功后才能清理音频，失败不得删音频。
+- Mac 单元测试目标直接复用 Core 的 `MigrationTests.swift`，包含 `directMeetingDeletionPreservesOtherMeetingAndGlobalVoiceprints()`，不复制或改写共享测试。该契约不包含尚未定义的跨端 tombstone / ack。
 
 ### 新增页面：LLM Analysis
 
@@ -72,6 +72,10 @@ xcodebuild -project Transcript.xcodeproj -scheme TranscriptMac \
 
 也可以在 Xcode 选择 `TranscriptMac` → My Mac → Run。**真实 Keychain 配对需要开发签名、Mac App provisioning profile 与 application-identifier / keychain-access-groups entitlement。** 首次命令行构建可加 `-allowProvisioningUpdates` 使用已配置的开发团队创建 / 获取 profile。关闭签名或 ad-hoc 签名只能检查部分编译，不能据此宣布配对可用；Data Protection Keychain 会拒绝缺少身份 entitlement 的 App（`-34018`）。这不等于已完成公证或分发签名。
 
+**网络权限有两层：**「隐私与安全性 → 本地网络」允许局域网发现；macOS 防火墙另外控制 App 的传入连接。如果系统出现“是否允许 Transcript 接受传入网络连接”的 Allow / Deny 弹窗，Bonjour 可能已能发现 Mac，但配对握手仍被阻止。需要配对时，由用户在该弹窗或「网络 → 防火墙 → 选项」允许此 App；不应关闭整个防火墙，也不自动点击权限弹窗。Connection 页面明确说明两项权限。
+
+真实 Bonjour 测试区分发现、TCP 建立、服务端接入与协议超时。连接尚未建立时，失败日志提示检查独立的 Firewall / Local Network 权限，不将其误报为密码学回归；测试仍失败，不静默跳过。核心认证协议另有真实本机回环 TCP 测试覆盖，不依赖自动放行系统防火墙。
+
 测试包括：
 
 - `TranscriptMacTests`：12 个 Bonjour 生命周期 / 真实发现与撤销测试、14 个音频 / 资料库持久化与错误恢复测试、5 个配色 / 样例 / 键盘选择 / SF Symbol 测试。
@@ -80,6 +84,8 @@ xcodebuild -project Transcript.xcodeproj -scheme TranscriptMac \
 - macOS XCTest 静态文本通常通过 accessibility `value` 而非 `label` 暴露。UI 截图限定为 App 窗口，不截取整个桌面。
 
 首次打开真实资料库为空。可点“导入音频…”（`⌘O`），或点“查看示例资料库”检查设计；Connection 中手动开启发现和配对后，只有实现 [配对契约](MAC_PAIRING_PROTOCOL.md) 的客户端才能完成双方确认。未改动的旧 iPhone 客户端仍只能发现 Mac。会议传输尚不可用。
+
+macOS 本地网络隐私与防火墙是两项独立授权。系统询问是否允许 `TranscriptMac` 接收传入连接时，需要用户选择允许；否则 Bonjour 可见仍不代表 TCP 能连通。只允许本 App，不关闭全局防火墙。自动化的真实 Bonjour/TCP 测试也受此权限影响，不能用调大超时或跳过测试掩盖未授权状态。
 
 ## 1. 产品定位与本轮范围变化
 

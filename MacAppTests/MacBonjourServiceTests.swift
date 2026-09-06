@@ -237,20 +237,26 @@ final class MacBonjourServiceTests: XCTestCase {
 
         let rejected = expectation(description: "Silent unauthenticated TCP attempt expires without data")
         rejected.assertForOverFulfill = false
+        let connected = expectation(description: "Discovered Bonjour endpoint establishes TCP")
+        connected.assertForOverFulfill = false
+        let endpoint = try XCTUnwrap(queue.sync { results.endpoint })
         let connection = NWConnection(
-            to: .service(name: name, type: MacBonjourService.serviceType, domain: "local.", interface: nil),
+            to: endpoint,
             using: parameters
         )
         connection.stateUpdateHandler = { state in
             switch state {
             case .ready:
+                connected.fulfill()
                 // Send nothing. The handshake deadline closes the socket without sending private data.
                 connection.receive(minimumIncompleteLength: 1, maximumLength: 1) { data, _, complete, error in
                     XCTAssertTrue(data?.isEmpty ?? true, "A silent peer must not receive application data")
                     XCTAssertTrue(complete || error != nil)
                     rejected.fulfill()
                 }
-            case .failed:
+            case .failed(let error):
+                XCTFail("Could not connect to discovered endpoint: \(error)")
+                connected.fulfill()
                 rejected.fulfill()
             default:
                 break
@@ -261,7 +267,19 @@ final class MacBonjourServiceTests: XCTestCase {
             connection.stateUpdateHandler = nil
             connection.cancel()
         }
-        await fulfillment(of: [rejected], timeout: 15)
+        await fulfillment(of: [connected], timeout: 15)
+        guard case .ready = connection.state else {
+            XCTFail("Bonjour discovery succeeded, but TCP did not become ready (\(connection.state)). This is a pre-handshake connectivity failure: inspect the macOS incoming-connections Firewall prompt and the separate Local Network permission. Do not disable the firewall.")
+            return
+        }
+        for _ in 0..<200 where service.pairing.state != .negotiating {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        guard service.pairing.state == .negotiating else {
+            XCTFail("TCP opened but the listener did not admit a pairing session (\(service.pairing.state)); the protocol deadline has not started. Check the pending macOS Firewall incoming-connections prompt and Local Network permission.")
+            return
+        }
+        await fulfillment(of: [rejected], timeout: 12)
         XCTAssertEqual(service.state, .advertising, "A TCP attempt is not an authenticated connection")
         queue.sync { results.expectRemoval() }
         service.stop()
@@ -295,6 +313,7 @@ private final class BrowserResultsProbe: @unchecked Sendable {
     private var wasFound = false
     private var wasRemoved = false
     private var expectingRemoval = false
+    private(set) var endpoint: NWEndpoint?
 
     init(name: String, found: XCTestExpectation, removed: XCTestExpectation) {
         self.name = name
@@ -309,6 +328,10 @@ private final class BrowserResultsProbe: @unchecked Sendable {
             if case .service(let candidate, _, _, _) = $0.endpoint { return candidate == name }
             return false
         }
+        endpoint = results.first {
+            if case .service(let candidate, _, _, _) = $0.endpoint { return candidate == name }
+            return false
+        }?.endpoint
         if present, !wasFound {
             wasFound = true
             found.fulfill()

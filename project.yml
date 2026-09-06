@@ -45,6 +45,7 @@ targets:
     deploymentTarget: "26.0"
     sources:
       - path: MacAppTests
+      - path: Packages/TranscriptCore/Tests/TranscriptCoreTests/MigrationTests.swift
     dependencies:
       - target: TranscriptMac
     settings:

@@ -10,6 +10,11 @@ derive a SAS from only public exchanged keys, or bypass the comparison.
 ## Discovery and framing
 
 Bonjour `_vtscribe._tcp`, domain `local.`. Bonjour names are untrusted labels.
+On macOS, Local Network privacy permission and Firewall permission for incoming
+connections are separate. Discovery may succeed while a pending Firewall
+Allow/Deny prompt prevents the TCP pairing exchange. A discovery or TCP setup
+failure is not an authentication failure. The app explains both settings; it
+does not grant permissions, dismiss system prompts or disable the firewall.
 Every frame: unsigned 32-bit big-endian JSON byte length, then UTF-8 JSON.
 Length must be 1...4096; EOF, invalid fields/order, oversized frames, bad crypto,
 wrong sequence or deadline expiry terminates the connection without trusting it.

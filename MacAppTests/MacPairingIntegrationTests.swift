@@ -10,15 +10,32 @@ final class MacPairingIntegrationTests: XCTestCase {
     func testRealBonjourEndpointCompletesAuthenticatedPairing() async throws {
         let store = PairingMemoryStore()
         let service = MacBonjourService(serviceName: "Pairing-\(UUID().uuidString)", pairingStore: store)
+        let parameters = NWParameters.tcp
+        parameters.includePeerToPeer = true
+        let browser = NWBrowser(for: .bonjour(type: "_vtscribe._tcp", domain: nil), using: parameters)
+        let discovery = PairingDiscoveredEndpoint()
+        let name = service.serviceName
+        let found = expectation(description: "Pairing endpoint is discovered with its network interface")
+        browser.browseResultsChangedHandler = { results, _ in
+            let endpoint = results.first {
+                if case .service(let candidate, _, _, _) = $0.endpoint { return candidate == name }
+                return false
+            }?.endpoint
+            Task { @MainActor in
+                if discovery.endpoint == nil, let endpoint {
+                    discovery.endpoint = endpoint
+                    found.fulfill()
+                }
+            }
+        }
+        browser.start(queue: DispatchQueue(label: "pairing.integration.browser"))
         service.start()
-        defer { service.stop() }
+        defer { service.stop(); browser.cancel() }
+        await fulfillment(of: [found], timeout: 15)
         try await waitUntil { service.state == .advertising }
         let client = PairingReferenceClient(
             connection: NWConnection(
-                to: .service(
-                    name: try XCTUnwrap(service.advertisedName), type: "_vtscribe._tcp",
-                    domain: "local.", interface: nil
-                ), using: .tcp
+                to: try XCTUnwrap(discovery.endpoint), using: parameters
             ),
             identity: Curve25519.Signing.PrivateKey()
         )
@@ -362,6 +379,11 @@ final class MacPairingIntegrationTests: XCTestCase {
 }
 
 @MainActor
+private final class PairingDiscoveredEndpoint {
+    var endpoint: NWEndpoint?
+}
+
+@MainActor
 private final class PairingMemoryStore: MacPairingIdentityStoring {
     let key = Curve25519.Signing.PrivateKey()
     var savedPeers: [MacPairedDevice] = []
@@ -426,21 +448,44 @@ private final class PairingReferenceClient {
     private var sent: UInt64 = 0
     private var received: UInt64 = 0
     private var deadline: Task<Void, Never>?
+    private var closed = false
+    private var protocolStage = "not started"
     private(set) var code = ""
     private(set) var serverIdentity: Data?
 
     init(connection: NWConnection, identity: Curve25519.Signing.PrivateKey) {
         self.identity = identity
         transport = MacPairingTransport(connection)
+        connection.stateUpdateHandler = { [weak self] state in
+            Task { @MainActor in
+                guard let self, !self.closed else { return }
+                if case .ready = state {
+                    self.armDeadline(.seconds(5), phase: "authenticated protocol")
+                }
+            }
+        }
+        armDeadline(.seconds(15), phase: "Bonjour resolution / TCP establishment")
         transport.start()
+    }
+
+    private func armDeadline(_ duration: Duration, phase: String) {
+        deadline?.cancel()
         deadline = Task { [weak self] in
-            try? await Task.sleep(for: .seconds(5))
+            try? await Task.sleep(for: duration)
             guard !Task.isCancelled else { return }
+            let stage = self?.protocolStage ?? "client released"
+            let connectionState = self.map { String(describing: $0.transport.connection.state) } ?? "unavailable"
+            XCTFail("Reference client timed out during \(phase); TCP state: \(connectionState); protocol stage: \(stage). If Bonjour discovery succeeded but no server handshake response arrived, inspect the macOS incoming-connections Firewall prompt and separate Local Network permission. A pre-handshake connectivity failure does not establish a cryptographic regression.")
             self?.transport.cancel()
         }
     }
 
-    func close() { deadline?.cancel(); transport.cancel() }
+    func close() {
+        closed = true
+        deadline?.cancel()
+        transport.connection.stateUpdateHandler = nil
+        transport.cancel()
+    }
 
     func handshake(reconnect: Bool = false, pin: Data? = nil, tamperReveal: Bool = false, wrongSignature: Bool = false) async throws {
         let ephemeral = Curve25519.KeyAgreement.PrivateKey()
@@ -452,13 +497,16 @@ private final class PairingReferenceClient {
         var hello = Data([reconnect ? 1 : 0]) + identity.publicKey.rawRepresentation
             + ephemeral.publicKey.rawRepresentation + Data(nonce) + Data([0, UInt8(name.count)]) + name
         let commitment = Data(SHA256.hash(data: prefix + Data("commit/client".utf8) + hello))
+        protocolStage = "sending client commitment"
         try await transport.send(.init(type: "commit", payload: commitment.base64EncodedString(), mode: reconnect ? "reconnect" : "pair"))
+        protocolStage = "waiting for server commitment"
         let serverCommit = try await transport.receive()
         guard serverCommit.type == "commit", serverCommit.mode == (reconnect ? "reconnect" : "pair"),
               let encoded = serverCommit.payload, let expected = Data(base64Encoded: encoded),
               expected.count == 32 else { throw MacPairingError.invalidMessage }
         if tamperReveal { hello[65] ^= 1 }
         try await transport.send(.init(type: "reveal", payload: hello.base64EncodedString()))
+        protocolStage = "waiting for server reveal"
         let reveal = try await transport.receive()
         guard reveal.type == "reveal", let value = reveal.payload, let remote = Data(base64Encoded: value),
               remote.count >= 100, remote[0] == (reconnect ? 1 : 0),
@@ -486,18 +534,22 @@ private final class PairingReferenceClient {
         let signingKey = wrongSignature ? Curve25519.Signing.PrivateKey() : identity
         let signature = try signingKey.signature(for: prefix + Data("auth/client".utf8) + transcript)
         try await send("auth", value: signature.base64EncodedString())
+        protocolStage = "waiting for server identity proof"
         let proof = try await receive()
         guard proof.type == "auth", let proofValue = proof.value,
               let signature = Data(base64Encoded: proofValue),
               try Curve25519.Signing.PublicKey(rawRepresentation: publicKey).isValidSignature(
                 signature, for: prefix + Data("auth/server".utf8) + transcript
               ) else { throw MacPairingError.identityMismatch }
+        protocolStage = "waiting for bilateral confirmation"
     }
 
     func finish() async throws {
+        protocolStage = "waiting for server ready"
         let ready = try await receive()
         guard ready.type == "ready" else { throw MacPairingError.invalidMessage }
         try await send("ready")
+        protocolStage = "authenticated"
     }
 
     func send(_ type: String, value: String? = nil) async throws {

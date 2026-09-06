@@ -70,6 +70,18 @@ struct MacConnectionView: View {
                     Text("Meeting transfer is not available in this version. No audio, transcripts or meeting metadata are sent.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
+                MacInfoCard {
+                    Label {
+                        Text("Two separate macOS network permissions", tableName: "Pairing")
+                    } icon: {
+                        Image(systemName: "network")
+                    }
+                    .font(.headline)
+                    Text("If your iPhone finds this Mac but no pairing code appears, check for a macOS prompt asking whether Transcript may accept incoming network connections. Allow incoming connections only if you intend to pair.", tableName: "Pairing")
+                        .foregroundStyle(.secondary)
+                    Text("Local Network access is under System Settings → Privacy & Security → Local Network. Incoming connections are controlled separately under Network → Firewall → Options. Allow this app rather than disabling the firewall.", tableName: "Pairing")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
 
                 Text("Discovery stays active while this app runs, even if you close the window. Stop discovery here or quit the app to withdraw the service.")
                     .font(.caption).foregroundStyle(.secondary)

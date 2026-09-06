@@ -65,12 +65,6 @@ final class MacVoiceprintTests: XCTestCase {
         XCTAssertEqual(before.first { $0.id == orphan.id }?.embeddings, [orphanEmbedding])
         XCTAssertEqual(before.first { $0.id == identityOnly.id }?.embeddings, [])
 
-        // TEMPORARY on c90a482: remove this pre-delete after integrating main's
-        // 7616500 v7 parent-existence trigger fix. The production contract is one
-        // MeetingRepository.delete call; callers must not pre-delete children.
-        try await database.writer.write { db in
-            try db.execute(sql: "DELETE FROM meetingSpeaker WHERE meetingId = ?", arguments: [meeting.id])
-        }
         try await meetings.delete(id: meeting.id)
         let remainingMeetings = try await meetings.fetchAll()
         let remainingUtterances = try await UtteranceRepository(database).fetch(meetingId: meeting.id)
