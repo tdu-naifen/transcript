@@ -98,10 +98,6 @@ private struct TranscriptLineView: View {
     }
 
     private func acceptanceText(_ key: String) -> String {
-        String(
-            localized: String.LocalizationValue(key),
-            table: "AcceptanceUI",
-            locale: LocalizationManager.shared.resolvedLocale
-        )
+        LocalizationManager.shared.text(key, table: "AcceptanceUI")
     }
 }

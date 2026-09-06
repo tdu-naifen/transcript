@@ -24,18 +24,18 @@ final class RecorderModel {
 
         @MainActor
         var text: String {
-            let locale = LocalizationManager.shared.resolvedLocale
+            let localization = LocalizationManager.shared
             switch self {
             case .recovered(let count):
                 return count == 1
-                    ? String(localized: "Recovered 1 interrupted recording.", locale: locale)
-                    : String(localized: "Recovered \(count) interrupted recordings.", locale: locale)
+                    ? localization.localized("Recovered 1 interrupted recording.")
+                    : localization.localized("Recovered \(count) interrupted recordings.")
             case .pausedByOtherApp:
-                return String(localized: "Paused by another app. Your recording is safe.", locale: locale)
+                return localization.localized("Paused by another app. Your recording is safe.")
             case .interrupted:
-                return String(localized: "Interrupted. Tap resume to continue.", locale: locale)
+                return localization.localized("Interrupted. Tap resume to continue.")
             case .inputSwitched(let name):
-                return String(localized: "Input switched to \(name).", locale: locale)
+                return localization.localized("Input switched to \(name).")
             }
         }
     }
@@ -86,13 +86,13 @@ final class RecorderModel {
     var isActive: Bool { phase == .recording || phase == .paused }
 
     var stateLabel: String {
-        let locale = LocalizationManager.shared.resolvedLocale
+        let localization = LocalizationManager.shared
         switch phase {
-        case .idle: return String(localized: "Ready", locale: locale)
-        case .starting: return String(localized: "Starting", locale: locale)
-        case .recording: return String(localized: "Recording", locale: locale)
-        case .paused: return String(localized: "Paused", locale: locale)
-        case .stopping: return String(localized: "Sealing", locale: locale)
+        case .idle: return localization.localized("Ready")
+        case .starting: return localization.localized("Starting")
+        case .recording: return localization.localized("Recording")
+        case .paused: return localization.localized("Paused")
+        case .stopping: return localization.localized("Sealing")
         }
     }
 

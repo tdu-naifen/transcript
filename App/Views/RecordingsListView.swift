@@ -75,7 +75,7 @@ struct RecordingsListView: View {
                     onMeetingRenamed: { Task { await model.reload() } }
                 )
             }
-            .navigationTitle("meetings.title")
+            .navigationTitle(LocalizationManager.shared.text("meetings.title"))
             .fullScreenCover(item: $macSubmissionMeeting) { meeting in
                 MacSubmissionView(meeting: meeting, model: macConnection)
             }

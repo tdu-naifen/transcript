@@ -136,11 +136,6 @@ struct HomeView: View {
                             }
                         }
                     }
-                    Section {
-                        Label("home.search.unavailable.description", systemImage: "info.circle")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
                 }
             }
             .listStyle(.insetGrouped)
@@ -150,7 +145,7 @@ struct HomeView: View {
             .safeAreaInset(edge: .bottom) {
                 Color.clear.frame(height: FloatingRecordButtonMetrics.listBottomClearance)
             }
-            .navigationTitle("home.title")
+            .navigationTitle(LocalizationManager.shared.text("home.title"))
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
@@ -169,7 +164,7 @@ struct HomeView: View {
             .sheet(isPresented: $showsConnection) {
                 NavigationStack {
                     ConnectionView(model: macConnection)
-                        .navigationTitle("Connect to Mac")
+                        .navigationTitle(LocalizationManager.shared.text("Connect to Mac"))
                         .toolbar {
                             ToolbarItem(placement: .cancellationAction) {
                                 Button("common.done") { showsConnection = false }
@@ -295,7 +290,7 @@ struct HomeView: View {
                     Button("home.speakers.clear") { model.speakerIDs = [] }
                 }
             }
-            .navigationTitle("home.speakers.filter")
+            .navigationTitle(LocalizationManager.shared.text("home.speakers.filter"))
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("common.done") { showsSpeakers = false }
@@ -322,7 +317,7 @@ struct HomeView: View {
                     }
                 }
             }
-            .navigationTitle("home.dates.filter")
+            .navigationTitle(LocalizationManager.shared.text("home.dates.filter"))
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("common.done") { showsDates = false }

@@ -179,7 +179,7 @@ final class MacConnectionModel {
     }
 
     static func text(_ key: String) -> String {
-        String(localized: String.LocalizationValue(key), locale: LocalizationManager.shared.resolvedLocale)
+        LocalizationManager.shared.text(key)
     }
 
     #if DEBUG

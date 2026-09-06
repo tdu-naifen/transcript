@@ -133,6 +133,70 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertTrue(record.exists)
     }
 
+    func testLanguageSwitchImmediatelyUpdatesAllNavigationTitlesAndControls() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-uiFixture", "1", "-uiFixtureSelectedTab", "home",
+            "-appLanguage", "zhHans", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"
+        ]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["主页"].waitForExistence(timeout: 5))
+        let settings = app.tabBars.buttons["设置"].exists ? app.tabBars.buttons["设置"] : app.tabBars.buttons["Settings"]
+        settings.tap()
+        let english = app.buttons["English"]
+        XCTAssertTrue(english.waitForExistence(timeout: 3))
+        english.tap()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["resetFloatingRecordButton"].label.contains("Reset"))
+        app.tabBars.buttons["Home"].tap()
+        XCTAssertTrue(app.navigationBars["Home"].waitForExistence(timeout: 3))
+        XCTAssertEqual(app.buttons["homeSpeakerFilter"].label, "Speakers")
+        XCTAssertEqual(app.buttons["homeDateFilter"].label, "Date")
+        XCTAssertFalse(app.staticTexts["home.search.unavailable.description"].exists)
+        attachScreenshot(of: app, name: "live-language-en-home")
+        assertConnectionUnavailable(in: app, reason: "no transport service")
+        app.tabBars.buttons["Meetings"].tap()
+        XCTAssertTrue(app.navigationBars["Meetings"].waitForExistence(timeout: 3))
+        app.tabBars.buttons["Settings"].tap()
+        app.buttons["简体中文"].tap()
+        XCTAssertTrue(app.navigationBars["设置"].waitForExistence(timeout: 3))
+        XCTAssertTrue(app.buttons["resetFloatingRecordButton"].label.contains("恢复"))
+        XCTAssertTrue(app.buttons["System"].exists, "System choice follows system English, not the app override")
+        app.tabBars.buttons["主页"].tap()
+        XCTAssertTrue(app.navigationBars["主页"].waitForExistence(timeout: 3))
+        XCTAssertEqual(app.buttons["homeSpeakerFilter"].label, "说话人")
+        XCTAssertEqual(app.buttons["homeDateFilter"].label, "日期")
+        attachScreenshot(of: app, name: "live-language-zh-home")
+        assertConnectionUnavailable(in: app, reason: "尚未配置传输服务")
+        app.tabBars.buttons["会议"].tap()
+        XCTAssertTrue(app.navigationBars["会议"].waitForExistence(timeout: 3))
+        attachScreenshot(of: app, name: "live-language-zh-meetings")
+    }
+
+    func testSystemLanguageOptionUsesChineseSystemWhileAppIsEnglish() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-uiFixture", "1", "-uiFixtureSelectedTab", "settings",
+            "-appLanguage", "en", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"
+        ]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["跟随系统"].exists)
+        XCTAssertFalse(app.buttons["System"].exists)
+        XCTAssertTrue(app.buttons["resetFloatingRecordButton"].label.contains("Reset"))
+        attachScreenshot(of: app, name: "english-app-chinese-system-option")
+    }
+
+    private func assertConnectionUnavailable(in app: XCUIApplication, reason: String) {
+        app.buttons["homeConnectionButton"].tap()
+        let explanation = app.staticTexts["macConnectionExplanation"]
+        XCTAssertTrue(explanation.waitForExistence(timeout: 3))
+        XCTAssertTrue(explanation.label.contains(reason))
+        XCTAssertFalse(app.buttons["macFindDevicesButton"].isEnabled)
+        XCTAssertFalse(app.staticTexts["Connected"].exists)
+        tapDone(in: app)
+    }
+
     func testAcousticAcceptance() {
         let app = XCUIApplication()
         app.launch()

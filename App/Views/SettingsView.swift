@@ -46,7 +46,7 @@ struct SettingsView: View {
                     .accessibilityIdentifier("resetFloatingRecordButton")
                 }
             }
-            .navigationTitle("Settings")
+            .navigationTitle(LocalizationManager.shared.text("Settings"))
             .scrollContentBackground(.hidden)
             .background(Color(red: 0.975, green: 0.97, blue: 0.96))
             .task {

@@ -119,7 +119,7 @@ struct ConnectionView: View {
                 }
             }
         }
-        .navigationTitle("Connection")
+        .navigationTitle(LocalizationManager.shared.text("Connection"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
         .tint(Color(red: 6 / 255, green: 34 / 255, blue: 158 / 255))

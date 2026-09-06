@@ -140,11 +140,11 @@ struct MeetingDetailView: View {
     /// pieces here and displaying with `Text(verbatim:)` avoids needing a multi-argument
     /// "Vary by Plural" catalog entry for the combined phrase.
     private var participantsSummaryText: String {
-        let locale = LocalizationManager.shared.resolvedLocale
+        let localization = LocalizationManager.shared
         let count = model.participants.count
         let peopleText = count == 1
-            ? String(localized: "1 participant", locale: locale)
-            : String(localized: "\(count) participants", locale: locale)
+            ? localization.localized("1 participant")
+            : localization.localized("\(count) participants")
         return "\(peopleText) · \(Format.duration(milliseconds: model.meeting.durationMs))"
     }
 
@@ -242,15 +242,11 @@ struct MeetingDetailView: View {
     private var headerMetadata: String {
         let date = Format.date(model.meeting.startedAt)
         guard let locale = model.meeting.localeIdentifier, !locale.isEmpty else { return date }
-        return "\(date) · \(Locale.current.localizedString(forIdentifier: locale) ?? locale)"
+        return "\(date) · \(LocalizationManager.shared.resolvedLocale.localizedString(forIdentifier: locale) ?? locale)"
     }
 
     private func reprocessingText(_ key: String) -> String {
-        String(
-            localized: String.LocalizationValue(key),
-            table: "Reprocessing",
-            locale: LocalizationManager.shared.resolvedLocale
-        )
+        LocalizationManager.shared.text(key, table: "Reprocessing")
     }
 
     private var participantsHeader: some View {
@@ -353,11 +349,7 @@ struct MeetingDetailView: View {
     }
 
     private func acceptanceText(_ key: String) -> String {
-        String(
-            localized: String.LocalizationValue(key),
-            table: "AcceptanceUI",
-            locale: LocalizationManager.shared.resolvedLocale
-        )
+        LocalizationManager.shared.text(key, table: "AcceptanceUI")
     }
 }
 
@@ -468,11 +460,7 @@ private struct MeetingReprocessingSheet: View {
     }
 
     private func text(_ key: String) -> String {
-        String(
-            localized: String.LocalizationValue(key),
-            table: "Reprocessing",
-            locale: LocalizationManager.shared.resolvedLocale
-        )
+        LocalizationManager.shared.text(key, table: "Reprocessing")
     }
 }
 
@@ -575,11 +563,7 @@ private struct TranscriptRow: View {
     }
 
     private func acceptanceText(_ key: String) -> String {
-        String(
-            localized: String.LocalizationValue(key),
-            table: "AcceptanceUI",
-            locale: LocalizationManager.shared.resolvedLocale
-        )
+        LocalizationManager.shared.text(key, table: "AcceptanceUI")
     }
 }
 
@@ -660,11 +644,7 @@ private struct SpeakerInsightsView: View {
     }
 
     private func acceptanceText(_ key: String) -> String {
-        String(
-            localized: String.LocalizationValue(key),
-            table: "AcceptanceUI",
-            locale: LocalizationManager.shared.resolvedLocale
-        )
+        LocalizationManager.shared.text(key, table: "AcceptanceUI")
     }
 }
 
@@ -739,7 +719,7 @@ private struct EngineeringDetailSheet: View {
                     }
                 }
             }
-            .navigationTitle("详细信息")
+            .navigationTitle(LocalizationManager.shared.text("详细信息"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -750,7 +730,7 @@ private struct EngineeringDetailSheet: View {
     }
 
     private func dateOrNotYet(_ date: Date?) -> String {
-        guard let date else { return String(localized: "Not yet", locale: LocalizationManager.shared.resolvedLocale) }
+        guard let date else { return LocalizationManager.shared.text("Not yet") }
         return Format.date(date, dateStyle: .numeric, timeStyle: .shortened)
     }
 }

@@ -20,10 +20,7 @@ struct RootView: View {
                 ReadyView(services: services, library: library, recorder: recorder)
             }
         }
-        // Reading `language` here registers Observation tracking, so every descendant
-        // `Text`/`Label` (via `LocalizedStringKey`) re-renders in the new language the
-        // instant Settings changes it — no app restart needed.
-        .environment(\.locale, localization.language.locale ?? .autoupdatingCurrent)
+        .environment(\.locale, localization.resolvedLocale)
         .tint(FloatingRecordButton.accent)
     }
 }
@@ -96,7 +93,7 @@ private struct ReadyView: View {
     var body: some View {
         ZStack {
             TabView(selection: $selectedTab) {
-                Tab("Home", systemImage: "house", value: AppTab.home) {
+                Tab(LocalizationManager.shared.text("Home"), systemImage: "house", value: AppTab.home) {
                     HomeView(
                         services: services,
                         library: library,
@@ -105,7 +102,7 @@ private struct ReadyView: View {
                         macConnection: macConnection
                     )
                 }
-                Tab("Meetings", systemImage: "list.bullet", value: AppTab.meetings) {
+                Tab(LocalizationManager.shared.text("Meetings"), systemImage: "list.bullet", value: AppTab.meetings) {
                     RecordingsListView(
                         model: library,
                         services: services,
@@ -114,7 +111,7 @@ private struct ReadyView: View {
                         macConnection: macConnection
                     )
                 }
-                Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
+                Tab(LocalizationManager.shared.text("Settings"), systemImage: "gearshape", value: AppTab.settings) {
                     SettingsView(services: services, path: $settingsPath)
                 }
             }
@@ -245,11 +242,7 @@ private struct ReadyView: View {
     }
 
     private func acceptanceText(_ key: String) -> String {
-        String(
-            localized: String.LocalizationValue(key),
-            table: "AcceptanceUI",
-            locale: LocalizationManager.shared.resolvedLocale
-        )
+        LocalizationManager.shared.text(key, table: "AcceptanceUI")
     }
 }
 

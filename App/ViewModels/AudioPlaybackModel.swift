@@ -26,20 +26,18 @@ final class AudioPlaybackModel {
 
         @MainActor
         var text: String {
-            let locale = LocalizationManager.shared.resolvedLocale
+            let localization = LocalizationManager.shared
             switch self {
             case .noAudioFile:
-                return String(localized: "This meeting has no associated audio file.", locale: locale)
+                return localization.localized("This meeting has no associated audio file.")
             case .localAudioMissing:
-                return String(localized:
-                    "The audio file is not available on this device. The transcript is still available.",
-                    locale: locale)
+                return localization.localized("The audio file is not available on this device. The transcript is still available.")
             case .openFailed:
-                return String(localized: "Couldn't open the audio file.", locale: locale)
+                return localization.localized("Couldn't open the audio file.")
             case .recordingInProgress:
-                return String(localized: "Stop the active recording before playing another meeting.", locale: locale)
+                return localization.localized("Stop the active recording before playing another meeting.")
             case .playbackFailed:
-                return String(localized: "Couldn't start audio playback. Reopen this meeting to try again.", locale: locale)
+                return localization.localized("Couldn't start audio playback. Reopen this meeting to try again.")
             }
         }
     }

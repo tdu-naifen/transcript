@@ -169,9 +169,8 @@ final class MeetingDetailModel {
     }
 
     private func reprocessingErrorMessage(_ error: any Error) -> String {
-        let locale = LocalizationManager.shared.resolvedLocale
         func localized(_ key: String) -> String {
-            String(localized: String.LocalizationValue(key), table: "Reprocessing", locale: locale)
+            LocalizationManager.shared.text(key, table: "Reprocessing")
         }
         switch error {
         case MeetingReprocessingConflict.recordingInProgress:

@@ -1,6 +1,99 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Collapse recording" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "收起录音" } } } },
+    "Play audio from this segment" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从此片段播放音频" } } } },
+    "SHA-256" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "SHA-256" } } } },
+    "Home" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "主页" } } } },
+    "Meetings" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "会议" } } } },
+    "System" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "跟随系统" } } } },
+    "Back" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "返回" } } } },
+    "Retry" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重试" } } } },
+    "Details" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "详细信息" } } } },
+    "Meeting options" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "会议选项" } } } },
+    "Could not save meeting name" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法保存会议名称" } } } },
+    "Reprocessing" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新处理" } } } },
+    "Process by Mac" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "由 Mac 处理" } } } },
+    "Mac is not connected." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 尚未连接。" } } } },
+    "Recording button" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "录音按钮" } } } },
+    "Reset recording button position" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "恢复录音按钮默认位置" } } } },
+    "Drag to move the recording button, or use its movement actions." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "拖动录音按钮以移动，或使用移动操作。" } } } },
+    "Move recording button left" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "向左移动录音按钮" } } } },
+    "Move recording button right" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "向右移动录音按钮" } } } },
+    "Move recording button up" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "向上移动录音按钮" } } } },
+    "Move recording button down" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "向下移动录音按钮" } } } },
+    "Expand recording" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "展开录音" } } } },
+    "Stop recording" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "停止录音" } } } },
+    "Audio waveform" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "音频波形" } } } },
+    "Play audio" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "播放音频" } } } },
+    "Pause audio" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "暂停音频" } } } },
+    "Playback speed" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "播放速度" } } } },
+    "Skip back 5 seconds" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "后退 5 秒" } } } },
+    "Skip forward 5 seconds" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "前进 5 秒" } } } },
+    "Stop recording before playing another meeting." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请先停止录音，再播放其他会议。" } } } },
+    "Stop the active recording before playing another meeting." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请先停止当前录音，再播放其他会议。" } } } },
+    "Couldn't start audio playback. Reopen this meeting to try again." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法开始播放音频。请重新打开此会议后重试。" } } } },
+    "The audio file is not available on this device. The transcript is still available." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "本机没有此音频文件，仍可查看转写内容。" } } } },
+    "Connect to Mac" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "连接 Mac" } } } },
+    "Connection" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "连接" } } } },
+    "Connected" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已连接" } } } },
+    "Connecting" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "连接中" } } } },
+    "Offline" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "离线" } } } },
+    "Connection needs attention" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "连接需要处理" } } } },
+    "Open Transcript on your Mac" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "在 Mac 上打开 Transcript" } } } },
+    "Find a Mac" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "查找 Mac" } } } },
+    "Pair with your Mac" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "与 Mac 配对" } } } },
+    "Nearby Macs" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "附近的 Mac" } } } },
+    "Looking for a Mac" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在查找 Mac" } } } },
+    "Confirm pairing" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "确认配对" } } } },
+    "Pairing code" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "配对码" } } } },
+    "Confirmed on iPhone" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已在 iPhone 上确认" } } } },
+    "Confirmed on Mac" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已在 Mac 上确认" } } } },
+    "Waiting for iPhone confirmation" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "等待 iPhone 确认" } } } },
+    "Waiting for Mac confirmation" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "等待 Mac 确认" } } } },
+    "The codes match" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "配对码相同" } } } },
+    "Retry connection" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新连接" } } } },
+    "Unpair Mac" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "取消 Mac 配对" } } } },
+    "Unpair Mac?" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "取消与 Mac 的配对？" } } } },
+    "You will need to confirm both devices again before reconnecting. This does not delete meetings." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新连接前需要再次在两端确认。此操作不会删除会议。" } } } },
+    "Transcript uses your local network to discover your Mac and transfer meeting audio and results. iOS may ask for local network access." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Transcript 使用本地网络发现 Mac 并传输会议音频和结果。iOS 可能会请求本地网络访问权限。" } } } },
+    "Mac connection is unavailable because this app has no transport service configured." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此 App 尚未配置传输服务，因此暂时无法连接 Mac。" } } } },
+    "Open Transcript on your Mac, then look for it on your local network." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请在 Mac 上打开 Transcript，然后在本地网络中查找。" } } } },
+    "Keep Transcript open on your Mac. Discovered devices appear here." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请保持 Mac 上的 Transcript 打开。发现的设备会显示在这里。" } } } },
+    "Check that both devices show the same code, then confirm on each device." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "核对两端显示的配对码相同，然后分别确认。" } } } },
+    "Your paired Mac is offline. Reconnect before submitting a new task." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已配对的 Mac 当前离线。提交新任务前请重新连接。" } } } },
+    "Verifying the Mac's identity and connection." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在验证 Mac 身份及连接。" } } } },
+    "Mac connected · Processing model ready" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 已连接 · 处理模型已就绪" } } } },
+    "Mac connected · Processing model not ready" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 已连接 · 处理模型未就绪" } } } },
+    "Mac connected · Processing model readiness unknown" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 已连接 · 处理模型状态未知" } } } },
+    "This meeting already has an active Mac task." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此会议已有正在进行的 Mac 任务。" } } } },
+    "Saved on iPhone · Waiting to send" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已保存在 iPhone · 等待发送" } } } },
+    "Sending to Mac" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在发送至 Mac" } } } },
+    "Not delivered · Waiting to reconnect" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "未送达 · 等待重新连接" } } } },
+    "Mac received and saved the task" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 已接收并保存任务" } } } },
+    "Processing on Mac" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 正在处理" } } } },
+    "Results synced" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "结果已同步" } } } },
+    "Mac task failed" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 任务失败" } } } },
+    "Cancellation confirmed by Mac" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 已确认取消" } } } },
+    "Mac offline · Showing last known progress" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 离线 · 显示最后已知进度" } } } },
+    "Cancellation requested · Waiting for Mac confirmation" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已请求取消 · 等待 Mac 确认" } } } },
+    "Mac could not cancel because the task had already finished." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "任务已完成，Mac 无法再取消。" } } } },
+    "Request cancellation" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "请求取消" } } } },
+    "Retry sending" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "重新发送" } } } },
+    "Use Submit to confirm" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "点击提交以确认" } } } },
+    "Swipe up to Submit" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "上滑提交" } } } },
+    "Submit" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "提交" } } } },
+    "Saving task on iPhone…" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "正在将任务保存在 iPhone…" } } } },
+    "Destination Mac" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "目标 Mac" } } } },
+    "Original audio" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "原始音频" } } } },
+    "Processing scope" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "处理范围" } } } },
+    "This task is not submitted. Audio availability will be verified before submission." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "任务尚未提交。提交前会验证音频是否可用。" } } } },
+    "Transcribe the original recording, identify speakers, and sync results back to iPhone." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "转写原始录音、识别说话人，并将结果同步回 iPhone。" } } } },
+    "Your original recording stays unchanged." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "原始录音保持不变。" } } } },
+    "Sending continues in the background after the task is saved on iPhone." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "任务保存在 iPhone 后会在后台继续发送。" } } } },
+    "Saves this task on iPhone and returns to the meeting without waiting for Mac." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "将任务保存在 iPhone 后返回会议，无需等待 Mac。" } } } },
+    "Submitting is unavailable because durable task storage has not been configured." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "尚未配置持久任务存储，暂时无法提交。" } } } },
+    "Could not confirm that the task was saved. Check task status before trying again." : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法确认任务已保存。请先检查任务状态再重试。" } } } },
     "%@" : {
       "comment" : "A number in monospaced font.",
       "isCommentAutoGenerated" : true
@@ -18,6 +111,9 @@
       }
     },
     "%@ utterances" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "%@ 条发言" } }
+      },
       "comment" : "A label at the top of the live transcript view showing the number of utterances in the transcript. The argument is the count of utterances in the transcript.",
       "isCommentAutoGenerated" : true
     },
@@ -1111,18 +1207,18 @@
         }
       }
     },
-    "home.speakers.selected %@" : {
+    "home.speakers.selected %lld" : {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ speakers"
+            "value" : "%lld speakers"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "%@ 位说话人"
+            "value" : "%lld 位说话人"
           }
         }
       }
