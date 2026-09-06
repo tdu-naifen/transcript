@@ -1,6 +1,12 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "meetings.today" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Today" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "今天" } } } },
+    "meetings.yesterday" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Yesterday" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "昨天" } } } },
+    "meetings.earlier" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Earlier" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "更早" } } } },
+    "library.load_failed" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not load meetings" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法加载会议" } } } },
+    "library.delete_failed" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not delete meeting" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法删除会议" } } } },
+    "library.audio_cleanup_failed" : { "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Could not remove local audio" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法移除本机音频" } } } },
     "Collapse recording" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "收起录音" } } } },
     "Play audio from this segment" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "从此片段播放音频" } } } },
     "SHA-256" : { "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "SHA-256" } } } },

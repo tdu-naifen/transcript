@@ -12,6 +12,11 @@ final class LocalizationTests: XCTestCase {
             ("Settings", "Settings", "设置"), ("Home", "Home", "主页"),
             ("Meetings", "Meetings", "会议"), ("home.speakers.filter", "Speakers", "说话人"),
             ("home.dates.filter", "Date", "日期"), ("Process by Mac", "Process by Mac", "由 Mac 处理"),
+            ("meetings.today", "Today", "今天"), ("meetings.yesterday", "Yesterday", "昨天"),
+            ("meetings.earlier", "Earlier", "更早"),
+            ("library.load_failed", "Could not load meetings", "无法加载会议"),
+            ("library.delete_failed", "Could not delete meeting", "无法删除会议"),
+            ("library.audio_cleanup_failed", "Could not remove local audio", "无法移除本机音频"),
             ("Reset recording button position", "Reset recording button position", "恢复录音按钮默认位置")
         ]
         for language in [AppLanguage.zhHans, .en, .zhHans] {
