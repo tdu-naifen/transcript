@@ -35,6 +35,81 @@ import Testing
         #expect(enabled)
     }
 
+    @Test func directMeetingDeletionPreservesOtherMeetingAndGlobalVoiceprints() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try AppDatabase.onDisk(directory: directory)
+        let meetings = MeetingRepository(database)
+        let speakers = SpeakerRepository(database)
+        let utterances = UtteranceRepository(database)
+        let deleted = Meeting(title: "Delete searchable meeting", startedAt: Date(), originDeviceId: "test")
+        let retained = Meeting(title: "Retain shared animal", startedAt: Date(), originDeviceId: "test")
+        let animal = try await speakers.createAnonymousSpeaker(deviceId: "test")
+        try await speakers.rename(id: animal.id, displayName: "Shared name", deviceId: "test")
+        try await speakers.addEmbedding(SpeakerEmbedding(
+            speakerId: animal.id, floats: [1, 0, 0], originDeviceId: "test", modelIdentifier: "test-model"
+        ))
+        for meeting in [deleted, retained] {
+            try await meetings.insert(meeting)
+            try await speakers.assignDisplayIndex(
+                meetingId: meeting.id, speakerId: animal.id, displayIndex: 0, deviceId: "test"
+            )
+            try await utterances.append([Utterance(
+                meetingId: meeting.id, startMs: 0, endMs: 1000, text: meeting.title,
+                speakerId: animal.id, originDeviceId: "test"
+            )])
+            try await SpeakerAnalysisRepository(database).enqueue(meetingID: meeting.id)
+            try await AnalysisResultRepository(database).record(AnalysisResultDraft(
+                meetingId: meeting.id, kind: .qa, payloadJSON: "{}", producedByDeviceId: "test"
+            ))
+        }
+        let originalMeeting = try await meetings.fetch(id: retained.id)
+        let originalSpeakers = try await speakers.fetchAll()
+        let originalEmbeddings = try await speakers.embeddings(forSpeaker: animal.id)
+        let originalGeneration = try await speakers.voiceprintGeneration()
+        let originalUtterances = try await utterances.fetch(meetingId: retained.id)
+        let originalResults = try await AnalysisResultRepository(database).fetchAll(meetingId: retained.id)
+        let originalBinding = try await database.reader.read {
+            try MeetingSpeaker.fetchAll($0, sql: "SELECT * FROM meetingSpeaker WHERE meetingId = ?", arguments: [retained.id])
+        }
+        let originalSlotRevision = try await database.reader.read {
+            try Int.fetchOne($0, sql: "SELECT revision FROM meetingSpeakerSlotRevision WHERE meetingId = ? AND displayIndex = 0", arguments: [retained.id])
+        }
+
+        // No manual child deletion: the public repository must own the cascade boundary.
+        try await meetings.delete(id: deleted.id)
+
+        let reopened = try AppDatabase.onDisk(directory: directory)
+        let remaining = try await MeetingRepository(reopened).fetchAll()
+        let retainedUtterances = try await UtteranceRepository(reopened).fetch(meetingId: retained.id)
+        let retainedResults = try await AnalysisResultRepository(reopened).fetchAll(meetingId: retained.id)
+        let retainedSpeakers = try await SpeakerRepository(reopened).fetchAll()
+        let retainedEmbeddings = try await SpeakerRepository(reopened).embeddings(forSpeaker: animal.id)
+        let retainedGeneration = try await SpeakerRepository(reopened).voiceprintGeneration()
+        let (ownedCounts, binding, slotRevision, foreignKeyErrors) = try await reopened.reader.read { db in
+            let counts = try ["utterance", "meetingSpeaker", "meetingSpeakerSlotRevision", "analysisResult", "speakerAnalysisJob", "searchDocument"].map {
+                try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM \($0) WHERE meetingId = ?", arguments: [deleted.id]) ?? -1
+            }
+            return (
+                counts,
+                try MeetingSpeaker.fetchAll(db, sql: "SELECT * FROM meetingSpeaker WHERE meetingId = ?", arguments: [retained.id]),
+                try Int.fetchOne(db, sql: "SELECT revision FROM meetingSpeakerSlotRevision WHERE meetingId = ? AND displayIndex = 0", arguments: [retained.id]),
+                try Row.fetchAll(db, sql: "PRAGMA foreign_key_check").count
+            )
+        }
+        #expect(remaining.map(\.id) == [retained.id])
+        #expect(remaining.first == originalMeeting)
+        #expect(ownedCounts.allSatisfy { $0 == 0 })
+        #expect(retainedUtterances == originalUtterances)
+        #expect(retainedResults == originalResults)
+        #expect(binding == originalBinding)
+        #expect(slotRevision == originalSlotRevision)
+        #expect(retainedSpeakers == originalSpeakers)
+        #expect(retainedEmbeddings == originalEmbeddings)
+        #expect(retainedGeneration == originalGeneration)
+        #expect(foreignKeyErrors == 0)
+    }
+
     /// Every mutable table reserves HLC columns (PLAN §9.3).
     ///
     /// Enumerated from the live schema rather than from a hand-written list, so a table
