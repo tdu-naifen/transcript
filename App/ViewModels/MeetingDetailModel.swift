@@ -57,7 +57,8 @@ final class MeetingDetailModel {
             url: audioURL,
             durationMs: meeting.durationMs,
             isRecordingActive: isRecordingActive,
-            recordingIsActive: recordingIsActive
+            recordingIsActive: recordingIsActive,
+            audioOwnership: services.audioOwnership
         )
         self.utteranceRepository = UtteranceRepository(services.database)
         self.speakerRepository = SpeakerRepository(services.database)
@@ -65,7 +66,9 @@ final class MeetingDetailModel {
         self.meetingReprocessor = services.meetingReprocessor
         self.audioURL = audioURL
         self.reprocessingLanguage = services.asrLanguage
-        self.recordingIsActive = recordingIsActive ?? { isRecordingActive }
+        self.recordingIsActive = {
+            services.audioOwnership.isCaptureReserved || (recordingIsActive?() ?? isRecordingActive)
+        }
         self.deviceId = services.deviceId
     }
 

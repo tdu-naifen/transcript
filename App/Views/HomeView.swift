@@ -153,19 +153,7 @@ struct HomeView: View {
                 }
             }
             .navigationDestination(for: Meeting.self) { meeting in
-                // A meeting-title tap never requests playback. Search-hit routing is
-                // added only once SearchRepository's result contract is frozen.
-                MeetingDetailView(
-                    meeting: meeting,
-                    audioURL: library.audioURL(for: meeting),
-                    services: services,
-                    isRecordingActive: isRecordingActive(),
-                    onProcessByMac: {
-                        macSubmissionMeeting = meeting
-                    },
-                    macUnavailableReason: macConnection.submissionBlockReason(meetingID: meeting.id),
-                    onMeetingRenamed: { Task { await library.reload() } }
-                )
+                meetingDetail(meeting)
             }
             .sheet(isPresented: $showsSpeakers) { speakerPicker }
             .sheet(isPresented: $showsDates) { datePicker }

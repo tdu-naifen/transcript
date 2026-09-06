@@ -62,16 +62,22 @@ final class RecorderModel {
     private var recordingMeetingId: String?
     private var stopInProgress = false
     private var captureFailure: String?
+    private let processing: any RecordingTranscriptionControlling
+    private let requestPermission: () async -> MicrophonePermission.Status
 
     init(
         services: AppServices,
         library: LibraryModel,
         activityController: any RecordingActivityControlling = RecordingActivityController(),
-        transcription: TranscriptionModel? = nil
+        transcription: TranscriptionModel? = nil,
+        processing: (any RecordingTranscriptionControlling)? = nil,
+        requestPermission: @escaping () async -> MicrophonePermission.Status = { await MicrophonePermission.request() }
     ) {
         self.services = services
         self.library = library
         self.transcription = transcription ?? TranscriptionModel(services: services)
+        self.processing = processing ?? self.transcription
+        self.requestPermission = requestPermission
         self.activityController = activityController
     }
 
@@ -140,13 +146,20 @@ final class RecorderModel {
     // MARK: - Private
 
     private func start() async {
-        permission = await MicrophonePermission.request()
-        guard permission == .granted else { return }
-
+        guard phase == .idle else { return }
         phase = .starting
+        defer {
+            if phase == .idle { services.audioOwnership.releaseCapture() }
+        }
         do {
-            transcription.refreshAvailability()
-            guard transcription.isAvailable else {
+            try services.audioOwnership.prepareForCapture()
+            permission = await requestPermission()
+            guard permission == .granted else {
+                phase = .idle
+                return
+            }
+            processing.refreshAvailability()
+            guard processing.isAvailable else {
                 throw TranscriptionModel.RecordingError.requiredModelsMissing
             }
             // Subscribed before capture starts, so no chunk is lost while the model
@@ -154,7 +167,7 @@ final class RecorderModel {
             let chunks = services.session.chunks()
             let diarizationChunks = services.session.chunks()
             let meeting = try await services.session.start(title: Self.defaultTitle(at: Date()))
-            try transcription.start(
+            try processing.start(
                 meetingId: meeting.id,
                 chunks: chunks,
                 diarizationChunks: diarizationChunks
@@ -162,7 +175,7 @@ final class RecorderModel {
             await recordingDidStart(meetingId: meeting.id)
         } catch {
             _ = try? await services.session.abort()
-            await transcription.discard()
+            await processing.discard()
             phase = .idle
             errorMessage = String(describing: error)
         }
@@ -211,7 +224,7 @@ final class RecorderModel {
             await activityController.end(meetingId: meetingId)
         }
         do {
-            try await transcription.finish()
+            try await processing.finish()
         } catch {
             if stopFailure == nil { stopFailure = error }
         }
@@ -236,6 +249,7 @@ final class RecorderModel {
         elapsed = 0
         level = .silence
         phase = .idle
+        services.audioOwnership.releaseCapture()
         await library.reload()
     }
 

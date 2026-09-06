@@ -15,6 +15,7 @@ final class AppServices {
     let recovery: RecordingRecovery
     let modelDownloader: ASRModelDownloader
     let meetingReprocessor: MeetingReprocessingCoordinator
+    let audioOwnership: AudioSessionOwnership
 
     /// Kept alive between recordings so the ~600 MB load is paid once per launch.
     /// Its language is set per-run by ``LiveTranscriber``, not baked in at creation.
@@ -23,10 +24,12 @@ final class AppServices {
     init(
         database: AppDatabase? = nil,
         store: AudioFileStore? = nil,
-        captureEngine: (any AudioCaptureControlling)? = nil
+        captureEngine: (any AudioCaptureControlling)? = nil,
+        audioOwnership: AudioSessionOwnership = .shared
     ) throws {
         self.database = try database ?? Self.makeDatabase()
         self.store = try store ?? AudioFileStore.standard()
+        self.audioOwnership = audioOwnership
         deviceId = UIDevice.current.identifierForVendor?.uuidString ?? "unknown-device"
         session = RecordingSession(
             database: self.database, deviceId: deviceId, store: self.store,
