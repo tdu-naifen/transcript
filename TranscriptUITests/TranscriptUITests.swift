@@ -7,12 +7,7 @@ final class TranscriptUITests: XCTestCase {
     }
 
     func testRecordingExpandsCollapsesAndStops() {
-        let app = XCUIApplication()
-        app.launchEnvironment["TRANSCRIPT_UI_FIXTURE"] = "0"
-        app.launchArguments = [
-            "-uiFixtureSelectedTab", "recordings",
-            "-uiFixtureExpandRecording", "0"
-        ]
+        let app = realRecordingApp(expandCollapse: true)
         app.launch()
 
         app.buttons["globalRecordButton"].tap()
@@ -45,7 +40,7 @@ final class TranscriptUITests: XCTestCase {
     }
 
     func testSettingsAndSpeakerInsightsAreReachable() {
-        let app = XCUIApplication()
+        let app = isolatedApp()
         app.launchArguments = [
             "-uiFixture", "1",
             "-uiFixtureSelectedTab", "recordings",
@@ -135,7 +130,7 @@ final class TranscriptUITests: XCTestCase {
     }
 
     func testLanguageSwitchImmediatelyUpdatesAllNavigationTitlesAndControls() {
-        let app = XCUIApplication()
+        let app = isolatedApp()
         app.launchArguments = [
             "-uiFixture", "1", "-uiFixtureSelectedTab", "home",
             "-appLanguage", "zhHans", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"
@@ -175,7 +170,7 @@ final class TranscriptUITests: XCTestCase {
     }
 
     func testSystemLanguageOptionUsesChineseSystemWhileAppIsEnglish() {
-        let app = XCUIApplication()
+        let app = isolatedApp()
         app.launchArguments = [
             "-uiFixture", "1", "-uiFixtureSelectedTab", "settings",
             "-appLanguage", "en", "-AppleLanguages", "(zh-Hans)", "-AppleLocale", "zh_CN"
@@ -191,7 +186,7 @@ final class TranscriptUITests: XCTestCase {
     func testFloatingPositionSurvivesTabsRelaunchRotationAndReset() {
         XCUIDevice.shared.orientation = .portrait
         defer { XCUIDevice.shared.orientation = .portrait }
-        let app = XCUIApplication()
+        let app = isolatedApp()
         app.launchArguments = ["-uiFixture", "1", "-uiFixtureSelectedTab", "home", "-appLanguage", "en"]
         app.launch()
         XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 5))
@@ -262,7 +257,7 @@ final class TranscriptUITests: XCTestCase {
     }
 
     func testTranscriptTailIsFullyVisibleAndTapsRealFixtureAudio() {
-        let app = XCUIApplication()
+        let app = isolatedApp()
         app.launchArguments = [
             "-uiFixture", "1", "-uiFixturePlayback", "1", "-appLanguage", "en",
             "-uiFixtureOpenMeetingId", "fixture-meeting-playback"
@@ -302,7 +297,7 @@ final class TranscriptUITests: XCTestCase {
     }
 
     func testSpeakerFilterUsesActualSpeakerHitsAndTitleMatchRemainsDistinct() {
-        let app = XCUIApplication()
+        let app = isolatedApp()
         app.launchArguments = ["-uiFixture", "1", "-uiFixtureSelectedTab", "home", "-appLanguage", "en"]
         app.launch()
         let search = app.textFields["homeSearchField"]
@@ -339,7 +334,7 @@ final class TranscriptUITests: XCTestCase {
     }
 
     func testHomeAndMeetingsCanPageAndTapLastRows() {
-        let app = XCUIApplication()
+        let app = isolatedApp()
         app.launchArguments = [
             "-uiFixture", "1", "-uiFixturePagination", "1", "-uiFixtureSelectedTab", "home", "-appLanguage", "en"
         ]
@@ -388,8 +383,7 @@ final class TranscriptUITests: XCTestCase {
     }
 
     func testAcousticAcceptance() {
-        let app = XCUIApplication()
-        app.launchEnvironment["TRANSCRIPT_UI_FIXTURE"] = "0"
+        let app = realRecordingApp(expandCollapse: false)
         app.launch()
 
         let recordButton = app.buttons["globalRecordButton"]
@@ -442,6 +436,47 @@ final class TranscriptUITests: XCTestCase {
         field.typeText(text)
     }
 
+    func testRealRecordingLaunchConfigurationsRequireIndependentStorageOptIn() throws {
+        var runIDs = Set<UUID>()
+        for expandCollapse in [true, false] {
+            let app = realRecordingApp(expandCollapse: expandCollapse)
+            XCTAssertEqual(app.launchEnvironment["TRANSCRIPT_UI_FIXTURE"], "0")
+            XCTAssertEqual(app.launchEnvironment["TRANSCRIPT_TEST_STORAGE"], "1")
+            let configuration = try TestStorageConfiguration.resolve(
+                environment: app.launchEnvironment, arguments: app.launchArguments
+            )
+            runIDs.insert(try XCTUnwrap(configuration.runID))
+            XCTAssertFalse(TestStorageConfiguration.fixturesRequested(
+                environment: app.launchEnvironment, arguments: app.launchArguments
+            ))
+        }
+        XCTAssertEqual(runIDs.count, 2)
+    }
+
+    private func realRecordingApp(expandCollapse: Bool) -> XCUIApplication {
+        let app = isolatedApp(seedFixtures: false)
+        if expandCollapse {
+            app.launchArguments = ["-uiFixtureSelectedTab", "recordings", "-uiFixtureExpandRecording", "0"]
+        }
+        return app
+    }
+
+    private func isolatedApp(seedFixtures: Bool = true) -> XCUIApplication {
+        let app = XCUIApplication()
+        let runID = UUID()
+        app.launchEnvironment.merge(
+            TestStorageConfiguration.launchEnvironment(runID: runID, seedFixtures: seedFixtures)
+        ) { _, value in value }
+        let attachment = XCTAttachment(string: runID.uuidString)
+        attachment.name = "test-storage-run-\(runID.uuidString)"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        addTeardownBlock { @MainActor in
+            if app.state != .notRunning { app.terminate() }
+        }
+        return app
+    }
+
     private func attachScreenshot(of app: XCUIApplication, name: String) {
         let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         attachment.name = name
@@ -450,7 +485,7 @@ final class TranscriptUITests: XCTestCase {
     }
 
     private func launchFixture() -> XCUIApplication {
-        let app = XCUIApplication()
+        let app = isolatedApp()
         app.launchArguments = ["-uiFixture", "1", "-uiFixtureSelectedTab", "home"]
         app.launch()
         return app

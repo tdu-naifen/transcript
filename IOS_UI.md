@@ -249,3 +249,11 @@ Mac 重新转写可能改变分段，片段编辑不能仅锚定临时 segment I
 - 最终证据：`.build/ios-fix03-final3.log`、`.build/ios-fix03-final3.xcresult`、`.build/ios-fix03-final3-attachments/`。音频为隔离生成的 WAV/AAC，UI 数据为 DEBUG 显式启用的内存 fixture；不是麦克风/模型声学 E2E。
 - 隔离更正：收紧 fixture 启用条件后，旧转写测试曾意外回落到专用 Simulator 磁盘库，其故障注入污染了该库；重复验证在 `ios-fix03-final2` 暴露此问题。本轮已改为显式注入内存库，并隔离 hosted App 启动服务；最终回归通过。此前磁盘库未修补或删除，不能将该 Simulator 的正常启动视为已验收；需要另行授权恢复后再做非 fixture QA。
 - Mac 真实传输、持久回执、双端同步及本地网络隐私分支仍未验收；生产入口继续显示未配置服务原因，不伪造连接。以上为实现者验证，不代表独立 review/QA 通过，也不关闭本规格其余验收项。
+
+### IOS-ISOLATION-FIX-04 测试存储约定
+
+- DEBUG 测试启动必须同时提供 `TRANSCRIPT_TEST_STORAGE=1` 与 UUID 格式的 `TRANSCRIPT_TEST_RUN_ID`；仅设置样例开关、缺少/错误 run ID 或试图传入路径都会拒绝启动，不回落到用户库。
+- `TRANSCRIPT_UI_FIXTURE=1/0` 只选择是否播种样例。两种模式都使用 `Library/Caches/TranscriptTestRuns/<UUID>/Transcript/` 下的磁盘数据库和 Audio；同 run 重启保留数据，不同 run 隔离。没有任何测试选项时仍使用正常 Application Support 持久存储；Release 不启用测试存储。
+- UI 测试统一通过 `isolatedApp` 使用共享的 `TestStorageConfiguration.launchEnvironment`，两条真实录音入口也不例外。保留真实采集/模型实现；launch-config 测试不启动它们，不代表真实麦克风/模型 E2E 已验收。
+- hosted 测试 scheme 从 build setting 展开 UUID，每次命令须附加 `TRANSCRIPT_TEST_RUN_ID="$(uuidgen)"`；同一次重启验证重复使用同一个 UUID。UI 测试另生成各自 UUID，作为 xcresult 附件保留。测试结束后先关闭服务/进程，只清理本次记录的 UUID 根，不能扫描删除其他 run 或生产数据。
+- 存储针对性验证：44 hosted（含原 14 个录音回归）+ 1 real-flow launch-config 测试通过；新的安全设备 `A565D0B8-502B-4BA0-9704-E6D4845065BA` 的正常 DB/WAL 字节哈希、大小、mtime 与音频元数据均未改变。旧污染设备保持不动。

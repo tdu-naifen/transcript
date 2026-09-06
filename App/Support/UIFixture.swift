@@ -5,14 +5,12 @@ import TranscriptCore
 #if DEBUG
 /// Seeds realistic fake meetings + speaker-attributed transcripts so list/detail layout
 /// can be judged against real density instead of the ASCII mockups in UI.md (§6.1):
-/// `xcrun simctl launch booted com.transcript.Transcript -uiFixture 1`
+/// Also requires TRANSCRIPT_TEST_STORAGE=1 and a UUID TRANSCRIPT_TEST_RUN_ID.
 ///
 /// Idempotent: bails out before writing anything if the marker meeting already exists.
 enum UIFixture {
     static var isRequested: Bool {
-        ProcessInfo.processInfo.environment["TRANSCRIPT_UI_FIXTURE"] == "1"
-            || (ProcessInfo.processInfo.arguments.contains("-uiFixture")
-                && UserDefaults.standard.integer(forKey: "uiFixture") == 1)
+        TestStorageConfiguration.fixturesRequested()
     }
 
     static func seedIfRequested(services: AppServices) async {

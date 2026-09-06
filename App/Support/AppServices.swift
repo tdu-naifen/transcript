@@ -25,10 +25,22 @@ final class AppServices {
         database: AppDatabase? = nil,
         store: AudioFileStore? = nil,
         captureEngine: (any AudioCaptureControlling)? = nil,
-        audioOwnership: AudioSessionOwnership = .shared
+        audioOwnership: AudioSessionOwnership = .shared,
+        launchEnvironment: [String: String] = ProcessInfo.processInfo.environment,
+        launchArguments: [String] = ProcessInfo.processInfo.arguments
     ) throws {
-        self.database = try database ?? Self.makeDatabase()
-        self.store = try store ?? Self.makeAudioStore()
+        let applicationSupport: URL?
+        #if DEBUG
+        applicationSupport = try TestStorageConfiguration.resolve(
+            environment: launchEnvironment, arguments: launchArguments
+        ).applicationSupportDirectory()
+        #else
+        applicationSupport = nil
+        #endif
+        self.database = try database ?? AppDatabase.onDisk(
+            directory: applicationSupport?.appendingPathComponent("Transcript", isDirectory: true)
+        )
+        self.store = try store ?? AudioFileStore.standard(applicationSupport: applicationSupport)
         self.audioOwnership = audioOwnership
         deviceId = UIDevice.current.identifierForVendor?.uuidString ?? "unknown-device"
         session = RecordingSession(
@@ -40,29 +52,6 @@ final class AppServices {
         meetingReprocessor = MeetingReprocessingCoordinator(
             database: self.database, deviceId: deviceId, recordingSession: session
         )
-    }
-
-    /// `-uiFixture 1` gets an in-memory database (UI.md §6.1) so fixture meetings never
-    /// mix with real recordings and never persist into a normal launch.
-    private static func makeDatabase() throws -> AppDatabase {
-        #if DEBUG
-        if UIFixture.isRequested {
-            return try AppDatabase.inMemory()
-        }
-        #endif
-        return try AppDatabase.onDisk()
-    }
-
-    private static func makeAudioStore() throws -> AudioFileStore {
-        #if DEBUG
-        if UIFixture.isRequested {
-            let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-                .appendingPathComponent("TranscriptUIFixture", isDirectory: true)
-                .appendingPathComponent(UUID().uuidString, isDirectory: true)
-            return try AudioFileStore.standard(applicationSupport: root)
-        }
-        #endif
-        return try AudioFileStore.standard()
     }
 
     var areRecordingModelsInstalled: Bool {

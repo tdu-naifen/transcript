@@ -69,6 +69,7 @@ targets:
     platform: iOS
     sources:
       - path: TranscriptUITests
+      - path: App/Support/TestStorageConfiguration.swift
     dependencies:
       - target: Transcript
     settings:
@@ -113,7 +114,9 @@ schemes:
     test:
       config: Debug
       environmentVariables:
-        TRANSCRIPT_UI_FIXTURE: "1"
+        TRANSCRIPT_UI_FIXTURE: "0"
+        TRANSCRIPT_TEST_STORAGE: "1"
+        TRANSCRIPT_TEST_RUN_ID: "$(TRANSCRIPT_TEST_RUN_ID)"
       targets:
         - TranscriptTests
   TranscriptCore:
@@ -136,7 +139,9 @@ schemes:
     test:
       config: Debug
       environmentVariables:
-        TRANSCRIPT_UI_FIXTURE: "1"
+        TRANSCRIPT_UI_FIXTURE: "0"
+        TRANSCRIPT_TEST_STORAGE: "1"
+        TRANSCRIPT_TEST_RUN_ID: "$(TRANSCRIPT_TEST_RUN_ID)"
       targets:
         - TranscriptUITests
         - TranscriptTests
