@@ -89,9 +89,8 @@ public struct MeetingRepository: Sendable {
     /// Records `failedFromState` when entering `failed`, and requires that leaving
     /// `failed` lands on a legal successor of it (PLAN §3.2.1).
     ///
-    /// Entering `recorded` is the one moment the transcript is complete and immutable,
-    /// so the derived `localeIdentifier` summary is recomputed here exactly once
-    /// (PLAN §9.4) rather than left to callers.
+    /// Entering `recorded` snapshots the current transcript language. Streaming
+    /// callers refresh it again after optional downstream processing has drained.
     @discardableResult
     public func transition(
         id: String,
@@ -131,6 +130,15 @@ public struct MeetingRepository: Sendable {
         try await database.writer.write { db in
             guard var meeting = try Meeting.fetchOne(db, key: id) else {
                 throw RepositoryError.notFound(table: Meeting.databaseTableName, id: id)
+            }
+            if (meeting.state == newState || (newState == .recorded
+                && [.audioSynced, .queued, .analyzing, .analyzed].contains(meeting.state))),
+               meeting.durationMs == max(0, durationMs),
+               let audio,
+               meeting.audioFileName == audio.fileName,
+               meeting.audioSHA256 == audio.sha256,
+               meeting.audioByteCount == audio.byteCount {
+                return meeting
             }
             meeting.durationMs = max(0, durationMs)
             if let audio {

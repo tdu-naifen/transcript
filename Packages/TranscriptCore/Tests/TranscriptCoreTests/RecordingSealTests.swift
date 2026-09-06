@@ -188,7 +188,7 @@ import Testing
         try await writer.append(buffer.finish())
         let sealed = try await writer.finish()
 
-        let inspected = try AudioFileInspector().inspect(url: url, fileName: "partial.m4a")
+        let inspected = try await AudioFileInspector().inspect(url: url, fileName: "partial.m4a")
         #expect(inspected.audio == sealed)
         #expect(abs(inspected.durationMs - 3_000) < 200)
     }

@@ -4,14 +4,14 @@ import Foundation
 ///
 /// `recording → recorded → audioSynced → queued → analyzing → analyzed`
 ///
-/// Nemotron is a streaming engine, so capture, transcription and diarization all
-/// happen inside `recording`; there is no separate transcribe phase.
+/// Capture, transcription and diarization run concurrently. Once audio is durable,
+/// `recorded` is published even if optional transcript processing is still draining.
 /// `analyzed` is not terminal (`analyzed → queued` re-runs analysis) and neither is
 /// `failed` — a failed meeting resumes from `Meeting.failedFromState`.
 public enum MeetingState: String, Codable, Sendable, CaseIterable {
     /// Audio capture + live transcription + live diarization, all at once.
     case recording
-    /// Capture stopped; the transcript is already complete.
+    /// Capture stopped and audio is durable; optional transcript processing may still drain.
     case recorded
     case audioSynced
     case queued

@@ -1,6 +1,7 @@
 import AVFoundation
 import Foundation
 import UniformTypeIdentifiers
+import Darwin
 
 /// Audio bytes as they were sealed onto disk (PLAN §3.4 / §9.4.1).
 public struct SealedAudio: Sendable, Hashable {
@@ -39,16 +40,19 @@ public final class AudioFileWriter: @unchecked Sendable {
     private var started = false
     private var finished = false
     private var endFrame: Int = 0
+    private let finishTimeout: TimeInterval
 
     public init(
         url: URL,
         sampleRate: Double = AudioCaptureFormat.sampleRate,
         bitRate: Int = 32_000,
-        segmentSeconds: Double = 5
+        segmentSeconds: Double = 5,
+        finishTimeout: TimeInterval = 30
     ) throws {
         self.url = url
         self.fileName = url.lastPathComponent
         self.sampleRate = sampleRate
+        self.finishTimeout = finishTimeout
         self.sink = try SegmentSink(url: url)
 
         writer = AVAssetWriter(contentType: UTType.mpeg4Movie)
@@ -98,6 +102,9 @@ public final class AudioFileWriter: @unchecked Sendable {
             guard writer.status == .writing else {
                 throw AudioCaptureError.writerFailed(writer.error?.localizedDescription ?? "writer stopped")
             }
+            guard input.isReadyForMoreMediaData else {
+                throw AudioCaptureError.writerFailed("The audio encoder stopped accepting samples.")
+            }
             guard let buffer = Self.makeSampleBuffer(chunk) else {
                 throw AudioCaptureError.bufferAllocationFailed
             }
@@ -118,8 +125,13 @@ public final class AudioFileWriter: @unchecked Sendable {
             ))
         }
 
-        await withCheckedContinuation { continuation in
-            writer.finishWriting { continuation.resume() }
+        do {
+            try await AudioWriterFinishWait.wait(timeout: finishTimeout) { completed in
+                self.writer.finishWriting { completed() }
+            }
+        } catch {
+            abandon()
+            throw error
         }
         guard writer.status == .completed else {
             throw AudioCaptureError.writerFailed(writer.error?.localizedDescription ?? "finishWriting failed")
@@ -129,12 +141,15 @@ public final class AudioFileWriter: @unchecked Sendable {
 
     /// Stops encoding but keeps whatever fragments already reached the disk.
     public func abandon() {
-        lock.withLock {
-            guard started, !finished else { return }
+        let shouldCancel = lock.withLock {
+            let shouldCancel = started && writer.status == .writing
             finished = true
-            writer.cancelWriting()
+            return shouldCancel
         }
         sink.close()
+        if shouldCancel {
+            delegateQueue.async { self.writer.cancelWriting() }
+        }
     }
 
     private static func makeSampleBuffer(_ chunk: AudioChunk) -> CMSampleBuffer? {
@@ -197,10 +212,13 @@ private final class SegmentSink: NSObject, AVAssetWriterDelegate, @unchecked Sen
     private var failure: (any Error)?
 
     init(url: URL) throws {
-        guard FileManager.default.createFile(atPath: url.path, contents: nil) else {
-            throw AudioCaptureError.writerUnavailable("cannot create \(url.lastPathComponent)")
+        let descriptor = url.withUnsafeFileSystemRepresentation {
+            Darwin.open($0!, O_WRONLY | O_CREAT | O_EXCL, S_IRUSR | S_IWUSR)
         }
-        handle = try FileHandle(forWritingTo: url)
+        guard descriptor >= 0 else {
+            throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        }
+        handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
         super.init()
     }
 
@@ -225,6 +243,10 @@ private final class SegmentSink: NSObject, AVAssetWriterDelegate, @unchecked Sen
         lock.lock()
         defer { lock.unlock() }
         if let failure { throw AudioCaptureError.writerFailed(failure.localizedDescription) }
+        guard hasher.byteCount > 0 else {
+            throw AudioCaptureError.writerFailed("The audio encoder produced no audio.")
+        }
+        try handle?.synchronize()
         try handle?.close()
         handle = nil
         let byteCount = hasher.byteCount
@@ -236,5 +258,47 @@ private final class SegmentSink: NSObject, AVAssetWriterDelegate, @unchecked Sen
         defer { lock.unlock() }
         try? handle?.close()
         handle = nil
+    }
+}
+
+/// Unlike a task-group race, the deadline does not wait for an uncooperative
+/// AVFoundation completion handler after cancellation.
+enum AudioWriterFinishWait {
+    static func wait(
+        timeout: TimeInterval,
+        begin: (@escaping @Sendable () -> Void) -> Void
+    ) async throws {
+        try await withCheckedThrowingContinuation { continuation in
+            let gate = CompletionGate(continuation)
+            let deadline = DispatchWorkItem {
+                gate.complete(.failure(AudioCaptureError.writerFailed(
+                    "Audio finalization did not complete. The captured fragments have been kept for recovery."
+                )))
+            }
+            gate.deadline = deadline
+            DispatchQueue.global().asyncAfter(deadline: .now() + timeout, execute: deadline)
+            begin { gate.complete(.success(())) }
+        }
+    }
+
+    private final class CompletionGate: @unchecked Sendable {
+        let lock = NSLock()
+        var continuation: CheckedContinuation<Void, any Error>?
+        var deadline: DispatchWorkItem?
+
+        init(_ continuation: CheckedContinuation<Void, any Error>) {
+            self.continuation = continuation
+        }
+
+        func complete(_ result: Result<Void, any Error>) {
+            let continuation = lock.withLock {
+                let continuation = self.continuation
+                self.continuation = nil
+                deadline?.cancel()
+                deadline = nil
+                return continuation
+            }
+            continuation?.resume(with: result)
+        }
     }
 }
