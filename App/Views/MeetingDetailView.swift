@@ -44,6 +44,7 @@ struct MeetingDetailView: View {
         onProcessByMac: (() -> Void)? = nil,
         macUnavailableReason: String? = nil,
         initialSeekMs: Int? = nil,
+        recordingIsActive: (@MainActor () -> Bool)? = nil,
         onMeetingRenamed: @escaping () -> Void = {}
     ) {
         self.meeting = meeting
@@ -56,7 +57,8 @@ struct MeetingDetailView: View {
             audioURL: audioURL,
             services: services,
             isRecordingActive: isRecordingActive,
-            initialSeekMs: initialSeekMs
+            initialSeekMs: initialSeekMs,
+            recordingIsActive: recordingIsActive
         ))
     }
 

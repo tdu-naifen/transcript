@@ -219,6 +219,7 @@ struct HomeView: View {
                 onProcessByMac: { macSubmissionMeeting = meeting },
                 macUnavailableReason: macConnection.submissionBlockReason(meetingID: meeting.id),
                 initialSeekMs: initialSeekMs,
+                recordingIsActive: { isRecordingActive() },
                 onMeetingRenamed: { Task { await library.reload() } }
             )
     }

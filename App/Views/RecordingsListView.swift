@@ -71,6 +71,7 @@ struct RecordingsListView: View {
                     isRecordingActive: isRecordingActive(),
                     onProcessByMac: { macSubmissionMeeting = meeting },
                     macUnavailableReason: macConnection.submissionBlockReason(meetingID: meeting.id),
+                    recordingIsActive: { isRecordingActive() },
                     onMeetingRenamed: { Task { await model.reload() } }
                 )
             }

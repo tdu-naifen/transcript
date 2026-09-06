@@ -9,7 +9,13 @@ struct AudioPlayerBar: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if case .unavailable(let reason) = playback.availability {
+            if playback.isInteractionBlockedByRecording {
+                Label("Stop recording before playing another meeting.", systemImage: "waveform.slash")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("audioUnavailableReason")
+            } else if case .unavailable(let reason) = playback.availability {
                 Label(reason.text, systemImage: "waveform.slash")
                     .font(.footnote)
                     .foregroundStyle(.secondary)

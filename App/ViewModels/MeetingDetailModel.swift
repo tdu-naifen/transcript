@@ -38,7 +38,7 @@ final class MeetingDetailModel {
     private let meetingReprocessor: MeetingReprocessingCoordinator
     private let audioURL: URL?
     private let reprocessingLanguage: ASRLanguage
-    private let isRecordingActive: Bool
+    private let recordingIsActive: @MainActor () -> Bool
     private let deviceId: String
     private var reprocessingTask: Task<Void, Never>?
     private var pendingInitialSeekMs: Int?
@@ -48,14 +48,16 @@ final class MeetingDetailModel {
         audioURL: URL?,
         services: AppServices,
         isRecordingActive: Bool = false,
-        initialSeekMs: Int? = nil
+        initialSeekMs: Int? = nil,
+        recordingIsActive: (@MainActor () -> Bool)? = nil
     ) {
         self.pendingInitialSeekMs = initialSeekMs
         self.meeting = meeting
         self.playback = AudioPlaybackModel(
             url: audioURL,
             durationMs: meeting.durationMs,
-            isRecordingActive: isRecordingActive
+            isRecordingActive: isRecordingActive,
+            recordingIsActive: recordingIsActive
         )
         self.utteranceRepository = UtteranceRepository(services.database)
         self.speakerRepository = SpeakerRepository(services.database)
@@ -63,7 +65,7 @@ final class MeetingDetailModel {
         self.meetingReprocessor = services.meetingReprocessor
         self.audioURL = audioURL
         self.reprocessingLanguage = services.asrLanguage
-        self.isRecordingActive = isRecordingActive
+        self.recordingIsActive = recordingIsActive ?? { isRecordingActive }
         self.deviceId = services.deviceId
     }
 
@@ -125,7 +127,7 @@ final class MeetingDetailModel {
 
     func startReprocessing() {
         guard reprocessingTask == nil, hasLocalAudioForReprocessing, let audioURL else { return }
-        guard !isRecordingActive else {
+        guard !recordingIsActive() else {
             reprocessingState = .failed(String(describing: MeetingReprocessingConflict.recordingInProgress))
             return
         }

@@ -76,16 +76,18 @@ final class AudioPlaybackModel {
     private(set) var waveform: [Float] = []
 
     private let player: AVAudioPlayer?
+    private let recordingIsActive: @MainActor () -> Bool
     private var ticker: Task<Void, Never>?
     private var ownsAudioSession = false
 
-    init(url: URL?, durationMs: Int, isRecordingActive: Bool = false) {
+    init(
+        url: URL?,
+        durationMs: Int,
+        isRecordingActive: Bool = false,
+        recordingIsActive: (@MainActor () -> Bool)? = nil
+    ) {
         self.durationMs = durationMs
-        guard !isRecordingActive else {
-            self.player = nil
-            self.availability = .unavailable(reason: .recordingInProgress)
-            return
-        }
+        self.recordingIsActive = recordingIsActive ?? { isRecordingActive }
         guard let url, FileManager.default.fileExists(atPath: url.path) else {
             self.player = nil
             self.availability = .unavailable(reason: url == nil ? .noAudioFile : .localAudioMissing)
@@ -110,7 +112,10 @@ final class AudioPlaybackModel {
         return Double(currentTimeMs) / Double(durationMs)
     }
 
+    var isInteractionBlockedByRecording: Bool { recordingIsActive() }
+
     func togglePlayPause() {
+        guard !recordingIsActive() else { return }
         guard let player else { return }
         if player.isPlaying {
             pause()
@@ -120,6 +125,7 @@ final class AudioPlaybackModel {
     }
 
     func play() {
+        guard !recordingIsActive() else { return }
         guard availability == .ready, let player, !player.isPlaying else { return }
         do {
             try activateSession()
@@ -146,11 +152,13 @@ final class AudioPlaybackModel {
     /// Seeks and plays (UI.md §3b: "Tapping any line seeks the player to that line's
     /// startMs and plays").
     func seekAndPlay(toMs ms: Int) {
+        guard !recordingIsActive() else { return }
         seek(toMs: ms)
         play()
     }
 
     func seek(toMs ms: Int) {
+        guard !recordingIsActive() else { return }
         guard let player else { return }
         let clamped = max(0, min(ms, durationMs))
         player.currentTime = Double(clamped) / 1000
@@ -177,6 +185,10 @@ final class AudioPlaybackModel {
         ticker?.cancel()
         ticker = Task { @MainActor [weak self] in
             while let self, !Task.isCancelled {
+                if self.recordingIsActive() {
+                    self.pause()
+                    return
+                }
                 try? await Task.sleep(for: .milliseconds(200))
                 if Task.isCancelled { break }
                 self.tick()
