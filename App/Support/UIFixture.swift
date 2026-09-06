@@ -1,15 +1,20 @@
 import Foundation
+import AVFoundation
 import TranscriptCore
 
 #if DEBUG
 /// Seeds realistic fake meetings + speaker-attributed transcripts so list/detail layout
 /// can be judged against real density instead of the ASCII mockups in UI.md (§6.1):
-/// `xcrun simctl launch booted com.transcript.Transcript -uiFixture 1`
+/// Also requires TRANSCRIPT_TEST_STORAGE=1 and a UUID TRANSCRIPT_TEST_RUN_ID.
 ///
 /// Idempotent: bails out before writing anything if the marker meeting already exists.
 enum UIFixture {
+    static var isRequested: Bool {
+        TestStorageConfiguration.fixturesRequested()
+    }
+
     static func seedIfRequested(services: AppServices) async {
-        guard UserDefaults.standard.integer(forKey: "uiFixture") == 1 else { return }
+        guard isRequested else { return }
 
         let meetingRepo = MeetingRepository(services.database)
         let speakerRepo = SpeakerRepository(services.database)
@@ -26,6 +31,19 @@ enum UIFixture {
                 speakers: speakers,
                 deviceId: deviceId
             )
+            if UserDefaults.standard.bool(forKey: "uiFixturePlayback") {
+                try await makePlaybackMeeting(services: services)
+            }
+            if UserDefaults.standard.bool(forKey: "uiFixturePagination") {
+                for index in 0..<30 {
+                    try await meetingRepo.insert(Meeting(
+                        id: String(format: "fixture-page-%02d", index),
+                        title: String(format: "Pagination %02d", index),
+                        startedAt: Date().addingTimeInterval(Double(index * 60)),
+                        state: .recorded, originDeviceId: deviceId
+                    ))
+                }
+            }
         } catch {
             // DEBUG-only convenience; a failure here should never block launch.
         }
@@ -33,6 +51,42 @@ enum UIFixture {
 
     /// First meeting created; its presence means the whole fixture already ran.
     private static let markerMeetingId = "fixture-meeting-standup"
+
+    private static func makePlaybackMeeting(services: AppServices) async throws {
+        let fileName = "\(UUID().uuidString).m4a"
+        let url = try services.store.url(forFileName: fileName)
+        try writeSilentAudio(to: url)
+        let meeting = Meeting(
+            id: "fixture-meeting-playback", title: "Playback fixture",
+            startedAt: Date(), durationMs: 30_000, audioFileName: fileName,
+            state: .recorded, originDeviceId: services.deviceId
+        )
+        try await MeetingRepository(services.database).insert(meeting)
+        try await UtteranceRepository(services.database).append((0..<24).map { index in
+            Utterance(
+                id: "fixture-playback-line-\(index)", meetingId: meeting.id,
+                startMs: index * 1_000, endMs: index * 1_000 + 900,
+                text: index == 23
+                    ? "Final transcript line — this entire paragraph must be visible and tappable above the player. 最后一行必须完整显示。"
+                    : "Playback transcript line \(index). This saved paragraph verifies scrolling without microphones or models.",
+                originDeviceId: services.deviceId
+            )
+        })
+    }
+
+    private static func writeSilentAudio(to url: URL) throws {
+        let file = try AVAudioFile(forWriting: url, settings: [
+            AVFormatIDKey: kAudioFormatMPEG4AAC, AVSampleRateKey: 16_000,
+            AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 32_000
+        ])
+        guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: 16_000),
+              let samples = buffer.floatChannelData?[0] else {
+            throw CocoaError(.fileWriteUnknown)
+        }
+        buffer.frameLength = 16_000
+        samples.update(repeating: 0, count: 16_000)
+        for _ in 0..<30 { try file.write(from: buffer) }
+    }
 
     private struct FixtureSpeakers {
         let alexandra: Speaker

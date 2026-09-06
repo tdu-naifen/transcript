@@ -129,6 +129,7 @@ private struct MicrophoneDeniedView: View {
         } actions: {
             Button("Open Settings") { MicrophonePermission.openSettings() }
                 .buttonStyle(.borderedProminent)
+                .tint(AppColors.filledControl)
         }
     }
 }

@@ -6,10 +6,10 @@ struct RecordingsListView: View {
     let services: AppServices
     @Binding var path: NavigationPath
     let isRecordingActive: () -> Bool
+    let macConnection: MacConnectionModel
     @State private var pendingDeletion: Meeting?
-    #if DEBUG
+    @State private var macSubmissionMeeting: Meeting?
     @State private var didOpenFixtureMeeting = false
-    #endif
     @Environment(\.calendar) private var calendar
 
     var body: some View {
@@ -36,6 +36,10 @@ struct RecordingsListView: View {
                                         meeting: meeting,
                                         participants: model.participants[meeting.id] ?? []
                                     )
+                                }
+                                .accessibilityIdentifier("meetingRow-\(meeting.id)")
+                                .onAppear {
+                                    loadMoreIfNeeded(meeting)
                                 }
                                 .disabled(model.deletingIDs.contains(meeting.id))
                                 .swipeActions(allowsFullSwipe: false) {
@@ -67,10 +71,16 @@ struct RecordingsListView: View {
                     audioURL: model.audioURL(for: meeting),
                     services: services,
                     isRecordingActive: isRecordingActive(),
+                    onProcessByMac: { macSubmissionMeeting = meeting },
+                    macUnavailableReason: macConnection.submissionBlockReason(meetingID: meeting.id),
+                    recordingIsActive: { isRecordingActive() },
                     onMeetingRenamed: { Task { await model.reload() } }
                 )
             }
-            .navigationTitle("meetings.title")
+            .navigationTitle(LocalizationManager.shared.text("meetings.title"))
+            .fullScreenCover(item: $macSubmissionMeeting) { meeting in
+                MacSubmissionView(meeting: meeting, model: macConnection)
+            }
             .confirmationDialog(
                 "meetings.delete_local.title",
                 isPresented: Binding(
@@ -137,12 +147,17 @@ struct RecordingsListView: View {
 
     private func openFixtureMeetingIfRequested() {
         #if DEBUG
-        guard !didOpenFixtureMeeting, path.isEmpty,
+        guard UIFixture.isRequested, !didOpenFixtureMeeting, path.isEmpty,
               let id = UserDefaults.standard.string(forKey: "uiFixtureOpenMeetingId"),
               let meeting = model.meetings.first(where: { $0.id == id }) else { return }
         didOpenFixtureMeeting = true
         path.append(meeting)
         #endif
+    }
+
+    private func loadMoreIfNeeded(_ meeting: Meeting) {
+        guard meeting.id == model.meetings.last?.id else { return }
+        Task { await model.loadMore() }
     }
 }
 

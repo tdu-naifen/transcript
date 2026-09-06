@@ -17,13 +17,13 @@ final class ModelDownloadModel {
     }
 
     var statusText: String {
-        let locale = LocalizationManager.shared.resolvedLocale
+        let localization = LocalizationManager.shared
         switch state {
-        case .notInstalled: return String(localized: "Not downloaded", locale: locale)
+        case .notInstalled: return localization.localized("Not downloaded")
         case .downloading(let done, let total):
-            guard total > 0 else { return String(localized: "Starting…", locale: locale) }
-            return String(localized: "\(Format.bytes(Int(done))) of \(Format.bytes(Int(total)))", locale: locale)
-        case .verifying: return String(localized: "Verifying", locale: locale)
+            guard total > 0 else { return localization.localized("Starting…") }
+            return localization.localized("\(Format.bytes(Int(done))) of \(Format.bytes(Int(total)))")
+        case .verifying: return localization.localized("Verifying")
         case .installed(let bytes): return Format.bytes(Int(bytes))
         case .failed(let message): return message
         }

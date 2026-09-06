@@ -20,6 +20,7 @@ import Testing
         releases -= 1
         return
       }
+
       await withCheckedContinuation { waiters.append($0) }
     }
     func releaseOne() {
@@ -27,6 +28,13 @@ import Testing
     }
     func startCount() -> Int { starts.count }
     func counts() -> (Int, Int) { (loadCount, unloadCount) }
+  }
+
+  actor CompletionMarker {
+    private var value = false
+
+    func mark() { value = true }
+    func isMarked() -> Bool { value }
   }
 
   private func request(_ generation: Int, frames: Int = 16_000) -> VoiceprintRequest {
@@ -185,6 +193,27 @@ import Testing
     await probe.releaseOne()
     await processor.drain()
     #expect(await probe.startCount() == 1)
+    await processor.shutdownAndDrain()
+  }
+
+  @Test func activeCancelAndWaitWaitsForPhysicalInferenceCompletion() async throws {
+    let probe = Probe()
+    let marker = CompletionMarker()
+    let processor = processor(probe: probe)
+    let active = try await processor.submit(request(1))
+    while await probe.startCount() == 0 { await Task.yield() }
+
+    let waiter = Task {
+      await active.cancelAndWait()
+      await marker.mark()
+    }
+    await Task.yield()
+    #expect(await marker.isMarked() == false)
+
+    await probe.releaseOne()
+    await waiter.value
+    #expect(await marker.isMarked())
+    await #expect(throws: CancellationError.self) { try await active.value() }
     await processor.shutdownAndDrain()
   }
 

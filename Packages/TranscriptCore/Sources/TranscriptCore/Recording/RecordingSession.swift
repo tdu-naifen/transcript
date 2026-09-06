@@ -38,22 +38,24 @@ public actor RecordingSession {
     private let meetings: MeetingRepository
     private let store: AudioFileStore
     private let deviceId: String
-    private let engine: AudioCaptureEngine
+    private let engine: any AudioCaptureControlling
     private var active: Active?
     private var pending: Pending?
     private var phase: Phase = .idle
+    private var drainInProgress = false
 
     public init(
         database: AppDatabase,
         deviceId: String,
         store: AudioFileStore,
-        configuration: AudioCaptureConfiguration = AudioCaptureConfiguration()
+        configuration: AudioCaptureConfiguration = AudioCaptureConfiguration(),
+        captureEngine: (any AudioCaptureControlling)? = nil
     ) {
         self.meetings = MeetingRepository(database)
         self.store = store
         self.deviceId = deviceId
         self.configuration = configuration
-        self.engine = AudioCaptureEngine(configuration: configuration)
+        self.engine = captureEngine ?? AudioCaptureEngine(configuration: configuration)
     }
 
     /// Where a future ASR consumer plugs in: its own broadcast copy of the chunk stream,
@@ -69,7 +71,9 @@ public actor RecordingSession {
     public var activeMeetingId: String? { active?.meetingId ?? pending?.token.meetingId }
 
     public func start(title: String, now: Date = Date()) async throws -> Meeting {
-        guard active == nil, pending == nil else { throw AudioCaptureError.alreadyRecording }
+        guard active == nil, pending == nil, !drainInProgress else {
+            throw AudioCaptureError.alreadyRecording
+        }
 
         let meeting = Meeting(
             title: title,
@@ -148,12 +152,19 @@ public actor RecordingSession {
 
     /// Closes capture and seals the audio file, but deliberately leaves the meeting in
     /// `recording` until its ASR and diarization consumers have drained.
-    public func drainCapture(now: Date = Date()) async throws -> PendingStop {
+    public func drainCapture(
+        now: Date = Date(),
+        onCaptureStopped: @Sendable () async -> Void = {}
+    ) async throws -> PendingStop {
         guard let active else { throw AudioCaptureError.notRecording }
+        guard !drainInProgress else { throw AudioCaptureError.alreadyRecording }
+        drainInProgress = true
+        defer { drainInProgress = false }
         self.active = nil
         phase = .idle
 
         engine.stop()
+        await onCaptureStopped()
         let outcome = await active.task.value
         let durationMs = Self.durationMs(frames: outcome.frames, sampleRate: configuration.sampleRate)
 

@@ -53,6 +53,7 @@ command=(
     -scheme TranscriptCore
     -destination "platform=iOS Simulator,id=$DEVICE_ID"
     -derivedDataPath "$DERIVED_DATA"
+    -parallel-testing-enabled NO
     test
 )
 # Do not union a broad default selection with a caller's focused suite selection.
@@ -79,6 +80,11 @@ if [[ -n "${BACKEND_REAL_CAMPLUS:-}" ]]; then
     if [[ "$BACKEND_REAL_CAMPLUS" != 1 ]]; then
         printf 'BACKEND_REAL_CAMPLUS must be 1.\n' >&2
         exit 2
+    fi
+    if ! grep -R -q -E 'struct VoiceprintRuntimeTests|func voiceprintRuntime' \
+        "$ROOT/Packages/TranscriptCore/Tests" 2>/dev/null; then
+        printf 'BACKEND_REAL_CAMPLUS=1 is unsupported: VoiceprintRuntimeTests suite is not present; refusing a 0-test success.\n' >&2
+        exit 4
     fi
     MODEL_SOURCE="$ROOT/Models/campplus-embedder"
     AUDIO_SOURCE="$ROOT/Audio/librispeech-multi"

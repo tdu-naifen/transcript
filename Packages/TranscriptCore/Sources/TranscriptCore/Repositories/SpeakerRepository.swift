@@ -34,10 +34,12 @@ struct VoiceprintSnapshot: Sendable {
 public struct VoiceprintBindingExpectation: Sendable, Equatable {
     public let speakerId: String?
     public let updatedAt: Date?
+    public let slotRevision: Int
 
-    public init(speakerId: String?, updatedAt: Date?) {
+    public init(speakerId: String?, updatedAt: Date?, slotRevision: Int = 0) {
         self.speakerId = speakerId
         self.updatedAt = updatedAt
+        self.slotRevision = slotRevision
     }
 }
 
@@ -484,13 +486,24 @@ public struct SpeakerRepository: Sendable {
     ) async throws -> VoiceprintBindingExpectation {
         try await database.reader.read { db in
             guard let row = try Row.fetchOne(db, sql: """
-                SELECT speakerId, updatedAt FROM meetingSpeaker
-                WHERE meetingId = ? AND displayIndex = ?
+                SELECT ms.speakerId, ms.updatedAt,
+                       COALESCE(sr.revision, 0) AS slotRevision
+                FROM meetingSpeaker ms
+                LEFT JOIN meetingSpeakerSlotRevision sr
+                  ON sr.meetingId = ms.meetingId AND sr.displayIndex = ms.displayIndex
+                WHERE ms.meetingId = ? AND ms.displayIndex = ?
                 """, arguments: [meetingId, speakerIndex]) else {
-                return VoiceprintBindingExpectation(speakerId: nil, updatedAt: nil)
+                let revision = try Int.fetchOne(db, sql: """
+                    SELECT revision FROM meetingSpeakerSlotRevision
+                    WHERE meetingId = ? AND displayIndex = ?
+                    """, arguments: [meetingId, speakerIndex]) ?? 0
+                return VoiceprintBindingExpectation(
+                    speakerId: nil, updatedAt: nil, slotRevision: revision
+                )
             }
             return VoiceprintBindingExpectation(
-                speakerId: row["speakerId"], updatedAt: row["updatedAt"]
+                speakerId: row["speakerId"], updatedAt: row["updatedAt"],
+                slotRevision: row["slotRevision"]
             )
         }
     }
@@ -535,7 +548,10 @@ public struct SpeakerRepository: Sendable {
         deviceId: String,
         now: Date
     ) async throws -> Speaker {
-        try await database.writer.write { db in
+        guard speakerIndex >= 0 else {
+            throw RepositoryError.negativeDisplayIndex(meetingId: meetingId, displayIndex: speakerIndex)
+        }
+        return try await database.writer.write { db in
             if let expectedVoiceprintGeneration {
                 let currentGeneration = try Int.fetchOne(
                     db, sql: "SELECT revision FROM voiceprintGeneration WHERE id = 1"
@@ -552,9 +568,21 @@ public struct SpeakerRepository: Sendable {
                 """, arguments: [meetingId, speakerIndex])
             let current: String? = currentRow?["speakerId"]
             let currentUpdatedAt: Date? = currentRow?["updatedAt"]
+            let currentRevision = try Self.slotRevision(
+                db, meetingId: meetingId, displayIndex: speakerIndex
+            )
             guard current == expectation.speakerId,
-                  currentUpdatedAt == expectation.updatedAt else {
+                  currentUpdatedAt == expectation.updatedAt,
+                  currentRevision == expectation.slotRevision else {
                 throw VoiceprintBindingError.staleExpectation
+            }
+            if let linked = try Row.fetchOne(db, sql: """
+                SELECT displayIndex FROM meetingSpeaker
+                WHERE meetingId = ? AND speakerId = ? AND displayIndex <> ?
+                """, arguments: [meetingId, speakerId, speakerIndex]) {
+                throw RepositoryError.speakerAlreadyLinkedInMeeting(
+                    meetingId: meetingId, speakerId: speakerId, displayIndex: linked["displayIndex"]
+                )
             }
             if let current, current != speakerId {
                 let named = try String.fetchOne(
@@ -585,14 +613,21 @@ public struct SpeakerRepository: Sendable {
         deviceId: String,
         now: Date
     ) async throws -> Speaker {
-        try await database.writer.write { db in
+        guard speakerIndex >= 0 else {
+            throw RepositoryError.negativeDisplayIndex(meetingId: meetingId, displayIndex: speakerIndex)
+        }
+        return try await database.writer.write { db in
             let currentRow = try Row.fetchOne(db, sql: """
                 SELECT speakerId, updatedAt FROM meetingSpeaker WHERE meetingId = ? AND displayIndex = ?
                 """, arguments: [meetingId, speakerIndex])
             let current: String? = currentRow?["speakerId"]
             let currentUpdatedAt: Date? = currentRow?["updatedAt"]
+            let currentRevision = try Self.slotRevision(
+                db, meetingId: meetingId, displayIndex: speakerIndex
+            )
             guard current == expectation.speakerId,
-                  currentUpdatedAt == expectation.updatedAt else {
+                  currentUpdatedAt == expectation.updatedAt,
+                  currentRevision == expectation.slotRevision else {
                 throw VoiceprintBindingError.staleExpectation
             }
             if let current {
@@ -620,6 +655,19 @@ public struct SpeakerRepository: Sendable {
             ).insert(db)
             return speaker
         }
+    }
+
+    private static func slotRevision(
+        _ db: Database, meetingId: String, displayIndex: Int
+    ) throws -> Int {
+        try Int.fetchOne(
+            db,
+            sql: """
+                SELECT revision FROM meetingSpeakerSlotRevision
+                WHERE meetingId = ? AND displayIndex = ?
+                """,
+            arguments: [meetingId, displayIndex]
+        ) ?? 0
     }
 
     /// Brute-force scan over stored embeddings (PLAN §4.4).

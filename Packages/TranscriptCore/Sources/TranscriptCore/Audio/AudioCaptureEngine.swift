@@ -13,6 +13,18 @@ public enum AudioCaptureEvent: Sendable, Equatable {
     case failed(message: String)
 }
 
+public protocol AudioCaptureControlling: Sendable {
+    func chunks() -> AsyncStream<AudioChunk>
+    func levels() -> AsyncStream<AudioLevel>
+    func events() -> AsyncStream<AudioCaptureEvent>
+    func start() throws
+    func pause() throws
+    func resume() throws
+    @discardableResult
+    func stop() -> Int
+    func invalidate()
+}
+
 /// Taps the input node, resamples to 16 kHz mono Float32, and publishes tier-aligned
 /// chunks plus a separate low-rate level signal.
 ///
@@ -20,7 +32,7 @@ public enum AudioCaptureEvent: Sendable, Equatable {
 /// file writer and a future ASR consumer can both iterate without competing. Streams
 /// outlive a single recording; each recording restarts chunk indices at 0 and ends with
 /// a chunk whose `isFinal` is true.
-public final class AudioCaptureEngine: @unchecked Sendable {
+public final class AudioCaptureEngine: AudioCaptureControlling, @unchecked Sendable {
     private enum State: Sendable {
         case idle
         case running

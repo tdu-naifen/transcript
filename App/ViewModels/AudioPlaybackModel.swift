@@ -26,20 +26,18 @@ final class AudioPlaybackModel {
 
         @MainActor
         var text: String {
-            let locale = LocalizationManager.shared.resolvedLocale
+            let localization = LocalizationManager.shared
             switch self {
             case .noAudioFile:
-                return String(localized: "This meeting has no associated audio file.", locale: locale)
+                return localization.localized("This meeting has no associated audio file.")
             case .localAudioMissing:
-                return String(localized:
-                    "The audio file is not available on this device. The transcript is still available.",
-                    locale: locale)
+                return localization.localized("The audio file is not available on this device. The transcript is still available.")
             case .openFailed:
-                return String(localized: "Couldn't open the audio file.", locale: locale)
+                return localization.localized("Couldn't open the audio file.")
             case .recordingInProgress:
-                return String(localized: "Stop the active recording before playing another meeting.", locale: locale)
+                return localization.localized("Stop the active recording before playing another meeting.")
             case .playbackFailed:
-                return String(localized: "Couldn't start audio playback. Reopen this meeting to try again.", locale: locale)
+                return localization.localized("Couldn't start audio playback. Reopen this meeting to try again.")
             }
         }
     }
@@ -76,16 +74,21 @@ final class AudioPlaybackModel {
     private(set) var waveform: [Float] = []
 
     private let player: AVAudioPlayer?
+    private let recordingIsActive: @MainActor () -> Bool
     private var ticker: Task<Void, Never>?
-    private var ownsAudioSession = false
+    private let audioOwnership: AudioSessionOwnership
+    private let ownerID = UUID()
 
-    init(url: URL?, durationMs: Int, isRecordingActive: Bool = false) {
+    init(
+        url: URL?,
+        durationMs: Int,
+        isRecordingActive: Bool = false,
+        recordingIsActive: (@MainActor () -> Bool)? = nil,
+        audioOwnership: AudioSessionOwnership = .shared
+    ) {
         self.durationMs = durationMs
-        guard !isRecordingActive else {
-            self.player = nil
-            self.availability = .unavailable(reason: .recordingInProgress)
-            return
-        }
+        self.recordingIsActive = recordingIsActive ?? { isRecordingActive }
+        self.audioOwnership = audioOwnership
         guard let url, FileManager.default.fileExists(atPath: url.path) else {
             self.player = nil
             self.availability = .unavailable(reason: url == nil ? .noAudioFile : .localAudioMissing)
@@ -110,7 +113,10 @@ final class AudioPlaybackModel {
         return Double(currentTimeMs) / Double(durationMs)
     }
 
+    var isInteractionBlockedByRecording: Bool { audioOwnership.isCaptureReserved || recordingIsActive() }
+
     func togglePlayPause() {
+        guard !isInteractionBlockedByRecording else { return }
         guard let player else { return }
         if player.isPlaying {
             pause()
@@ -120,9 +126,12 @@ final class AudioPlaybackModel {
     }
 
     func play() {
+        guard !isInteractionBlockedByRecording else { return }
         guard availability == .ready, let player, !player.isPlaying else { return }
         do {
-            try activateSession()
+            guard try audioOwnership.acquirePlayback(owner: ownerID, stop: { [weak self] in
+                self?.pause()
+            }) else { return }
             player.rate = Float(speed.rawValue)
             guard player.play() else {
                 availability = .unavailable(reason: .playbackFailed)
@@ -146,11 +155,13 @@ final class AudioPlaybackModel {
     /// Seeks and plays (UI.md §3b: "Tapping any line seeks the player to that line's
     /// startMs and plays").
     func seekAndPlay(toMs ms: Int) {
+        guard !isInteractionBlockedByRecording else { return }
         seek(toMs: ms)
         play()
     }
 
     func seek(toMs ms: Int) {
+        guard !isInteractionBlockedByRecording else { return }
         guard let player else { return }
         let clamped = max(0, min(ms, durationMs))
         player.currentTime = Double(clamped) / 1000
@@ -177,6 +188,10 @@ final class AudioPlaybackModel {
         ticker?.cancel()
         ticker = Task { @MainActor [weak self] in
             while let self, !Task.isCancelled {
+                if self.isInteractionBlockedByRecording {
+                    self.pause()
+                    return
+                }
                 try? await Task.sleep(for: .milliseconds(200))
                 if Task.isCancelled { break }
                 self.tick()
@@ -195,24 +210,8 @@ final class AudioPlaybackModel {
         }
     }
 
-    /// `.playback` (not `.playAndRecord`) so this works with the silent switch on and
-    /// never competes with `AudioCaptureEngine`'s recording session (UI.md §3a).
-    private func activateSession() throws {
-        #if os(iOS)
-        let session = AVAudioSession.sharedInstance()
-        try session.setCategory(.playback, mode: .default, options: [])
-        try session.setActive(true, options: [])
-        ownsAudioSession = true
-        #endif
-    }
-
     private func deactivateSession() {
-        // An unavailable player must not deactivate another meeting's recording session.
-        guard ownsAudioSession else { return }
-        #if os(iOS)
-        try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
-        #endif
-        ownsAudioSession = false
+        audioOwnership.releasePlayback(owner: ownerID)
     }
 
     private nonisolated static func loadWaveform(url: URL, barCount: Int = 84) async -> [Float] {

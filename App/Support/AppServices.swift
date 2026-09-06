@@ -15,32 +15,43 @@ final class AppServices {
     let recovery: RecordingRecovery
     let modelDownloader: ASRModelDownloader
     let meetingReprocessor: MeetingReprocessingCoordinator
+    let audioOwnership: AudioSessionOwnership
 
     /// Kept alive between recordings so the ~600 MB load is paid once per launch.
     /// Its language is set per-run by ``LiveTranscriber``, not baked in at creation.
     private var engine: StreamingNemotronMultilingualAsrManager?
 
-    init() throws {
-        database = try Self.makeDatabase()
-        store = try AudioFileStore.standard()
+    init(
+        database: AppDatabase? = nil,
+        store: AudioFileStore? = nil,
+        captureEngine: (any AudioCaptureControlling)? = nil,
+        audioOwnership: AudioSessionOwnership = .shared,
+        launchEnvironment: [String: String] = ProcessInfo.processInfo.environment,
+        launchArguments: [String] = ProcessInfo.processInfo.arguments
+    ) throws {
+        let applicationSupport: URL?
+        #if DEBUG
+        applicationSupport = try TestStorageConfiguration.resolve(
+            environment: launchEnvironment, arguments: launchArguments
+        ).applicationSupportDirectory()
+        #else
+        applicationSupport = nil
+        #endif
+        self.database = try database ?? AppDatabase.onDisk(
+            directory: applicationSupport?.appendingPathComponent("Transcript", isDirectory: true)
+        )
+        self.store = try store ?? AudioFileStore.standard(applicationSupport: applicationSupport)
+        self.audioOwnership = audioOwnership
         deviceId = UIDevice.current.identifierForVendor?.uuidString ?? "unknown-device"
-        session = RecordingSession(database: database, deviceId: deviceId, store: store)
-        recovery = RecordingRecovery(database: database, deviceId: deviceId, store: store)
+        session = RecordingSession(
+            database: self.database, deviceId: deviceId, store: self.store,
+            captureEngine: captureEngine
+        )
+        recovery = RecordingRecovery(database: self.database, deviceId: deviceId, store: self.store)
         modelDownloader = ASRModelDownloader()
         meetingReprocessor = MeetingReprocessingCoordinator(
-            database: database, deviceId: deviceId, recordingSession: session
+            database: self.database, deviceId: deviceId, recordingSession: session
         )
-    }
-
-    /// `-uiFixture 1` gets an in-memory database (UI.md §6.1) so fixture meetings never
-    /// mix with real recordings and never persist into a normal launch.
-    private static func makeDatabase() throws -> AppDatabase {
-        #if DEBUG
-        if UserDefaults.standard.integer(forKey: "uiFixture") == 1 {
-            return try AppDatabase.inMemory()
-        }
-        #endif
-        return try AppDatabase.onDisk()
     }
 
     var areRecordingModelsInstalled: Bool {

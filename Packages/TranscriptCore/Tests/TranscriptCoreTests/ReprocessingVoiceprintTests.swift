@@ -1,9 +1,42 @@
 import Foundation
+import FluidAudio
 import GRDB
 import Testing
 @testable import TranscriptCore
 
 @Suite struct ReprocessingVoiceprintTests {
+    actor Gate {
+        private var isReleased = false
+        private var entered = false
+        private var waiters: [CheckedContinuation<Void, Never>] = []
+
+        func wait() async {
+            entered = true
+            guard !isReleased else { return }
+            await withCheckedContinuation { waiters.append($0) }
+        }
+
+        func release() {
+            isReleased = true
+            let waiters = self.waiters
+            self.waiters.removeAll(keepingCapacity: false)
+            for waiter in waiters { waiter.resume() }
+        }
+
+        func hasEntered() -> Bool { entered }
+    }
+
+    actor Registry {
+        private var ids: Set<UUID> = []
+        private var completed = false
+
+        func insert(_ id: UUID) { ids.insert(id) }
+        func remove(_ id: UUID) { ids.remove(id) }
+        func isEmpty() -> Bool { ids.isEmpty }
+        func markCompleted() { completed = true }
+        func isCompleted() -> Bool { completed }
+    }
+
     @Test func reliableMatchReusesIdentityWithoutSilentEnrollment() async throws {
         let database = try AppDatabase.inMemory()
         let speakers = SpeakerRepository(database)
@@ -135,12 +168,70 @@ import Testing
         #expect(try await speakers.fetch(id: oldSpeaker.id)?.displayName == "Confirmed name")
     }
 
+    @Test func cancellationAfterSubmitReturnsCancelsAndWaitsForThatPhysicalJob() async throws {
+        let admission = Gate()
+        let physical = Gate()
+        let registry = Registry()
+        let processor = VoiceprintProcessor(
+            inference: VoiceprintInference(
+                load: {},
+                infer: { _ in
+                    await physical.wait()
+                    return [1, 0]
+                },
+                unload: {}
+            ),
+            admissionGate: { await admission.wait() }
+        )
+        let request = VoiceprintRequest(
+            meetingId: "reprocess",
+            speakerSlot: 0,
+            generation: 1,
+            evidenceVersion: 1,
+            audio: [Float](repeating: 1, count: 16_000),
+            sampleRate: 16_000,
+            finalizedSegments: [
+                DiarizerSegment(
+                    speakerIndex: 0, startFrame: 0, endFrame: 16_000,
+                    frameDurationSeconds: 1.0 / 16_000.0
+                )
+            ]
+        )
+
+        let operation = Task {
+            try await MeetingReprocessor.submitVoiceprintHandle(
+                processor: processor,
+                request: request,
+                register: { handle in await registry.insert(handle.id) },
+                unregister: { id in await registry.remove(id) },
+                ensureActive: {
+                    while !(await physical.hasEntered()) { await Task.yield() }
+                    throw CancellationError()
+                }
+            )
+        }
+        while !(await admission.hasEntered()) { await Task.yield() }
+        await admission.release()
+        while !(await physical.hasEntered()) { await Task.yield() }
+        #expect(await registry.isEmpty() == false)
+        await Task.yield()
+        #expect(operation.isCancelled == false)
+        await physical.release()
+        await #expect(throws: CancellationError.self) { try await operation.value }
+        #expect(await registry.isEmpty())
+
+        let retry = try await processor.submit(request)
+        _ = try await retry.value()
+        await processor.shutdownAndDrain()
+    }
+
     private func embeddedResult(_ embedding: [Float]) -> VoiceprintProcessingResult {
         VoiceprintProcessingResult(
             meetingId: "meeting",
             speakerSlot: 0,
             generation: 1,
             outcome: .embedded(embedding),
+            match: nil,
             evidence: .init(ranges: [0..<32_000], cleanFrameCount: 32_000, sampleRate: 16_000)
         )
     }

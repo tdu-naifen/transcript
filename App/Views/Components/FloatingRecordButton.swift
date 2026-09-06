@@ -4,24 +4,24 @@ import SwiftUI
 /// Resizing changes that area, not the user's preferred relative position.
 struct FloatingRecordButton: View {
     static let accent = Color(red: 6 / 255, green: 34 / 255, blue: 158 / 255)
-    private static let xKey = "floatingRecordButton.normalizedX"
-    private static let yKey = "floatingRecordButton.normalizedY"
+    static let xKey = "floatingRecordButton.normalizedX"
+    static let yKey = "floatingRecordButton.normalizedY"
 
     @AppStorage(Self.xKey) private var normalizedX = 1.0
     @AppStorage(Self.yKey) private var normalizedY = 1.0
     @GestureState private var translation = CGSize.zero
     let action: () -> Void
 
-    static func resetPosition() {
-        UserDefaults.standard.set(1.0, forKey: xKey)
-        UserDefaults.standard.set(1.0, forKey: yKey)
+    static func resetPosition(defaults: UserDefaults = .standard) {
+        defaults.set(1.0, forKey: xKey)
+        defaults.set(1.0, forKey: yKey)
     }
 
     var body: some View {
         GeometryReader { geometry in
-            let bounds = movementBounds(in: geometry)
-            let origin = point(in: bounds)
-            let position = clamped(
+            let bounds = FloatingRecordButtonGeometry.bounds(size: geometry.size, insets: geometry.safeAreaInsets)
+            let origin = FloatingRecordButtonGeometry.point(normalized: normalizedPosition, in: bounds)
+            let position = FloatingRecordButtonGeometry.clamped(
                 CGPoint(x: origin.x + translation.width, y: origin.y + translation.height),
                 to: bounds
             )
@@ -61,39 +61,50 @@ struct FloatingRecordButton: View {
         .coordinateSpace(name: "floatingRecorderArea")
     }
 
-    private func movementBounds(in geometry: GeometryProxy) -> CGRect {
-        let radius = FloatingRecordButtonMetrics.diameter / 2
-        let insets = geometry.safeAreaInsets
-        let minX = min(geometry.size.width / 2, insets.leading + radius + 16)
-        let maxX = max(minX, geometry.size.width - insets.trailing - radius - 16)
-        let minY = min(geometry.size.height / 2, insets.top + radius + 16)
-        let maxY = max(minY, geometry.size.height - insets.bottom - radius - FloatingRecordButtonMetrics.bottomPadding)
-        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
-    }
-
-    private func fraction(_ value: Double) -> Double {
-        value.isFinite ? min(1, max(0, value)) : 1
-    }
-
-    private func point(in bounds: CGRect) -> CGPoint {
-        CGPoint(
-            x: bounds.minX + bounds.width * fraction(normalizedX),
-            y: bounds.minY + bounds.height * fraction(normalizedY)
-        )
-    }
-
-    private func clamped(_ point: CGPoint, to bounds: CGRect) -> CGPoint {
-        CGPoint(x: min(bounds.maxX, max(bounds.minX, point.x)), y: min(bounds.maxY, max(bounds.minY, point.y)))
-    }
+    private var normalizedPosition: CGPoint { CGPoint(x: normalizedX, y: normalizedY) }
 
     private func store(_ point: CGPoint, in bounds: CGRect) {
-        let point = clamped(point, to: bounds)
-        if bounds.width > 0 { normalizedX = (point.x - bounds.minX) / bounds.width }
-        if bounds.height > 0 { normalizedY = (point.y - bounds.minY) / bounds.height }
+        let normalized = FloatingRecordButtonGeometry.normalized(point, in: bounds, previous: normalizedPosition)
+        normalizedX = normalized.x
+        normalizedY = normalized.y
     }
 
     private func move(x: Double, y: Double) {
-        normalizedX = fraction(fraction(normalizedX) + x)
-        normalizedY = fraction(fraction(normalizedY) + y)
+        normalizedX = FloatingRecordButtonGeometry.fraction(FloatingRecordButtonGeometry.fraction(normalizedX) + x)
+        normalizedY = FloatingRecordButtonGeometry.fraction(FloatingRecordButtonGeometry.fraction(normalizedY) + y)
+    }
+}
+
+enum FloatingRecordButtonGeometry {
+    static func bounds(size: CGSize, insets: EdgeInsets) -> CGRect {
+        let radius = FloatingRecordButtonMetrics.diameter / 2
+        let minX = min(size.width / 2, insets.leading + radius + 16)
+        let maxX = max(minX, size.width - insets.trailing - radius - 16)
+        let minY = min(size.height / 2, insets.top + radius + 16)
+        let maxY = max(minY, size.height - insets.bottom - radius - FloatingRecordButtonMetrics.bottomPadding)
+        return CGRect(x: minX, y: minY, width: maxX - minX, height: maxY - minY)
+    }
+
+    static func fraction(_ value: Double) -> Double {
+        value.isFinite ? min(1, max(0, value)) : 1
+    }
+
+    static func point(normalized: CGPoint, in bounds: CGRect) -> CGPoint {
+        CGPoint(
+            x: bounds.minX + bounds.width * fraction(normalized.x),
+            y: bounds.minY + bounds.height * fraction(normalized.y)
+        )
+    }
+
+    static func clamped(_ point: CGPoint, to bounds: CGRect) -> CGPoint {
+        CGPoint(x: min(bounds.maxX, max(bounds.minX, point.x)), y: min(bounds.maxY, max(bounds.minY, point.y)))
+    }
+
+    static func normalized(_ point: CGPoint, in bounds: CGRect, previous: CGPoint) -> CGPoint {
+        let point = clamped(point, to: bounds)
+        return CGPoint(
+            x: bounds.width > 0 ? (point.x - bounds.minX) / bounds.width : fraction(previous.x),
+            y: bounds.height > 0 ? (point.y - bounds.minY) / bounds.height : fraction(previous.y)
+        )
     }
 }

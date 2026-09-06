@@ -20,11 +20,8 @@ struct RootView: View {
                 ReadyView(services: services, library: library, recorder: recorder)
             }
         }
-        // Reading `language` here registers Observation tracking, so every descendant
-        // `Text`/`Label` (via `LocalizedStringKey`) re-renders in the new language the
-        // instant Settings changes it — no app restart needed.
-        .environment(\.locale, localization.language.locale ?? .autoupdatingCurrent)
-        .tint(FloatingRecordButton.accent)
+        .environment(\.locale, localization.resolvedLocale)
+        .tint(AppColors.controlTint)
     }
 }
 
@@ -47,6 +44,7 @@ private struct ReadyView: View {
     @State private var homePath = NavigationPath()
     @State private var recordingsPath = NavigationPath()
     @State private var settingsPath = NavigationPath()
+    @State private var macConnection = MacConnectionModel()
     @State private var isStartingRecording = false
     @State private var isStoppingRecording = false
     @State private var namingError: String?
@@ -95,23 +93,25 @@ private struct ReadyView: View {
     var body: some View {
         ZStack {
             TabView(selection: $selectedTab) {
-                Tab("Home", systemImage: "house", value: AppTab.home) {
+                Tab(LocalizationManager.shared.text("Home"), systemImage: "house", value: AppTab.home) {
                     HomeView(
                         services: services,
                         library: library,
                         path: $homePath,
-                        isRecordingActive: { hasRecordingSession }
+                        isRecordingActive: { hasRecordingSession },
+                        macConnection: macConnection
                     )
                 }
-                Tab("Meetings", systemImage: "list.bullet", value: AppTab.meetings) {
+                Tab(LocalizationManager.shared.text("Meetings"), systemImage: "list.bullet", value: AppTab.meetings) {
                     RecordingsListView(
                         model: library,
                         services: services,
                         path: $recordingsPath,
-                        isRecordingActive: { hasRecordingSession }
+                        isRecordingActive: { hasRecordingSession },
+                        macConnection: macConnection
                     )
                 }
-                Tab("Settings", systemImage: "gearshape", value: AppTab.settings) {
+                Tab(LocalizationManager.shared.text("Settings"), systemImage: "gearshape", value: AppTab.settings) {
                     SettingsView(services: services, path: $settingsPath)
                 }
             }
@@ -242,11 +242,7 @@ private struct ReadyView: View {
     }
 
     private func acceptanceText(_ key: String) -> String {
-        String(
-            localized: String.LocalizationValue(key),
-            table: "AcceptanceUI",
-            locale: LocalizationManager.shared.resolvedLocale
-        )
+        LocalizationManager.shared.text(key, table: "AcceptanceUI")
     }
 }
 

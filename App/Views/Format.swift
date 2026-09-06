@@ -49,15 +49,15 @@ enum Format {
 extension MeetingState {
     @MainActor
     var label: String {
-        let locale = LocalizationManager.shared.resolvedLocale
+        let localization = LocalizationManager.shared
         switch self {
-        case .recording: return String(localized: "Recording", locale: locale)
-        case .recorded: return String(localized: "Recorded", locale: locale)
-        case .audioSynced: return String(localized: "Synced", locale: locale)
-        case .queued: return String(localized: "Queued", locale: locale)
-        case .analyzing: return String(localized: "Analyzing", locale: locale)
-        case .analyzed: return String(localized: "Analyzed", locale: locale)
-        case .failed: return String(localized: "Needs attention", locale: locale)
+        case .recording: return localization.localized("Recording")
+        case .recorded: return localization.localized("Recorded")
+        case .audioSynced: return localization.localized("Synced")
+        case .queued: return localization.localized("Queued")
+        case .analyzing: return localization.localized("Analyzing")
+        case .analyzed: return localization.localized("Analyzed")
+        case .failed: return localization.localized("Needs attention")
         }
     }
 

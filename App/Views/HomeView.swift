@@ -6,20 +6,30 @@ struct HomeView: View {
     let library: LibraryModel
     @Binding var path: NavigationPath
     let isRecordingActive: () -> Bool
-    @State private var model = HomeModel()
+    let macConnection: MacConnectionModel
+    @State private var model: HomeModel
     @State private var showsSpeakers = false
     @State private var showsDates = false
+    @State private var showsConnection = false
+    @State private var macSubmissionMeeting: Meeting?
 
     init(
         services: AppServices,
         library: LibraryModel,
         path: Binding<NavigationPath>,
-        isRecordingActive: @escaping () -> Bool
+        isRecordingActive: @escaping () -> Bool,
+        macConnection: MacConnectionModel
     ) {
         self.services = services
         self.library = library
         _path = path
         self.isRecordingActive = isRecordingActive
+        self.macConnection = macConnection
+        _model = State(initialValue: HomeModel(
+            searchHandler: { query in
+                try await SearchRepository(services.database).search(query)
+            }
+        ))
     }
 
     var body: some View {
@@ -50,12 +60,59 @@ struct HomeView: View {
                                 description: Text("home.dates.invalid.description")
                             )
                             Button("home.dates.edit") { showsDates = true }
-                        } else {
+                        } else if model.isLoading && model.results.isEmpty {
+                            ProgressView("library.loading")
+                        } else if let error = model.errorMessage, model.results.isEmpty {
                             ContentUnavailableView(
-                                "home.search.unavailable.title", systemImage: "magnifyingglass",
-                                description: Text("home.search.unavailable.description")
+                                "home.search.failed.title", systemImage: "exclamationmark.triangle",
+                                description: Text(error)
                             )
-                            .accessibilityIdentifier("homeSearchUnavailable")
+                            .accessibilityIdentifier("homeSearchError")
+                            Button("Retry") { model.resetAndSearch() }
+                        } else if model.results.isEmpty && model.hasLoaded {
+                            ContentUnavailableView(
+                                "home.search.empty.title", systemImage: "magnifyingglass",
+                                description: Text("home.search.empty.description")
+                            )
+                            .accessibilityIdentifier("homeSearchEmpty")
+                        } else {
+                            ForEach(model.results, id: \.meeting.id) { result in
+                                Section {
+                                    NavigationLink(value: result.meeting) {
+                                        MeetingRow(
+                                            meeting: result.meeting,
+                                            participants: result.participants.map(\.speaker)
+                                        )
+                                    }
+                                    .accessibilityIdentifier("homeMeeting-\(result.meeting.id)")
+                                    if result.titleMatched {
+                                        Label("home.search.titleMatched", systemImage: "textformat")
+                                            .font(.caption)
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    ForEach(result.hits, id: \.utteranceId) { hit in
+                                        NavigationLink {
+                                            meetingDetail(result.meeting, initialSeekMs: hit.startMs)
+                                        } label: {
+                                            hitLabel(hit)
+                                        }
+
+                                        .accessibilityIdentifier("homeSearchHit")
+                                    }
+                                }
+                            }
+                            if let error = model.errorMessage {
+                                Text(error)
+                                    .foregroundStyle(.secondary)
+                                    .accessibilityIdentifier("homeSearchError")
+                            }
+                            if model.nextCursor != nil {
+                                Button(LocalizedStringKey(model.errorMessage == nil ? "home.search.loadMore" : "Retry")) {
+                                    model.loadMore()
+                                }
+                                    .disabled(model.isLoading)
+                                    .accessibilityIdentifier("homeLoadMore")
+                            }
                         }
                     }
                 } else {
@@ -80,11 +137,6 @@ struct HomeView: View {
                             }
                         }
                     }
-                    Section {
-                        Label("home.search.unavailable.description", systemImage: "info.circle")
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                    }
                 }
             }
             .listStyle(.insetGrouped)
@@ -94,23 +146,75 @@ struct HomeView: View {
             .safeAreaInset(edge: .bottom) {
                 Color.clear.frame(height: FloatingRecordButtonMetrics.listBottomClearance)
             }
-            .navigationTitle("home.title")
+            .navigationTitle(LocalizationManager.shared.text("home.title"))
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showsConnection = true
+                    } label: {
+                        Label("Connect to Mac", systemImage: "desktopcomputer")
+                    }
+                    .accessibilityIdentifier("homeConnectionButton")
+                }
+            }
             .navigationDestination(for: Meeting.self) { meeting in
-                // A meeting-title tap never requests playback. Search-hit routing is
-                // added only once SearchRepository's result contract is frozen.
-                MeetingDetailView(
-                    meeting: meeting,
-                    audioURL: library.audioURL(for: meeting),
-                    services: services,
-                    isRecordingActive: isRecordingActive(),
-                    onMeetingRenamed: { Task { await library.reload() } }
-                )
+                meetingDetail(meeting)
             }
             .sheet(isPresented: $showsSpeakers) { speakerPicker }
             .sheet(isPresented: $showsDates) { datePicker }
-            .refreshable { await library.reload() }
+            .sheet(isPresented: $showsConnection) {
+                NavigationStack {
+                    ConnectionView(model: macConnection)
+                        .navigationTitle(LocalizationManager.shared.text("Connect to Mac"))
+                        .toolbar {
+                            ToolbarItem(placement: .cancellationAction) {
+                                Button("common.done") { showsConnection = false }
+                            }
+                        }
+                }
+            }
+            .fullScreenCover(item: $macSubmissionMeeting) { meeting in
+                MacSubmissionView(meeting: meeting, model: macConnection)
+            }
+            .refreshable {
+                await library.reload()
+                if model.hasSearchConditions { await model.resetAndSearch()?.value }
+            }
             .task { await library.reload() }
+            .onChange(of: model.query) { _, _ in model.filtersChanged() }
+            .onChange(of: model.speakerIDs) { _, _ in model.filtersChanged() }
+            .onChange(of: model.usesDateRange) { _, _ in model.filtersChanged() }
+            .onChange(of: model.startDate) { _, _ in
+                if model.usesDateRange { model.filtersChanged() }
+            }
+            .onChange(of: model.endDate) { _, _ in
+                if model.usesDateRange { model.filtersChanged() }
+            }
         }
+    }
+
+    @ViewBuilder
+    private func hitLabel(_ hit: SearchTextHit) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(verbatim: hit.text).lineLimit(2)
+            Text(verbatim: Format.clock(Double(hit.startMs) / 1000))
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    private func meetingDetail(_ meeting: Meeting, initialSeekMs: Int? = nil) -> some View {
+            MeetingDetailView(
+                meeting: meeting,
+                audioURL: library.audioURL(for: meeting),
+                services: services,
+                isRecordingActive: isRecordingActive(),
+                onProcessByMac: { macSubmissionMeeting = meeting },
+                macUnavailableReason: macConnection.submissionBlockReason(meetingID: meeting.id),
+                initialSeekMs: initialSeekMs,
+                recordingIsActive: { isRecordingActive() },
+                onMeetingRenamed: { Task { await library.reload() } }
+            )
     }
 
     private var searchField: some View {
@@ -187,7 +291,7 @@ struct HomeView: View {
                     Button("home.speakers.clear") { model.speakerIDs = [] }
                 }
             }
-            .navigationTitle("home.speakers.filter")
+            .navigationTitle(LocalizationManager.shared.text("home.speakers.filter"))
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("common.done") { showsSpeakers = false }
@@ -214,7 +318,7 @@ struct HomeView: View {
                     }
                 }
             }
-            .navigationTitle("home.dates.filter")
+            .navigationTitle(LocalizationManager.shared.text("home.dates.filter"))
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
                     Button("common.done") { showsDates = false }

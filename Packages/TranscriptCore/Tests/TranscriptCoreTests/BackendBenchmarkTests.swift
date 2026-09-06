@@ -143,22 +143,30 @@ struct BackendBenchmarkTests {
             name: "BACKEND_BENCHMARK_ITERATIONS",
             range: 1...100
         )
-        let scratch = FileManager.default.temporaryDirectory
-            .appendingPathComponent("TranscriptBackendBenchmark-\(UUID().uuidString)", isDirectory: true)
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "TranscriptBackendBenchmark-\(UUID().uuidString)", isDirectory: true
+        )
         try FileManager.default.createDirectory(at: scratch, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: scratch) }
 
         let memoryBefore = MemoryFootprint.current()
-        let seedStarted = ContinuousClock.now
+        let migrationStarted = ContinuousClock.now
+        let seedDatabase: AppDatabase
+        let migrationDuration: Duration
         do {
-            let seedDatabase = try AppDatabase.onDisk(directory: scratch, fileName: "benchmark.sqlite")
-            try await seedSearchDatabase(
-                seedDatabase, meetingCount: meetingCount, utterancesPerMeeting: utterancesPerMeeting
-            )
+            seedDatabase = try AppDatabase.onDisk(directory: scratch, fileName: "benchmark.sqlite")
+            migrationDuration = ContinuousClock.now - migrationStarted
         }
+        let seedStarted = ContinuousClock.now
+        try await seedSearchDatabase(
+            seedDatabase, meetingCount: meetingCount, utterancesPerMeeting: utterancesPerMeeting
+        )
         let seedDuration = ContinuousClock.now - seedStarted
         let memoryAfterSeed = MemoryFootprint.current()
         let databaseBytes = directoryBytes(scratch)
+        let sqliteBytes = fileBytes(scratch.appendingPathComponent("benchmark.sqlite"))
+        let walBytes = fileBytes(scratch.appendingPathComponent("benchmark.sqlite-wal"))
+        let shmBytes = fileBytes(scratch.appendingPathComponent("benchmark.sqlite-shm"))
         let reopenStarted = ContinuousClock.now
         let database = try AppDatabase.onDisk(directory: scratch, fileName: "benchmark.sqlite")
         let reopenDuration = ContinuousClock.now - reopenStarted
@@ -170,12 +178,14 @@ struct BackendBenchmarkTests {
             ("transcript-en-2", SearchQuery(text: "go", scope: .transcript)),
             ("transcript-zh-1", SearchQuery(text: "中", scope: .transcript)),
             ("transcript-zh-2", SearchQuery(text: "中文", scope: .transcript)),
+            ("transcript-en-trigram", SearchQuery(text: "english", scope: .transcript)),
+            ("transcript-zh-trigram", SearchQuery(text: "中文检", scope: .transcript)),
             ("date", SearchQuery(startedAt: baseDate..<baseDate.addingTimeInterval(Double(meetingCount / 2 + 1) * 86_400))),
             ("speaker", SearchQuery(speakerIDs: ["speaker-0"]))
         ]
-        for (name, query) in cases {
+        for (index, item) in cases.enumerated() {
             try await reportSearch(
-                name: name, query: query, repository: repository,
+                name: item.0, query: item.1, repository: repository, firstQuery: index == 0,
                 meetingCount: meetingCount, utterancesPerMeeting: utterancesPerMeeting,
                 iterations: iterations
             )
@@ -184,32 +194,45 @@ struct BackendBenchmarkTests {
         if let cursor = firstPage.nextCursor {
             try await reportSearch(
                 name: "pagination-page-2", query: SearchQuery(limit: 25, cursor: cursor),
-                repository: repository, meetingCount: meetingCount,
+                repository: repository, firstQuery: false, meetingCount: meetingCount,
                 utterancesPerMeeting: utterancesPerMeeting, iterations: iterations
             )
         }
         let peakBytes = MemoryFootprint.peak().map(String.init) ?? "unavailable"
-        print("BENCHMARK name=search-seed platform=ios-simulator meetings=\(meetingCount) utterances_per_meeting=\(utterancesPerMeeting) total_utterances=\(meetingCount * utterancesPerMeeting) seed_seconds=\(seconds(seedDuration)) reopen_seconds=\(seconds(reopenDuration)) database_bytes=\(databaseBytes) memory_delta_bytes=\(memoryDelta(from: memoryBefore, to: memoryAfterSeed)) peak_bytes=\(peakBytes)")
+        print("BENCHMARK name=search-seed platform=ios-simulator meetings=\(meetingCount) utterances_per_meeting=\(utterancesPerMeeting) total_utterances=\(meetingCount * utterancesPerMeeting) migration_seconds=\(seconds(migrationDuration)) seed_seconds=\(seconds(seedDuration)) reopen_seconds=\(seconds(reopenDuration)) scratch_path=\(scratch.path) aggregate_bytes=\(databaseBytes) sqlite_bytes=\(sqliteBytes) wal_bytes=\(walBytes) shm_bytes=\(shmBytes) memory_delta_bytes=\(memoryDelta(from: memoryBefore, to: memoryAfterSeed)) peak_bytes=\(peakBytes) warmup=5 measured_samples=\(max(30, iterations))")
     }
 
     private func reportSearch(
         name: String,
         query: SearchQuery,
         repository: SearchRepository,
+        firstQuery: Bool,
         meetingCount: Int,
         utterancesPerMeeting: Int,
         iterations: Int
     ) async throws {
-        let coldStarted = ContinuousClock.now
-        let coldPage = try await repository.search(query)
-        let cold = ContinuousClock.now - coldStarted
+        let coldPage: SearchPage
+        let cold: Duration?
+        if firstQuery {
+            let coldStarted = ContinuousClock.now
+            coldPage = try await repository.search(query)
+            cold = ContinuousClock.now - coldStarted
+        } else {
+            coldPage = try await repository.search(query)
+            cold = nil
+        }
+        for _ in 0..<5 {
+            _ = try await repository.search(query)
+        }
         var warm: [Duration] = []
-        for _ in 0..<iterations {
+        warm.reserveCapacity(max(30, iterations))
+        for _ in 0..<max(30, iterations) {
             let started = ContinuousClock.now
             _ = try await repository.search(query)
             warm.append(ContinuousClock.now - started)
         }
-        print("BENCHMARK name=search-\(name) platform=ios-simulator meetings=\(meetingCount) utterances_per_meeting=\(utterancesPerMeeting) cold_seconds=\(seconds(cold)) warm_p50_seconds=\(seconds(percentile(warm, 0.50))) warm_p95_seconds=\(seconds(percentile(warm, 0.95))) results=\(coldPage.results.count) has_next=\(coldPage.nextCursor != nil)")
+        let coldValue = cold.map { seconds($0) } ?? -1
+        print("BENCHMARK name=search-\(name) platform=ios-simulator meetings=\(meetingCount) utterances_per_meeting=\(utterancesPerMeeting) cold_seconds=\(coldValue) warmup=5 measured_samples=\(warm.count) warm_p50_seconds=\(seconds(percentile(warm, 0.50))) warm_p95_seconds=\(seconds(percentile(warm, 0.95))) results=\(coldPage.results.count) has_next=\(coldPage.nextCursor != nil)")
     }
 
     private func seedSearchDatabase(
@@ -273,6 +296,12 @@ struct BackendBenchmarkTests {
         return total
     }
 
+    private func fileBytes(_ file: URL) -> Int64 {
+        guard let values = try? file.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey]),
+              values.isRegularFile == true else { return 0 }
+        return Int64(values.fileSize ?? 0)
+    }
+
     private func requireSimulator() throws {
         #if targetEnvironment(simulator) && os(iOS)
         return
@@ -309,8 +338,35 @@ struct BackendBenchmarkTests {
     }
 
     private func percentile(_ values: [Duration], _ fraction: Double) -> Duration {
-        let sorted = values.sorted()
-        return sorted[Int((Double(sorted.count - 1) * fraction).rounded(.up))]
+        BenchmarkStatistics.percentile(values, fraction)
+    }
+
+    fileprivate enum BenchmarkStatistics {
+        static func percentile(_ values: [Duration], _ fraction: Double) -> Duration {
+            precondition(!values.isEmpty)
+            let sorted = values.sorted()
+            if fraction == 0.5, sorted.count.isMultiple(of: 2) {
+                let upper = sorted.count / 2
+                return (sorted[upper - 1] + sorted[upper]) / 2
+            }
+            let rank = max(1, Int(ceil(fraction * Double(sorted.count))))
+            return sorted[min(rank, sorted.count) - 1]
+        }
+    }
+
+    @Suite
+    struct BackendBenchmarkStatisticsTests {
+        @Test
+        func evenMedianAveragesMiddleValues() {
+            let values = [1, 2, 3, 4].map { Duration.seconds($0) }
+            #expect(BenchmarkStatistics.percentile(values, 0.50) == Duration.seconds(5) / 2)
+        }
+
+        @Test
+        func p95UsesNearestRank() {
+            let values = (1...20).map { Duration.seconds($0) }
+            #expect(BenchmarkStatistics.percentile(values, 0.95) == .seconds(19))
+        }
     }
 
     private func seconds(_ duration: Duration) -> Double {

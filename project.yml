@@ -70,6 +70,7 @@ targets:
     platform: iOS
     sources:
       - path: TranscriptUITests
+      - path: App/Support/TestStorageConfiguration.swift
     dependencies:
       - target: Transcript
     settings:
@@ -79,19 +80,71 @@ targets:
         DEVELOPMENT_TEAM: YUU54K6BSS
         GENERATE_INFOPLIST_FILE: YES
         TARGETED_DEVICE_FAMILY: "1"
+  TranscriptTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: AppTests
+    dependencies:
+      - target: Transcript
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.transcript.TranscriptTests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1"
+  TranscriptCoreTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: Packages/TranscriptCore/Tests/TranscriptCoreTests
+    dependencies:
+      - package: TranscriptCore
+        product: TranscriptCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.transcript.TranscriptCoreTests
+        GENERATE_INFOPLIST_FILE: YES
+        TARGETED_DEVICE_FAMILY: "1"
 
 schemes:
+  TranscriptTests:
+    build:
+      targets:
+        Transcript: all
+        TranscriptTests: [test]
+    test:
+      config: Debug
+      environmentVariables:
+        TRANSCRIPT_UI_FIXTURE: "0"
+        TRANSCRIPT_TEST_STORAGE: "1"
+        TRANSCRIPT_TEST_RUN_ID: "$(TRANSCRIPT_TEST_RUN_ID)"
+      targets:
+        - TranscriptTests
+  TranscriptCore:
+    build:
+      targets:
+        TranscriptCoreTests: [test]
+    test:
+      config: Debug
+      targets:
+        - TranscriptCoreTests
   Transcript:
     build:
       targets:
         Transcript: all
         TranscriptRecordingWidget: all
+        TranscriptTests: [test]
         TranscriptUITests: [test]
     run:
       config: Debug
     test:
       config: Debug
+      environmentVariables:
+        TRANSCRIPT_UI_FIXTURE: "0"
+        TRANSCRIPT_TEST_STORAGE: "1"
+        TRANSCRIPT_TEST_RUN_ID: "$(TRANSCRIPT_TEST_RUN_ID)"
       targets:
         - TranscriptUITests
+        - TranscriptTests
     archive:
       config: Release

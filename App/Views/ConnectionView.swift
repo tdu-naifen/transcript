@@ -119,10 +119,10 @@ struct ConnectionView: View {
                 }
             }
         }
-        .navigationTitle("Connection")
+        .navigationTitle(LocalizationManager.shared.text("Connection"))
         .navigationBarTitleDisplayMode(.inline)
         .toolbar(.hidden, for: .tabBar)
-        .tint(Color(red: 6 / 255, green: 34 / 255, blue: 158 / 255))
+        .tint(AppColors.controlTint)
         .onChange(of: model.isConnected) { wasConnected, isConnected in
             // Only a pairing started on this screen may automatically navigate back.
             // A background reconnect must not disrupt the user's current navigation.

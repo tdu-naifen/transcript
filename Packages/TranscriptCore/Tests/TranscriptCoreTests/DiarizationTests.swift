@@ -209,6 +209,117 @@ import Testing
         #expect(stored.dimension == 192)
         #expect(stored.floats == vector)
     }
+
+    @Test func bindingExpectationRejectsEmptySlotABA() async throws {
+        let db = try AppDatabase.inMemory()
+        let meetings = MeetingRepository(db)
+        let speakers = SpeakerRepository(db)
+        let meeting = makeTestMeeting()
+        try await meetings.insert(meeting)
+        let first = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
+        let second = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
+        let empty = try await speakers.bindingExpectation(meetingId: meeting.id, speakerIndex: 0)
+        try await speakers.assignDisplayIndex(
+            meetingId: meeting.id, speakerId: first.id, displayIndex: 0, deviceId: testiPhoneId
+        )
+        try await db.writer.write { db in
+            try db.execute(
+                sql: "DELETE FROM meetingSpeaker WHERE meetingId = ? AND displayIndex = ?",
+                arguments: [meeting.id, 0]
+            )
+        }
+        let restoredEmpty = try await speakers.bindingExpectation(meetingId: meeting.id, speakerIndex: 0)
+        #expect(restoredEmpty.speakerId == nil)
+        #expect(restoredEmpty.slotRevision > empty.slotRevision)
+        await #expect(throws: VoiceprintBindingError.staleExpectation) {
+            try await VoiceprintBinder(speakers: speakers).bindSelectedIdentity(
+                speakerId: second.id, meetingId: meeting.id, speakerIndex: 0,
+                expectation: empty, deviceId: testiPhoneId
+            )
+        }
+    }
+
+    @Test func bindingRejectsSpeakerAlreadyLinkedAndLeavesTransactionUntouched() async throws {
+        let db = try AppDatabase.inMemory()
+        let meetings = MeetingRepository(db)
+        let speakers = SpeakerRepository(db)
+        let binder = VoiceprintBinder(speakers: speakers)
+        let meeting = makeTestMeeting()
+        try await meetings.insert(meeting)
+        let target = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
+        let other = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
+        try await speakers.assignDisplayIndex(
+            meetingId: meeting.id, speakerId: target.id, displayIndex: 0, deviceId: testiPhoneId
+        )
+        let empty = try await speakers.bindingExpectation(meetingId: meeting.id, speakerIndex: 1)
+        await #expect(throws: RepositoryError.speakerAlreadyLinkedInMeeting(
+            meetingId: meeting.id, speakerId: target.id, displayIndex: 0
+        )) {
+            try await binder.bindSelectedIdentity(
+                speakerId: target.id, meetingId: meeting.id, speakerIndex: 1,
+                expectation: empty, deviceId: testiPhoneId
+            )
+        }
+        let links = try await speakers.speakers(inMeeting: meeting.id)
+        #expect(links.map(\.speaker.id) == [target.id])
+        #expect(links.map(\.displayIndex) == [0])
+        _ = other
+    }
+
+    @Test func negativeBindingIndexIsRejected() async throws {
+        let db = try AppDatabase.inMemory()
+        let meetings = MeetingRepository(db)
+        let speakers = SpeakerRepository(db)
+        let binder = VoiceprintBinder(speakers: speakers)
+        let meeting = makeTestMeeting()
+        try await meetings.insert(meeting)
+        let target = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
+        let expectation = try await speakers.bindingExpectation(meetingId: meeting.id, speakerIndex: -1)
+        await #expect(throws: RepositoryError.negativeDisplayIndex(meetingId: meeting.id, displayIndex: -1)) {
+            try await binder.bindSelectedIdentity(
+                speakerId: target.id, meetingId: meeting.id, speakerIndex: -1,
+                expectation: expectation, deviceId: testiPhoneId
+            )
+        }
+    }
+
+    @Test func remapInvalidatesRealSlotsWithoutPersistingParkingRevisions() async throws {
+        let db = try AppDatabase.inMemory()
+        let meetings = MeetingRepository(db)
+        let speakers = SpeakerRepository(db)
+        let meeting = makeTestMeeting()
+        try await meetings.insert(meeting)
+        let first = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
+        let second = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
+        try await speakers.assignDisplayIndex(
+            meetingId: meeting.id, speakerId: first.id, displayIndex: 0, deviceId: testiPhoneId
+        )
+        try await speakers.assignDisplayIndex(
+            meetingId: meeting.id, speakerId: second.id, displayIndex: 1, deviceId: testiPhoneId
+        )
+        let old = try await speakers.bindingExpectation(meetingId: meeting.id, speakerIndex: 0)
+        try await speakers.remapDisplayIndexes(
+            meetingId: meeting.id,
+            mapping: [first.id: 1, second.id: 0],
+            deviceId: testiPhoneId
+        )
+        let current = try await speakers.bindingExpectation(meetingId: meeting.id, speakerIndex: 0)
+        #expect(current.speakerId == second.id)
+        #expect(current.slotRevision > old.slotRevision)
+        await #expect(throws: VoiceprintBindingError.staleExpectation) {
+            try await VoiceprintBinder(speakers: speakers).bindSelectedIdentity(
+                speakerId: first.id, meetingId: meeting.id, speakerIndex: 0,
+                expectation: old, deviceId: testiPhoneId
+            )
+        }
+        let negativeRevisionCount = try await db.reader.read { database in
+            try Int.fetchOne(
+                database,
+                sql: "SELECT count(*) FROM meetingSpeakerSlotRevision WHERE displayIndex < 0"
+            ) ?? 0
+        }
+        #expect(negativeRevisionCount == 0)
+    }
 }
 
 /// `CampPlusEmbedder.cosine` is a `nonisolated static` pure function — no model load

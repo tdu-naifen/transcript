@@ -57,6 +57,20 @@ public struct Utterance: Codable, Identifiable, Hashable, Sendable {
         self.updatedAt = updatedAt
         self.originDeviceId = originDeviceId
     }
+
+    public init(
+        meetingId: String,
+        speakerId: String?,
+        startMs: Int,
+        endMs: Int,
+        text: String,
+        originDeviceId: String
+    ) {
+        self.init(
+            meetingId: meetingId, startMs: startMs, endMs: endMs, text: text,
+            speakerId: speakerId, originDeviceId: originDeviceId
+        )
+    }
 }
 
 extension Utterance: FetchableRecord, PersistableRecord {

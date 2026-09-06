@@ -7,6 +7,13 @@ struct SettingsView: View {
     @State private var models: ModelDownloadModel?
     @State private var localization = LocalizationManager.shared
 
+    static var modelDescription: String {
+        LocalizationManager.shared.text(
+            "Nemotron 3.5 ASR streaming, 2240 ms tier. Roughly 665 MB, downloaded once "
+                + "and kept in Application Support. Recording works without it."
+        )
+    }
+
     var body: some View {
         NavigationStack {
             List {
@@ -17,8 +24,8 @@ struct SettingsView: View {
                 } header: {
                     Text("Transcription model")
                 } footer: {
-                    Text("Nemotron 3.5 ASR streaming, 2240 ms tier. Roughly 665 MB, downloaded once "
-                        + "and kept in Application Support. Recording works without it.")
+                    Text(Self.modelDescription)
+                        .accessibilityIdentifier("transcriptionModelDescription")
                 }
 
                 Section("App Language") {
@@ -38,10 +45,17 @@ struct SettingsView: View {
                         .truncationMode(.middle)
                     LabeledContent("Audio folder", value: services.store.directory.lastPathComponent)
                 }
+
+                Section("Recording button") {
+                    Button("Reset recording button position") {
+                        FloatingRecordButton.resetPosition()
+                    }
+                    .accessibilityIdentifier("resetFloatingRecordButton")
+                }
             }
-            .navigationTitle("Settings")
+            .navigationTitle(LocalizationManager.shared.text("Settings"))
             .scrollContentBackground(.hidden)
-            .background(Color(red: 0.975, green: 0.97, blue: 0.96))
+            .background(AppColors.settingsBackground)
             .task {
                 if models == nil { models = ModelDownloadModel(services: services) }
                 models?.observe()
@@ -67,6 +81,7 @@ private struct ModelRow: View {
             } else {
                 Button("Download model") { Task { await model.download() } }
                     .buttonStyle(.borderedProminent)
+                    .tint(AppColors.filledControl)
                     .disabled(model.isWorking)
                     .accessibilityIdentifier("downloadModelButton")
             }

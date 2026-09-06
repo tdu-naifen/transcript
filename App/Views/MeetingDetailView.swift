@@ -4,6 +4,7 @@ import TranscriptCore
 /// Meeting detail screen (UI.md §3): transcript in forward order with tap-to-seek
 /// playback, participants folded into the header, engineering info behind `⋯`.
 struct MeetingDetailView: View {
+    @Environment(\.dismiss) private var dismiss
     let meeting: Meeting
     let audioURL: URL?
     let onMeetingRenamed: () -> Void
@@ -21,7 +22,7 @@ struct MeetingDetailView: View {
     @State private var renameText = ""
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
-    private let accent = Color(red: 6 / 255, green: 34 / 255, blue: 158 / 255)
+    private let accent = AppColors.controlTint
 
     /// Screenshot verification aid (see `RecordingsListView.openFixtureMeetingIfRequested`):
     /// `-uiFixtureExpandParticipants 1` starts the header expanded since there's no way
@@ -43,6 +44,7 @@ struct MeetingDetailView: View {
         onProcessByMac: (() -> Void)? = nil,
         macUnavailableReason: String? = nil,
         initialSeekMs: Int? = nil,
+        recordingIsActive: (@MainActor () -> Bool)? = nil,
         onMeetingRenamed: @escaping () -> Void = {}
     ) {
         self.meeting = meeting
@@ -55,7 +57,8 @@ struct MeetingDetailView: View {
             audioURL: audioURL,
             services: services,
             isRecordingActive: isRecordingActive,
-            initialSeekMs: initialSeekMs
+            initialSeekMs: initialSeekMs,
+            recordingIsActive: recordingIsActive
         ))
     }
 
@@ -70,6 +73,10 @@ struct MeetingDetailView: View {
         .toolbar(.visible, for: .navigationBar)
         .toolbar(.hidden, for: .tabBar)
         .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button("Back") { dismiss() }
+                    .accessibilityIdentifier("meetingBackButton")
+            }
             ToolbarItem(placement: .topBarTrailing) { meetingOptions }
         }
         .tint(accent)
@@ -133,11 +140,11 @@ struct MeetingDetailView: View {
     /// pieces here and displaying with `Text(verbatim:)` avoids needing a multi-argument
     /// "Vary by Plural" catalog entry for the combined phrase.
     private var participantsSummaryText: String {
-        let locale = LocalizationManager.shared.resolvedLocale
+        let localization = LocalizationManager.shared
         let count = model.participants.count
         let peopleText = count == 1
-            ? String(localized: "1 participant", locale: locale)
-            : String(localized: "\(count) participants", locale: locale)
+            ? localization.localized("1 participant")
+            : localization.localized("\(count) participants")
         return "\(peopleText) · \(Format.duration(milliseconds: model.meeting.durationMs))"
     }
 
@@ -205,6 +212,7 @@ struct MeetingDetailView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 .buttonStyle(.borderedProminent)
+                .tint(AppColors.filledControl)
                 .disabled(onProcessByMac == nil || macUnavailableReason != nil
                           || !model.hasLocalAudioForReprocessing || model.isReprocessing)
                 .accessibilityIdentifier("meetingProcessByMacButton")
@@ -229,21 +237,18 @@ struct MeetingDetailView: View {
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity)
         .background(.regularMaterial)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("meetingBottomActions")
     }
 
     private var headerMetadata: String {
         let date = Format.date(model.meeting.startedAt)
         guard let locale = model.meeting.localeIdentifier, !locale.isEmpty else { return date }
-        return "\(date) · \(Locale.current.localizedString(forIdentifier: locale) ?? locale)"
+        return "\(date) · \(LocalizationManager.shared.resolvedLocale.localizedString(forIdentifier: locale) ?? locale)"
     }
 
     private func reprocessingText(_ key: String) -> String {
-        String(
-            localized: String.LocalizationValue(key),
-            table: "Reprocessing",
-            locale: LocalizationManager.shared.resolvedLocale
-        )
+        LocalizationManager.shared.text(key, table: "Reprocessing")
     }
 
     private var participantsHeader: some View {
@@ -314,6 +319,7 @@ struct MeetingDetailView: View {
                                     isReprocessingConfirmationPresented = true
                                 }
                                 .buttonStyle(.borderedProminent)
+                                .tint(AppColors.filledControl)
                                 .disabled(model.isReprocessing)
                                 .accessibilityIdentifier("emptyTranscriptReprocessButton")
                             }
@@ -346,11 +352,7 @@ struct MeetingDetailView: View {
     }
 
     private func acceptanceText(_ key: String) -> String {
-        String(
-            localized: String.LocalizationValue(key),
-            table: "AcceptanceUI",
-            locale: LocalizationManager.shared.resolvedLocale
-        )
+        LocalizationManager.shared.text(key, table: "AcceptanceUI")
     }
 }
 
@@ -387,7 +389,7 @@ private struct MeetingReprocessingSheet: View {
             Text(stageText(progress.stage))
                 .font(.headline)
             ProgressView(value: progress.fractionCompleted)
-                .tint(Color(red: 6 / 255, green: 34 / 255, blue: 158 / 255))
+                .tint(AppColors.controlTint)
             Text(text("The current transcript remains available until the new result is complete."))
                 .font(.footnote)
                 .foregroundStyle(.secondary)
@@ -417,6 +419,7 @@ private struct MeetingReprocessingSheet: View {
                 isPresented = false
             }
             .buttonStyle(.borderedProminent)
+            .tint(AppColors.filledControl)
         case .failed(let message):
             Image(systemName: "exclamationmark.triangle.fill")
                 .font(.system(size: 38))
@@ -437,6 +440,7 @@ private struct MeetingReprocessingSheet: View {
                 .buttonStyle(.bordered)
                 Button(text("Retry")) { model.startReprocessing() }
                     .buttonStyle(.borderedProminent)
+                    .tint(AppColors.filledControl)
             }
         }
     }
@@ -461,11 +465,7 @@ private struct MeetingReprocessingSheet: View {
     }
 
     private func text(_ key: String) -> String {
-        String(
-            localized: String.LocalizationValue(key),
-            table: "Reprocessing",
-            locale: LocalizationManager.shared.resolvedLocale
-        )
+        LocalizationManager.shared.text(key, table: "Reprocessing")
     }
 }
 
@@ -556,6 +556,7 @@ private struct TranscriptRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityHint("Play audio from this segment")
+            .accessibilityIdentifier("transcriptPlay-\(utterance.id)")
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -568,11 +569,7 @@ private struct TranscriptRow: View {
     }
 
     private func acceptanceText(_ key: String) -> String {
-        String(
-            localized: String.LocalizationValue(key),
-            table: "AcceptanceUI",
-            locale: LocalizationManager.shared.resolvedLocale
-        )
+        LocalizationManager.shared.text(key, table: "AcceptanceUI")
     }
 }
 
@@ -653,11 +650,7 @@ private struct SpeakerInsightsView: View {
     }
 
     private func acceptanceText(_ key: String) -> String {
-        String(
-            localized: String.LocalizationValue(key),
-            table: "AcceptanceUI",
-            locale: LocalizationManager.shared.resolvedLocale
-        )
+        LocalizationManager.shared.text(key, table: "AcceptanceUI")
     }
 }
 
@@ -732,7 +725,7 @@ private struct EngineeringDetailSheet: View {
                     }
                 }
             }
-            .navigationTitle("详细信息")
+            .navigationTitle(LocalizationManager.shared.text("详细信息"))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -743,7 +736,7 @@ private struct EngineeringDetailSheet: View {
     }
 
     private func dateOrNotYet(_ date: Date?) -> String {
-        guard let date else { return String(localized: "Not yet", locale: LocalizationManager.shared.resolvedLocale) }
+        guard let date else { return LocalizationManager.shared.text("Not yet") }
         return Format.date(date, dateStyle: .numeric, timeStyle: .shortened)
     }
 }

@@ -31,11 +31,10 @@ enum AppLanguage: String, CaseIterable, Sendable {
         }
     }
 
-    /// Fixed, not translated — each option names itself in its own language, the same
-    /// convention Apple uses for its own language pickers.
+    /// Explicit languages name themselves; System follows the device, not the override.
     var displayName: String {
         switch self {
-        case .system: "跟随系统"
+        case .system: String(localized: "System", locale: .autoupdatingCurrent)
         case .zhHans: "简体中文"
         case .en: "English"
         }
@@ -62,6 +61,22 @@ final class LocalizationManager {
 
     var resolvedLocale: Locale {
         language.locale ?? .autoupdatingCurrent
+    }
+
+    var resolvedBundle: Bundle {
+        guard let identifier = language.locale?.identifier,
+              let path = Bundle.main.path(forResource: identifier, ofType: "lproj"),
+              let bundle = Bundle(path: path) else { return .main }
+        return bundle
+    }
+
+    func text(_ key: String, table: String? = nil) -> String {
+        localized(String.LocalizationValue(key), table: table)
+    }
+
+    // Foundation's locale argument formats values; the bundle selects the language.
+    func localized(_ key: String.LocalizationValue, table: String? = nil) -> String {
+        String(localized: key, table: table, bundle: resolvedBundle, locale: resolvedLocale)
     }
 
     private init() {

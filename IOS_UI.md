@@ -239,3 +239,21 @@ Mac 重新转写可能改变分段，片段编辑不能仅锚定临时 segment I
 - iOS 功能验收继续遵守仅 Simulator 的现有范围。Apple 明确指出 Simulator 不支持本地网络隐私机制，该权限分支须标记未验证，不用 mock 代替。
 - 当前 demo：`.superpowers/brainstorm/18066-1788628090/content/async-sync-v5.html`。
 - 后续工程 planning 与旧文档统一更新另行进行；本文件不包含提交代码或变更数据库的授权。
+
+### IOS-COMPLETE-FIX-03 实施验证（2026-09-05）
+
+- AppServices 共享音频所有权；RecorderModel 在采集启动前同步撤销播放器并释放播放会话，启动中、采集中及收尾期间禁止旧详情激活或停用录音会话。
+- Home 分页失败可用同一 cursor 重试；成功页去重，过期成功/失败不改新筛选。实际 SearchRepository 集成覆盖 33 场会议、标题/说话人正文分型及日期筛选。
+- 中英切换使用所选语言资源 bundle，导航标题、tab 和控件即时更新，不重建导航状态；System 标签跟随系统语言。已删除搜索不可用的过时页脚。
+- 最终专用 Simulator 组合验证：38 个 App hosted tests（含原 14 个录音回归）及 9 个 fixture UI tests 全部通过。覆盖一次定位/重载、25 小时秋季 DST、浮动位置跨 tab/重启/旋转/复位、实际开关筛选、分页返回及末段完整可见并可播放。
+- 最终证据：`.build/ios-fix03-final3.log`、`.build/ios-fix03-final3.xcresult`、`.build/ios-fix03-final3-attachments/`。音频为隔离生成的 WAV/AAC，UI 数据为 DEBUG 显式启用的内存 fixture；不是麦克风/模型声学 E2E。
+- 隔离更正：收紧 fixture 启用条件后，旧转写测试曾意外回落到专用 Simulator 磁盘库，其故障注入污染了该库；重复验证在 `ios-fix03-final2` 暴露此问题。本轮已改为显式注入内存库，并隔离 hosted App 启动服务；最终回归通过。此前磁盘库未修补或删除，不能将该 Simulator 的正常启动视为已验收；需要另行授权恢复后再做非 fixture QA。
+- Mac 真实传输、持久回执、双端同步及本地网络隐私分支仍未验收；生产入口继续显示未配置服务原因，不伪造连接。以上为实现者验证，不代表独立 review/QA 通过，也不关闭本规格其余验收项。
+
+### IOS-ISOLATION-FIX-04 测试存储约定
+
+- DEBUG 测试启动必须同时提供 `TRANSCRIPT_TEST_STORAGE=1` 与 UUID 格式的 `TRANSCRIPT_TEST_RUN_ID`；仅设置样例开关、缺少/错误 run ID 或试图传入路径都会拒绝启动，不回落到用户库。
+- `TRANSCRIPT_UI_FIXTURE=1/0` 只选择是否播种样例。两种模式都使用 `Library/Caches/TranscriptTestRuns/<UUID>/Transcript/` 下的磁盘数据库和 Audio；同 run 重启保留数据，不同 run 隔离。没有任何测试选项时仍使用正常 Application Support 持久存储；Release 不启用测试存储。
+- UI 测试统一通过 `isolatedApp` 使用共享的 `TestStorageConfiguration.launchEnvironment`，两条真实录音入口也不例外。保留真实采集/模型实现；launch-config 测试不启动它们，不代表真实麦克风/模型 E2E 已验收。
+- hosted 测试 scheme 从 build setting 展开 UUID，每次命令须附加 `TRANSCRIPT_TEST_RUN_ID="$(uuidgen)"`；同一次重启验证重复使用同一个 UUID。UI 测试另生成各自 UUID，作为 xcresult 附件保留。测试结束后先关闭服务/进程，只清理本次记录的 UUID 根，不能扫描删除其他 run 或生产数据。
+- 存储针对性验证：44 hosted（含原 14 个录音回归）+ 1 real-flow launch-config 测试通过；新的安全设备 `A565D0B8-502B-4BA0-9704-E6D4845065BA` 的正常 DB/WAL 字节哈希、大小、mtime 与音频元数据均未改变。旧污染设备保持不动。

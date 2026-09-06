@@ -60,15 +60,18 @@ public struct VoiceprintJobHandle: Sendable {
   public let id: UUID
   private let result: VoiceprintJobResult
   private let cancelJob: @Sendable (UUID) async -> Void
+  private let cancelAndWaitJob: @Sendable (UUID) async -> Void
 
   fileprivate init(
     id: UUID,
     result: VoiceprintJobResult,
-    cancelJob: @escaping @Sendable (UUID) async -> Void
+    cancelJob: @escaping @Sendable (UUID) async -> Void,
+    cancelAndWaitJob: @escaping @Sendable (UUID) async -> Void
   ) {
     self.id = id
     self.result = result
     self.cancelJob = cancelJob
+    self.cancelAndWaitJob = cancelAndWaitJob
   }
 
   public func value() async throws -> VoiceprintProcessingResult {
@@ -82,6 +85,15 @@ public struct VoiceprintJobHandle: Sendable {
   public func cancel() async {
     await cancelJob(id)
   }
+
+  /// Cancels this job and waits until its physical inference has stopped.
+  ///
+  /// Queued work completes this wait immediately. For active Core ML work, the
+  /// wait ends only after the worker has observed the inference completion and
+  /// released the job's resources.
+  public func cancelAndWait() async {
+    await cancelAndWaitJob(id)
+  }
 }
 
 /// Internal deterministic inference seam. Product callers use ``VoiceprintProcessor/init(configuration:modelDirectory:)``.
@@ -94,6 +106,8 @@ struct VoiceprintInference: Sendable {
 fileprivate actor VoiceprintJobResult {
   private var completion: Result<VoiceprintProcessingResult, any Error>?
   private var waiters: [CheckedContinuation<VoiceprintProcessingResult, any Error>] = []
+  private var physicalComplete = false
+  private var physicalWaiters: [CheckedContinuation<Void, Never>] = []
 
   func value() async throws -> VoiceprintProcessingResult {
     if let completion { return try completion.get() }
@@ -106,6 +120,19 @@ fileprivate actor VoiceprintJobResult {
     let waiters = self.waiters
     self.waiters.removeAll(keepingCapacity: false)
     for waiter in waiters { waiter.resume(with: completion) }
+  }
+
+  func finishPhysical() {
+    guard !physicalComplete else { return }
+    physicalComplete = true
+    let waiters = physicalWaiters
+    physicalWaiters.removeAll(keepingCapacity: false)
+    for waiter in waiters { waiter.resume() }
+  }
+
+  func waitForPhysicalCompletion() async {
+    guard !physicalComplete else { return }
+    await withCheckedContinuation { physicalWaiters.append($0) }
   }
 }
 
@@ -169,6 +196,7 @@ private actor VoiceprintInferenceWorker {
       )
     } catch let error as VoiceprintSampleSelectionError {
       if case .insufficientCleanAudio(_, let availableFrames) = error {
+        scheduleIdleUnload(after: generation)
         return VoiceprintProcessingResult(
           meetingId: request.meetingId,
           speakerSlot: request.speakerSlot,
@@ -180,6 +208,7 @@ private actor VoiceprintInferenceWorker {
           )
         )
       }
+      scheduleIdleUnload(after: generation)
       throw error
     }
 
@@ -281,6 +310,7 @@ public actor VoiceprintProcessor {
 
   private let configuration: Configuration
   private let worker: VoiceprintInferenceWorker
+  private let admissionGate: (@Sendable () async -> Void)?
   private var queued: [Job] = []
   private var active: Job?
   private var cancelled: Set<UUID> = []
@@ -297,6 +327,7 @@ public actor VoiceprintProcessor {
   ) {
     let runtime = CampPlusRuntime(directory: modelDirectory)
     self.configuration = configuration
+    self.admissionGate = nil
     self.worker = Self.makeWorker(
       configuration: configuration,
       inference: VoiceprintInference(
@@ -315,6 +346,7 @@ public actor VoiceprintProcessor {
   ) {
     let runtime = CampPlusRuntime(directory: modelDirectory)
     self.configuration = configuration
+    self.admissionGate = nil
     self.worker = Self.makeWorker(
       configuration: configuration,
       inference: VoiceprintInference(
@@ -329,9 +361,11 @@ public actor VoiceprintProcessor {
   init(
     configuration: Configuration = .init(),
     matcher: VoiceprintMatcher? = nil,
-    inference: VoiceprintInference
+    inference: VoiceprintInference,
+    admissionGate: (@Sendable () async -> Void)? = nil
   ) {
     self.configuration = configuration
+    self.admissionGate = admissionGate
     self.worker = Self.makeWorker(
       configuration: configuration, inference: inference, matcher: matcher
     )
@@ -356,7 +390,10 @@ public actor VoiceprintProcessor {
     )
   }
 
-  public func submit(_ request: VoiceprintRequest) throws -> VoiceprintJobHandle {
+  public func submit(_ request: VoiceprintRequest) async throws -> VoiceprintJobHandle {
+    if let admissionGate {
+      await admissionGate()
+    }
     guard !isShutDown else { throw VoiceprintProcessorError.shutDown }
     let evidenceKey = EvidenceKey(
       meetingId: request.meetingId,
@@ -382,9 +419,12 @@ public actor VoiceprintProcessor {
     queued.append(Job(id: id, request: request, result: result))
     outstandingFrames += request.audio.count
     startNextIfNeeded()
-    return VoiceprintJobHandle(id: id, result: result) { [weak self] id in
-      await self?.cancel(id: id)
-    }
+    return VoiceprintJobHandle(
+      id: id,
+      result: result,
+      cancelJob: { [weak self] id in await self?.cancel(id: id) },
+      cancelAndWaitJob: { [weak self] id in await self?.cancelAndWait(id: id) }
+    )
   }
 
   public func drain() async {
@@ -400,6 +440,11 @@ public actor VoiceprintProcessor {
       outstandingFrames -= job.request.audio.count
       activeEvidence.remove(evidenceKey(for: job.request))
       await job.result.finish(.failure(CancellationError()))
+      await job.result.finishPhysical()
+    }
+    if let active {
+      cancelled.insert(active.id)
+      await active.result.finish(.failure(CancellationError()))
     }
     await drain()
     await worker.unload()
@@ -414,9 +459,26 @@ public actor VoiceprintProcessor {
       finishDrainIfNeeded()
       return
     }
+
     guard let active, active.id == id else { return }
     cancelled.insert(id)
     await active.result.finish(.failure(CancellationError()))
+  }
+
+  private func cancelAndWait(id: UUID) async {
+    if let index = queued.firstIndex(where: { $0.id == id }) {
+      let job = queued.remove(at: index)
+      outstandingFrames -= job.request.audio.count
+      activeEvidence.remove(evidenceKey(for: job.request))
+      await job.result.finish(.failure(CancellationError()))
+      await job.result.finishPhysical()
+      finishDrainIfNeeded()
+      return
+    }
+    guard let active, active.id == id else { return }
+    cancelled.insert(id)
+    await active.result.finish(.failure(CancellationError()))
+    await active.result.waitForPhysicalCompletion()
   }
 
   private func startNextIfNeeded() {
@@ -439,7 +501,6 @@ public actor VoiceprintProcessor {
     result: Result<VoiceprintProcessingResult, any Error>
   ) async {
     guard active?.id == job.id else { return }
-    active = nil
     outstandingFrames -= job.request.audio.count
     let key = evidenceKey(for: job.request)
     activeEvidence.remove(key)
@@ -447,6 +508,8 @@ public actor VoiceprintProcessor {
       if case .success = result { rememberCompleted(key) }
       await job.result.finish(result)
     }
+    await job.result.finishPhysical()
+    active = nil
     startNextIfNeeded()
     finishDrainIfNeeded()
   }

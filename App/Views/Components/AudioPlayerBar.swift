@@ -9,7 +9,13 @@ struct AudioPlayerBar: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if case .unavailable(let reason) = playback.availability {
+            if playback.isInteractionBlockedByRecording {
+                Label("Stop recording before playing another meeting.", systemImage: "waveform.slash")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityIdentifier("audioUnavailableReason")
+            } else if case .unavailable(let reason) = playback.availability {
                 Label(reason.text, systemImage: "waveform.slash")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
@@ -17,11 +23,12 @@ struct AudioPlayerBar: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .accessibilityIdentifier("audioUnavailableReason")
             } else {
-                AudioWaveformScrubber(playback: playback, accent: accent)
+                AudioWaveformScrubber(playback: playback, accent: AppColors.controlTint)
                     .frame(height: dynamicTypeSize.isAccessibilitySize ? 24 : 40)
 
                 HStack {
                     Text(Format.clock(Double(playback.currentTimeMs) / 1_000))
+                        .accessibilityIdentifier("audioCurrentTime")
                     Spacer()
                     Text(Format.clock(Double(playback.durationMs) / 1_000))
                 }

@@ -4,6 +4,33 @@ import Foundation
 /// Conversion between `[Float]` and raw little-endian Float32 `Data`,
 /// plus brute-force cosine similarity (PLAN §4.4 — no vector index).
 public enum FloatVector {
+    public static func normalized(_ floats: [Float]) -> [Float]? {
+        guard !floats.isEmpty, floats.allSatisfy(\.isFinite) else { return nil }
+        var norm: Float = 0
+        vDSP_svesq(floats, 1, &norm, vDSP_Length(floats.count))
+        let magnitude = norm.squareRoot()
+        guard magnitude.isFinite, magnitude > 0 else { return nil }
+        var result = Array(repeating: Float.zero, count: floats.count)
+        var divisor = magnitude
+        vDSP_vsdiv(floats, 1, &divisor, &result, 1, vDSP_Length(floats.count))
+        return result
+    }
+
+    public static func dot(
+        _ lhs: UnsafeBufferPointer<Float>,
+        _ rhs: UnsafeBufferPointer<Float>
+    ) -> Float {
+        guard lhs.count == rhs.count else { return .nan }
+        guard !lhs.isEmpty else { return 0 }
+        var result: Float = 0
+        vDSP_dotpr(lhs.baseAddress!, 1, rhs.baseAddress!, 1, &result, vDSP_Length(lhs.count))
+        return result
+    }
+
+    public static func isValidStorage(_ data: Data, dimension: Int) -> Bool {
+        dimension > 0 && data.count.isMultiple(of: MemoryLayout<Float>.size)
+            && data.count / MemoryLayout<Float>.size == dimension
+    }
     public static func data(from floats: [Float]) -> Data {
         var out = Data(capacity: floats.count * 4)
         for value in floats {
@@ -26,29 +53,6 @@ public enum FloatVector {
             out.append(Float(bitPattern: bits))
         }
         return out
-    }
-
-    public static func isValidStorage(_ data: Data, dimension: Int) -> Bool {
-        dimension > 0 && data.count.isMultiple(of: MemoryLayout<Float>.size)
-            && data.count / MemoryLayout<Float>.size == dimension
-    }
-
-    /// Returns a unit vector only when every component and the magnitude are finite.
-    public static func normalized(_ values: [Float]) -> [Float]? {
-        guard !values.isEmpty, values.allSatisfy(\.isFinite) else { return nil }
-        var squaredMagnitude: Float = 0
-        for value in values { squaredMagnitude += value * value }
-        let magnitude = squaredMagnitude.squareRoot()
-        guard magnitude.isFinite, magnitude > 0 else { return nil }
-        return values.map { $0 / magnitude }
-    }
-
-    static func dot(
-        _ a: UnsafeBufferPointer<Float>,
-        _ b: UnsafeBufferPointer<Float>
-    ) -> Float {
-        guard a.count == b.count, !a.isEmpty else { return 0 }
-        return vDSP.dot(a, b)
     }
 
     /// Returns 0 for mismatched, non-finite, or zero-magnitude vectors.

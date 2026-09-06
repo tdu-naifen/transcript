@@ -132,8 +132,12 @@ public struct VoiceprintSampleSelector: Sendable {
     let start = Double(segment.startTime) * Double(sampleRate)
     let end = Double(segment.endTime) * Double(sampleRate)
     guard start.isFinite, end.isFinite, end > start else { return nil }
-    let lowerValue = start.rounded(isExclusion ? .down : .up)
-    let upperValue = end.rounded(isExclusion ? .up : .down)
+    let lowerValue = boundary(
+      start, rule: isExclusion ? .down : .up
+    )
+    let upperValue = boundary(
+      end, rule: isExclusion ? .up : .down
+    )
     guard let lower = boundedFrame(lowerValue, audioCount: audioCount),
       let upper = boundedFrame(upperValue, audioCount: audioCount)
     else { return nil }
@@ -156,6 +160,14 @@ public struct VoiceprintSampleSelector: Sendable {
     if value >= Double(audioCount) { return audioCount }
     guard value <= Double(Int.max) else { return nil }
     return Int(value)
+  }
+
+  private func boundary(_ value: Double, rule: FloatingPointRoundingRule) -> Double {
+    let nearest = value.rounded()
+    // Segment times are often reconstructed from an integer frame and can be
+    // one ulp above the exact boundary; do not turn that representation noise
+    // into an extra excluded frame.
+    return abs(value - nearest) < 0.25 ? nearest : value.rounded(rule)
   }
 
   private func union(_ ranges: [Range<Int>]) -> [Range<Int>] {
