@@ -25,12 +25,12 @@ performance agent:
   report: "尚未实现完成或验收。"
 
 local_agent_takeover:
-  updated_at: "2026-09-05"
+  updated_at: "2026-09-05T19:58:48-04:00"
   work_root: "/Users/tingzhen/Desktop/transcript.worktrees/local-agent-functionality"
   branch: "agents/local-agent-functionality"
   baseline_sha: "d0fedeb4069ec71fd9ff74bb801de3ad7ac58577"
-  integration_target: "main; blocked until main WIP ownership is confirmed"
-  status: blocked
+  integration_target: "main; local commits are allowed before E2E, final main integration remains required"
+  status: verifying
   state_owner: orchestrator
   historical_state: "The inherited performance section above is not current execution or acceptance evidence."
   dispatch:
@@ -41,19 +41,26 @@ local_agent_takeover:
     owners:
       - {task: BUG002-FIX-02, worker: unknown-speaker-writer, status: implemented, files: none, result: "Stopped writing; shared real drain path, actual repository failure tests, and probe compile fix. Reports five hosted tests passed."}
       - {task: BUG002-REVIEW-03, worker: unknown-speaker-reviewer, status: implemented, files: none, result: "All previous local findings closed; no new high-confidence runtime defect. Acoustic E2E remains unverified."}
-      - {task: "BUG002-QA-02 / APPLE-PROBE-02", worker: recording-qa, status: implemented, files: none, result: "Independent five hosted tests passed; Apple runtime unavailable. Device released."}
+      - {task: "BUG002-QA-02 / APPLE-PROBE-02", worker: recording-qa, status: implemented, files: none, result: "Independent five hosted tests passed; Apple runtime unavailable. Device released; local change committed."}
       - {task: BUG007-FIX-01, worker: activity-writer, status: implemented, files: "RecorderModel.swift, RecordingActivityController.swift, narrow helper/protocol, RecordingSession.swift, and AppTests/RecordingActivityLifecycleTests.swift", excludes: "TranscriptionModel.swift, existing BUG002 tests, project.yml, agent_state.yaml, main", result: "Final implementation stopped capture before awaiting Activity.end; binds end to its Activity; adds once orphan snapshot, nonreentrant stop/failure publication, stale end/update guards, and session drainInProgress protection."}
       - {task: BUG007-REVIEW-01, worker: activity-reviewer, status: implemented, files: none, result: "FINAL and REENTRANCY reviews closed all findings; local lifecycle review passed."}
       - {task: BUG007-QA-REENTRANCY, worker: recording-qa, status: implemented, files: none, result: "Independent final double-suite QA passed exit 0: RecordingActivityLifecycleTests 9/9 and TranscriptionModelBUG002Tests 5/5, 14/14. Device closed; report and evidence retained."}
       - {task: REC-READ-01, worker: recording-gap-reader, status: implemented, files: none, result: "Read-only trace found BUG-002/007 and missing Apple production runner; no tests executed."}
+      - {task: DB-IMPLEMENT-01, worker: db-writer, status: implemented, files: "Packages/TranscriptCore and related DB tests", result: "Migrations v4/search/candidate changes reviewed; actual Simulator 43 tests passed; local commits complete."}
+      - {task: DB-REVIEW-QA, worker: db-reviewer/recording-qa, status: implemented, files: none, result: "Review findings closed; backend-service QA 83/83 (81 plus 2 statistics) and annual DB measurement independently reported."}
+      - {task: IOS-IMPLEMENT-01, worker: ios-writer, status: implemented, files: "approved iOS UI/search/meetings files", result: "Local commits 296b4d0 through 840fb64; 17 hosted and 3 UI tests passed."}
+      - {task: IOS-REVIEW-01, worker: ios-reviewer, status: verifying, files: none, result: "Independent read-only review is running; no pass claim yet."}
+      - {task: IOS-QA-01, worker: ios-qa, status: verifying, files: none, result: "Independent read-only QA is running; no pass claim yet."}
+      - {task: MAC-NEXT, worker: mac-writer, status: pending, files: none, result: "Next phase only; stable-hash copy to an independent tree is authorized while original WIP remains read-only."}
   handoff:
     main_sha: "d0fedeb4069ec71fd9ff74bb801de3ad7ac58577"
-    main_wip: "UI, search, voiceprint, reprocessing, Sync contract and mac/ remain untouched in main."
+    current_local_head_before_state_commit: "840fb64bd4dc0b9c2bf89fb6f7ac6e57d4da7ebf"
+    main_wip: "Main still has foundation/SyncContract untracked WIP; preserve its checkpoints. Local integration commits do not authorize overwriting main."
     requests: ["HANDOFF-LOCAL-01 to iOS controller", "HANDOFF-LOCAL-02 to performance controller"]
-    result: "Product writers for this local round have stopped; recording QA is only validating and writing its own session report. Main WIP ownership/stop is still not confirmed."
-    user_confirmation: "User unavailable; main integration remains blocked, not implicitly authorized."
-    processes: "No current evidence of an external writer; prior restore incident is attributed to unknown-speaker-writer and was recovered. Main stop remains unconfirmed."
-    unblock_owner: "User or old controllers must confirm stopped main writers and artifact ownership."
+    result: "All product, review and QA workers are idle except read-only iOS review/QA verification; no other task is executing. Main integration is the next controlled handoff."
+    user_confirmation: "User authorized stable-hash copying to an independent Mac tree; main write integration remains a separate handoff."
+    processes: "No current product writer is executing; prior restore incident is attributed to unknown-speaker-writer and was recovered."
+    unblock_owner: "User/old controller owns main integration handoff; environment owns supported Simulator/model availability."
   incidents:
     - "unknown-speaker-writer mistakenly ran git restore -- agent_state.yaml and removed orchestrator coverage. Writer admitted action and stopped. No HEAD change. Orchestrator restored its own state; worker instructed never to restore unowned changes."
   resources:
@@ -81,10 +88,10 @@ local_agent_takeover:
       implementation: "App/ViewModels/TranscriptionModel.swift finish and transcript validation"
       owner: orchestrator
       dependencies: ["review fixes", "independent QA", "main integration"]
-      status: blocked
+      status: implemented
       acceptance: "Unassigned speaker remains Unknown and saveable; real drain/storage failures still fail."
       evidence: "Independent review closed all local findings; independent five hosted tests passed. Old-gate mutation rejected unknown/mixed."
-      next: "User/platform must unblock Apple Simulator acoustic acceptance; old controllers/user must release main WIP for integration. No acceptance commit or done before required gates."
+      next: "Integrate the committed local change into main through the approved handoff; retain Apple acoustic limitation and do not mark done before target-branch verification."
     - id: BUG-003
       source: "BUGS.md:34-41"
       implementation: "Diarization timeline and ASR alignment"
@@ -99,10 +106,10 @@ local_agent_takeover:
       implementation: "Speaker repository and live/detail projections"
       owner: orchestrator
       dependencies: ["BUG-001", "identity policy"]
-      status: blocked
+      status: verifying
       acceptance: "Stable entities across live/detail/restart; global names propagate without fabricated identities."
-      evidence: "No current integrated runtime verification."
-      next: "Check saved identity projections after stop fixes."
+      evidence: "DB speaker/revision work reviewed and actual Simulator coverage is reported; iOS/main projection integration remains under verification."
+      next: "Complete iOS review/QA and target-branch integration."
     - id: BUG-005
       source: "BUGS.md:52-59; UI.md:212-219"
       implementation: "SpeakerTalkShare.swift currently sums ASR utterance spans"
@@ -126,10 +133,10 @@ local_agent_takeover:
       implementation: "RecorderModel.swift:167-198; RecordingActivityController.swift"
       owner: activity-writer
       dependencies: ["BUG-002 writer finished", "lifecycle test", "supported lock-screen interaction"]
-      status: blocked
+      status: implemented
       acceptance: "Capture stop ends Activity before inference drain; late updates cannot reactivate it."
       evidence: "Local writer log .build/bug007-reentrancy-final.log and xcresult exit 0 with 14/14; independent activity-reviewer FINAL and REENTRANCY reviews closed all findings; independent BUG007-QA-REENTRANCY report qa-activity-reentrancy.txt independently passed exit 0 with lifecycle 9/9 plus BUG002 5/5. Source hashes in that report match the current tested files; no mutation residue remains."
-      next: "User/environment/old controller must provide supported Simulator acoustic/ActivityKit lock-screen evidence and main handoff; then run target-branch integration and obtain a local acceptance commit. Do not mark done now."
+      next: "Integrate the committed local change into main; user/environment/old controller must still provide supported Simulator acoustic/ActivityKit lock-screen evidence. Do not mark done before target-branch verification."
     - id: BUG-008
       source: "BUGS.md:80-86; approved iOS plan"
       implementation: "Main App UI WIP"
@@ -162,10 +169,10 @@ local_agent_takeover:
       implementation: "MeetingReprocessor and MeetingReprocessingRepository; main integration WIP"
       owner: orchestrator
       dependencies: ["performance handoff", "REQ-004", "Simulator cancel/restart"]
-      status: blocked
+      status: implemented
       acceptance: "Atomic publication; cancel/failure preserve audio, ID, title, names and old results."
-      evidence: "Main integration report parse-only; run-scoped physical-completion API missing."
-      next: "Old owner/user to release WIP; review cancellation before integrating."
+      evidence: "Per-handle cancellation and submit-race fix is commit bcbc617; independent local review passed and backend-service QA report records 83/83."
+      next: "Main integration and target-branch verification remain required."
     - id: REQ-003
       source: "BUGS.md:104"
       implementation: "Localization/Settings and main UI WIP"
@@ -207,19 +214,19 @@ local_agent_takeover:
       implementation: "Main migration/SearchRepository/HomeModel WIP"
       owner: orchestrator
       dependencies: ["performance/UI handoff", "frozen API", "Simulator"]
-      status: blocked
+      status: implemented
       acceptance: "Preserving migration; literal/date/speaker paging, titleMatched, seek and UI races."
-      evidence: "Review/fix reports read; fixes claim parse only, not runtime/performance acceptance."
-      next: "Old owners/user release WIP; review/test before wiring."
+      evidence: "DB migrations v4/Search/candidate review findings closed; actual Simulator 43 tests passed. Local implementation is committed; main integration remains."
+      next: "Integrate into main after ownership handoff; preserve migration and search checkpoints."
     - id: VOICEPRINT
       source: "Approved iterative-wishing-lovelace plan sections 2-4"
       implementation: "Main matcher/processor/selector/binder/reprocessing WIP"
       owner: orchestrator
       dependencies: ["performance handoff", "consent ruling", "exclusive CAM++ runtime"]
-      status: blocked
+      status: implemented
       acceptance: "Bounded jobs, stale-match rejection, cancellation and real same/different-speaker tests."
-      evidence: "Candidate/worker/harness/integration reports read; no current model tests or baseline."
-      next: "Old owner/user release WIP; verify fixes without claiming calibration."
+      evidence: "Async processor/reprocessor per-handle cancellation and submit-race fixes committed; independent local review passed and backend-service QA passed 83/83. DB performance measurement independently reviewed."
+      next: "Integrate to main and separately review the six-person SAS standard; do not invent a protocol or claim connected state."
     - id: SYNC-EDIT
       source: "IOS_UI.md section 9; MAC_UI.md section 8; approved Mac/iOS plans"
       implementation: "Main Sync contract WIP"
@@ -255,16 +262,16 @@ local_agent_takeover:
       status: blocked
       acceptance: "Native persistent processing, remote cancel, version publication, BM25/Gemma citations and real return."
       evidence: "Foundation round 1 report claims live 8 unit + 2 UI passes; not rerun against current source."
-      next: "Confirm ownership/source version, independently verify foundation/BM25/model integration."
+      next: "Next phase: safely import stable-hash BM25 files into an independent tree, preserve original WIP checkpoints, then review/verify before any cleanup."
     - id: IOS-INTEGRATION
       source: "Approved streamed-bouncing-music plan phases 2-3"
       implementation: "Main App UI WIP"
       owner: orchestrator
       dependencies: ["UI handoff", "SEARCH", "SYNC-TRANSPORT"]
-      status: blocked
+      status: verifying
       acceptance: "Three tabs with real services, nonblocking submission and localized accessible navigation/state."
-      evidence: "Four UI branches in main; no current integrated acceptance."
-      next: "User/old controller confirms stop; orchestrator owns end-to-end gate."
+      evidence: "Local iOS commits 296b4d0/f4672ed/a4119c5/7b5d228/4b04afe/840fb64 cover Home, Meetings search/navigation, floating/detail/presentation; writer reports 17 hosted + 3 UI passes. IOS-REVIEW-01 and IOS-QA-01 remain read-only and running."
+      next: "Wait for independent iOS review/QA, then integrate to main without overwriting main WIP."
   evidence:
     environment: "Xcode 26.6 (17F113); Apple Swift 6.3.3; arm64 macOS 26"
     baseline: "git status --short empty and git diff --check exit 0 before implementation."
@@ -322,6 +329,47 @@ local_agent_takeover:
       derived_data: ".build/bug007-handoff-derived retained"
       workers: "All product, review and QA workers idle; no other task executing."
       limitation: "Local hosted/lifecycle evidence only; real ActivityKit lock-screen/microphone, main integration and commit gates remain unmet."
-  commits: []
-  cleanup: []
-  done_gate: "Approved + implemented + wired + independently reviewed + required QA + target-branch verified + locally committed. No requirement is done."
+    round_update:
+      main_before_sha: "d0fedeb4069ec71fd9ff74bb801de3ad7ac58577"
+      current_head_before_state_commit: "840fb64bd4dc0b9c2bf89fb6f7ac6e57d4da7ebf"
+      db:
+        implementation: "Migrations v4/Search/candidate review findings closed; actual Simulator 43 tests passed."
+        backend_qa: "83/83 passed (81 functional plus 2 statistics); report: /Users/tingzhen/.copilot/session-state/6751623e-5db4-4ec4-a0df-a2ce62737d71/files/backend-service-qa-final.txt"
+        performance: "Annual 2.628M-row, 5 warmup + 30 sample measurement independently reviewed; median computed correctly in-container scratch; short-query p95 0.409-0.457s and trigram 0.076-0.078s. No SLA/baseline or speedup claim."
+      ios:
+        local_commits: ["296b4d0", "f4672ed", "a4119c5", "7b5d228", "4b04afe", "840fb64"]
+        tests: "Writer reports 17 hosted and 3 UI tests passed."
+        review_qa: "IOS-REVIEW-01 and IOS-QA-01 are read-only and verifying; no pass claim yet."
+      mac:
+        status: pending
+        next: "Stable-hash copy to an independent tree is authorized; preserve original WIP checkpoint. Safely import uncommitted BM25ChunkRepository.swift, RAGBM25Tests.swift and docs/bm25-report.md before any cleanup."
+        limitation: "Mac foundation and SyncContract main-tree untracked work remain checkpoints; do not invent SAS protocol or claim connected state."
+      environment: "Apple SpeechTranscriber probe remains unavailable (isAvailable=false), blocking only dependent model E2E; it does not block unit/integration or other features."
+      decisions: "Six-person SAS standard, manual body ownership, consent and deletion propagation remain product decisions; continue non-conflicting work."
+  commits:
+    - {sha: "4c7a05c8cf3d4be2bb03a1d5fd6f9cdf9962db08", subject: "fix(BUG002): allow unknown speakers at finish"}
+    - {sha: "07a2d7d321fe4dc2316d509dc8cf98a849bf898a", subject: "fix(BUG007): harden recording lifecycle reentrancy"}
+    - {sha: "f744950d1debd39753c9dca103a4f311f2bb11d6", subject: "fix(probe): compile async locale availability check"}
+    - {sha: "be767563f4ebf13d885511a87a2e9727ff043fc4", subject: "chore(state): record agent coverage and QA evidence"}
+    - {sha: "879c167e6a3b490dbd6fd5c8c026a3962fa9bcbc", subject: "feat(db): add search and monotonic binding revisions"}
+    - {sha: "7edf52f478d4697b599848c288d6e8f309f0c4c3", subject: "docs(db): record implementation verification"}
+    - {sha: "71dd1771b2d75ff145a844ef36b12e9d9042d2a1", subject: "test(db): add iOS TranscriptCore simulator scheme"}
+    - {sha: "aa4e7e9869adadc51be839396aed456a939eddd6", subject: "fix(db): ignore remap parking slots in revisions"}
+    - {sha: "b2b8cebc7ab786d671ce8752d24fdda317fa549f", subject: "fix(db): reject duplicate meeting speaker bindings"}
+    - {sha: "837ba0a6ee318bc445948ba009629932f4dcc485", subject: "perf(db): measure indexed search at year scale"}
+    - {sha: "045f77827c340bd461f65f64139333b8f7839ef5", subject: "test(perf): isolate simulator benchmark runner"}
+    - {sha: "f79b7e9328237a3b7319a3418fd83d0622101b28", subject: "Import voiceprint worker and reprocessing checkpoint"}
+    - {sha: "a26dacda760f68efd6a02d9c6d3094e2a519cc41", subject: "Add per-handle physical cancellation waits"}
+    - {sha: "f751bb24999a2f5391d794c1509ca8d2444b6b94", subject: "Close physical completion race before releasing jobs"}
+    - {sha: "40a0715ecfcd191290684989df8cb6dd13e36ce7", subject: "perf(db): correct benchmark statistics and scratch isolation"}
+    - {sha: "31b6ed2774f18126bd902edeb9b2292e4bdc46a4", subject: "test(perf): fail closed for unsupported CAM++ mode"}
+    - {sha: "bcbc617e174cc5d593baa62714ccd5a843e3c079", subject: "Fix reprocessing submit cancellation race"}
+    - {sha: "296b4d03d1ba4df00621271783ebb2c97e12c53d", subject: "feat(ios-ui): import approved navigation and meeting flows"}
+    - {sha: "f4672ed0b6e2ff1c69cdabaa1c1f63e8be76dd16", subject: "feat(ios-ui): wire shared Mac connection entrypoints"}
+    - {sha: "a4119c5942eec6fb571b53b6d7002f8d32c16ed2", subject: "feat(ios-search): wire Home to SearchRepository"}
+    - {sha: "7b5d228b505e68c55c9c2ce40c910f77c3fd51a4", subject: "test(ios-ui): verify search navigation and presentation interactions"}
+    - {sha: "4b04afe79145084edc8b39cb40a9e31518b2c9ba", subject: "feat(ios-meetings): paginate library through SearchRepository"}
+    - {sha: "840fb64bd4dc0b9c2bf89fb6f7ac6e57d4da7ebf", subject: "feat(ios-ui): route Meetings Mac processing through shared model"}
+    - {sha: "cb949b9cb793fd98e9f6b84211f97453f7f50", subject: "chore: move database implementation report out of repo"}
+  cleanup: ["Moved db-implementation.txt to the session artifact; no deadcode deletion or old-worktree cleanup performed."]
+  done_gate: "Approved + implemented + wired + independently reviewed + required QA + target-branch verified + locally committed. Local commits are recorded, but no requirement is done until main integration/target verification gates pass."
