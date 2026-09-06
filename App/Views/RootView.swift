@@ -130,15 +130,12 @@ private struct ReadyView: View {
                     SettingsView(services: services, path: $settingsPath)
                 }
             }
-            .tabViewBottomAccessory {
-                if hasRecordingSession && !isRecordingExpanded {
-                    RecordingMiniBar(
-                        model: recorder,
-                        onExpand: { withAnimation(.snappy) { isRecordingExpanded = true } },
-                        onStop: requestStop
-                    )
-                }
-            }
+            .modifier(RecordingAccessory(
+                isEnabled: hasRecordingSession && !isRecordingExpanded,
+                model: recorder,
+                onExpand: { withAnimation(.snappy) { isRecordingExpanded = true } },
+                onStop: requestStop
+            ))
 
             if isRecordingExpanded {
                 RecordView(
@@ -157,6 +154,9 @@ private struct ReadyView: View {
             }
         }
         .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.8), value: isRecordingExpanded)
+        .onChange(of: services.speakerAnalysis.revision) { _, _ in
+            Task { await library.reload() }
+        }
         .alert(acceptanceText("Confirm meeting name"), isPresented: $isMeetingNamingPresented) {
             TextField(acceptanceText("Meeting name"), text: $meetingName)
                 .accessibilityIdentifier("meetingNameField")
@@ -259,6 +259,30 @@ private struct ReadyView: View {
 
     private func acceptanceText(_ key: String) -> String {
         LocalizationManager.shared.text(key, table: "AcceptanceUI")
+    }
+}
+
+private struct RecordingAccessory: ViewModifier {
+    let isEnabled: Bool
+    let model: RecorderModel
+    let onExpand: () -> Void
+    let onStop: () -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 26.1, *) {
+            content.tabViewBottomAccessory(isEnabled: isEnabled) {
+                RecordingMiniBar(model: model, onExpand: onExpand, onStop: onStop)
+            }
+        } else {
+            content.overlay(alignment: .bottom) {
+                if isEnabled {
+                    RecordingMiniBar(model: model, onExpand: onExpand, onStop: onStop)
+                        .padding(.horizontal, 12)
+                        .padding(.bottom, FloatingRecordButtonMetrics.bottomPadding)
+                }
+            }
+        }
     }
 }
 

@@ -17,6 +17,7 @@ final class AppServices {
     let meetingReprocessor: MeetingReprocessingCoordinator
     let audioOwnership: AudioSessionOwnership
     let speechResources = AppleSpeechResources()
+    let speakerAnalysis: SpeakerAnalysisService
 
     init(
         database: AppDatabase? = nil,
@@ -46,6 +47,11 @@ final class AppServices {
         )
         recovery = RecordingRecovery(database: self.database, deviceId: deviceId, store: self.store)
         modelDownloader = ASRModelDownloader()
+        speakerAnalysis = SpeakerAnalysisService(
+            servicesDatabase: self.database, deviceID: deviceId, store: self.store,
+            downloader: modelDownloader, enabled: database == nil && applicationSupport == nil
+        )
+        speakerAnalysis.resume()
         meetingReprocessor = MeetingReprocessingCoordinator(
             database: self.database, deviceId: deviceId, recordingSession: session,
             resources: speechResources

@@ -1,3 +1,28 @@
+ios_direct_quality_takeover:
+  updated_at: "2026-09-06T11:30:00-04:00"
+  owner: "parent; direct modifications authorized by user"
+  work_root: "/Users/tingzhen/Desktop/transcript"
+  target_branch: main
+  status: verifying
+  committed_before_voiceprint_batch:
+    - "3d90671 Apple Speech production wiring and model-independent capture"
+    - "81e58ef real Bonjour discovery and native recording accessory"
+    - "149b3a3 Core test compilation repair"
+    - "c90a482 reference-driven UI and meeting emoji"
+  voiceprint_batch:
+    implementation: "Saved-audio Sortformer/CAM++ pass, bounded file reads, atomic local animal enrollment/matching, durable v6 queue, explicit rerun recovery and view refresh."
+    policy: "Latest user approves automatic LOCAL enrollment; no voiceprint sync authorization implied."
+    identity: "Actual model-file fingerprint, existing match thresholds; no inferred or invented real-person names."
+    review: "Named-identity conflict, lost wake-up, and concurrent rerun findings fixed with regression tests; final reviewer reports no significant issue in rechecked transitions."
+    tests: "Core broad regression 37 cases; final disk/fingerprint/audio reader 9 cases; App regression 30 cases; final UI 2 and App integration 10 cases. See logs for overlapping selections."
+  evidence: "/Users/tingzhen/.copilot/session-state/6751623e-5db4-4ec4-a0df-a2ce62737d71/files/ios-direct-quality-20260906.txt"
+  device_boundary: "No further physical-device automation: user is testing on the phone. Final save/relaunch rerun was blocked by device lock. Do not claim acoustic accuracy verified."
+  remaining:
+    - "Real multi-person CAM/Sortformer identity accuracy and performance measurement"
+    - "Authenticated pairing and complete two-end task transport"
+    - "Mac product delivery and final worktree/dead-code cleanup"
+  resources: "No active source writer besides parent; isolated Simulator QA only."
+
 "performance agent":
   purpose: "优化 TranscriptCore 数据库搜索与声纹识别性能；提供 iOS/macOS 共用的非阻塞后端接口，不改 UI。"
   status: "implementing"

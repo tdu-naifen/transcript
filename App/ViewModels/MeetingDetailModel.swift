@@ -23,7 +23,8 @@ final class MeetingDetailModel {
     }
 
     private(set) var meeting: Meeting
-    let playback: AudioPlaybackModel
+    private(set) var playback: AudioPlaybackModel
+    let speakerAnalysis: SpeakerAnalysisService
 
     private(set) var utterances: [Utterance] = []
     private(set) var participants: [ParticipantSummary] = []
@@ -36,12 +37,15 @@ final class MeetingDetailModel {
     private let speakerRepository: SpeakerRepository
     private let meetingRepository: MeetingRepository
     private let meetingReprocessor: MeetingReprocessingCoordinator
-    private let audioURL: URL?
+    private(set) var audioURL: URL?
+    private let audioStore: AudioFileStore
+    private let audioOwnership: AudioSessionOwnership
     private let reprocessingLanguage: ASRLanguage
     private let recordingIsActive: @MainActor () -> Bool
     private let deviceId: String
     private var reprocessingTask: Task<Void, Never>?
     private var pendingInitialSeekMs: Int?
+    private var requestedUnknownBackfill = false
 
     init(
         meeting: Meeting,
@@ -64,7 +68,10 @@ final class MeetingDetailModel {
         self.speakerRepository = SpeakerRepository(services.database)
         self.meetingRepository = MeetingRepository(services.database)
         self.meetingReprocessor = services.meetingReprocessor
+        self.speakerAnalysis = services.speakerAnalysis
         self.audioURL = audioURL
+        self.audioStore = services.store
+        self.audioOwnership = services.audioOwnership
         self.reprocessingLanguage = services.asrLanguage
         self.recordingIsActive = {
             services.audioOwnership.isCaptureReserved || (recordingIsActive?() ?? isRecordingActive)
@@ -100,9 +107,26 @@ final class MeetingDetailModel {
             )
             try Task.checkCancellation()
             self.utterances = utterances
-            if let meeting { self.meeting = meeting }
+            if let meeting {
+                self.meeting = meeting
+                let resolvedURL = meeting.audioFileName.map { audioStore.directory.appendingPathComponent($0) } ?? audioURL
+                if resolvedURL != audioURL || playback.durationMs != meeting.durationMs {
+                    playback.stop()
+                    audioURL = resolvedURL
+                    playback = AudioPlaybackModel(
+                        url: resolvedURL, durationMs: meeting.durationMs,
+                        recordingIsActive: recordingIsActive, audioOwnership: audioOwnership
+                    )
+                }
+            }
             applySpeakers(speakers.map(\.speaker))
             loadFailure = nil
+            if self.meeting.audioFileName != nil,
+               speakers.isEmpty || utterances.contains(where: { $0.speakerId == nil }) {
+                let needsBackfill = utterances.contains(where: { $0.speakerId == nil }) && !requestedUnknownBackfill
+                requestedUnknownBackfill = true
+                await speakerAnalysis.enqueue(self.meeting, retry: needsBackfill)
+            }
             // Consume once after data is ready, not on every appearance or reload.
             if let initialSeekMs = pendingInitialSeekMs {
                 pendingInitialSeekMs = nil
@@ -147,6 +171,7 @@ final class MeetingDetailModel {
                 }
                 try Task.checkCancellation()
                 await load()
+                await speakerAnalysis.enqueue(meeting, retry: true)
                 reprocessingState = .succeeded(summary)
             } catch is CancellationError {
                 reprocessingState = .idle

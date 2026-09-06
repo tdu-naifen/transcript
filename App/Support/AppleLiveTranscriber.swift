@@ -1,6 +1,7 @@
 import AVFoundation
 import CoreMedia
 import Speech
+import Synchronization
 import TranscriptCore
 
 protocol AppleTranscribing: Actor {
@@ -228,7 +229,7 @@ struct AppleTranscriptStore: Sendable {
 }
 
 /// One converter per recording preserves resampling state between capture chunks.
-private final class AppleAudioConverter {
+final class AppleAudioConverter {
     private let inputFormat: AVAudioFormat
     private let outputFormat: AVAudioFormat
     private let converter: AVAudioConverter
@@ -260,24 +261,41 @@ private final class AppleAudioConverter {
 
     func finish() throws -> AVAudioPCMBuffer? { try output(input: nil, end: true) }
 
-    private func output(input: AVAudioPCMBuffer?, end: Bool) throws -> AVAudioPCMBuffer? {
+    private func output(input: sending AVAudioPCMBuffer?, end: Bool) throws -> AVAudioPCMBuffer? {
         let count = Double(input?.frameLength ?? 0) * outputFormat.sampleRate / inputFormat.sampleRate
         guard let output = AVAudioPCMBuffer(
             pcmFormat: outputFormat, frameCapacity: AVAudioFrameCount(count.rounded(.up)) + 4_096
         ) else { throw AppleLiveTranscriber.Failure.invalidAudio }
-        var supplied = false
+        let source = AppleConverterInput(buffer: input)
         var error: NSError?
-        let result = converter.convert(to: output, error: &error) { _, status in
-            if let input, !supplied {
-                supplied = true
+        let provideInput: AVAudioConverterInputBlock = { @Sendable _, status in
+            if let input = source.take() {
                 status.pointee = .haveData
                 return input
             }
             status.pointee = end ? .endOfStream : .noDataNow
             return nil
         }
+        let result = converter.convert(to: output, error: &error, withInputFrom: provideInput)
         if let error { throw error }
         guard result != .error else { throw AppleLiveTranscriber.Failure.invalidAudio }
         return output.frameLength > 0 ? output : nil
+    }
+
+    /// Transfers the buffer once; repeated converter callbacks cannot race on its ownership.
+    final class AppleConverterInput: Sendable {
+        private let buffer: Mutex<AVAudioPCMBuffer?>
+
+        init(buffer: sending AVAudioPCMBuffer?) {
+            self.buffer = Mutex(buffer)
+        }
+
+        func take() -> sending AVAudioPCMBuffer? {
+            buffer.withLock { pending in
+                let result = pending
+                pending = nil
+                return result
+            }
+        }
     }
 }

@@ -201,6 +201,174 @@ final class TranscriptUITests: XCTestCase {
         }
     }
 
+    func testHomeSwipeDeletionCancelThenConfirmRefillsRecentAndSurvivesTabReload() {
+        let app = isolatedApp()
+        app.launchArguments = [
+            "-uiFixture", "1", "-uiFixturePagination", "1",
+            "-appLanguage", "en", "-uiFixtureSelectedTab", "home"
+        ]
+        app.launch()
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "homeMeeting-"))
+        let firstID = "fixture-page-29"
+        let row = app.buttons["homeMeeting-\(firstID)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertEqual(rows.count, 5)
+        let originalIDs = rows.allElementsBoundByIndex.map(\.identifier)
+
+        showSwipeDeletion(in: app, row: row, meetingID: firstID)
+        app.alerts.buttons["Cancel"].tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        XCTAssertEqual(rows.allElementsBoundByIndex.map(\.identifier), originalIDs)
+
+        showSwipeDeletion(in: app, row: row, meetingID: firstID)
+        app.alerts.buttons.matching(identifier: "confirmMeetingDeletion").firstMatch.tap()
+        XCTAssertTrue(row.waitForNonExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["homeMeeting-fixture-page-24"].waitForExistence(timeout: 5))
+        XCTAssertEqual(rows.count, 5)
+        app.tabBars.buttons["Meetings"].tap()
+        XCTAssertTrue(app.buttons["meetingRow-fixture-page-28"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["meetingRow-\(firstID)"].exists)
+        app.tabBars.buttons["Home"].tap()
+        XCTAssertTrue(app.buttons["homeMeeting-fixture-page-24"].waitForExistence(timeout: 5))
+        XCTAssertEqual(rows.count, 5)
+        XCTAssertFalse(row.exists)
+        attachScreenshot(of: app, name: "home-swipe-delete-recent-refilled")
+    }
+
+    func testRecordingsSwipeDeletionCancelThenDeleteLastRowsAndSections() {
+        let app = isolatedApp()
+        app.launchArguments = ["-uiFixture", "1", "-appLanguage", "en", "-uiFixtureSelectedTab", "recordings"]
+        app.launch()
+        let ids = [
+            "fixture-meeting-solo-memo", "fixture-meeting-client-call",
+            "fixture-meeting-standup", "fixture-meeting-1on1", "fixture-meeting-review-90min"
+        ]
+        let rows = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "meetingRow-"))
+        let first = app.buttons["meetingRow-\(ids[0])"]
+        XCTAssertTrue(first.waitForExistence(timeout: 10))
+        XCTAssertEqual(rows.count, ids.count)
+        showSwipeDeletion(in: app, row: first, meetingID: ids[0])
+        app.alerts.buttons["Cancel"].tap()
+        XCTAssertTrue(first.waitForExistence(timeout: 3))
+        XCTAssertEqual(rows.count, ids.count)
+
+        for (index, id) in ids.enumerated() {
+            let row = app.buttons["meetingRow-\(id)"]
+            XCTAssertTrue(row.waitForExistence(timeout: 5))
+            showSwipeDeletion(in: app, row: row, meetingID: id)
+            app.alerts.buttons.matching(identifier: "confirmMeetingDeletion").firstMatch.tap()
+            XCTAssertTrue(row.waitForNonExistence(timeout: 5))
+            XCTAssertEqual(rows.count, ids.count - index - 1)
+        }
+        let empty = app.descendants(matching: .any).matching(identifier: "meetingsEmpty").firstMatch
+        XCTAssertTrue(empty.waitForExistence(timeout: 5))
+        app.tabBars.buttons["Home"].tap()
+        XCTAssertTrue(app.textFields["homeSearchField"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "homeMeeting-")).count, 0)
+        app.tabBars.buttons["Meetings"].tap()
+        XCTAssertTrue(empty.waitForExistence(timeout: 5))
+        XCTAssertEqual(rows.count, 0)
+        attachScreenshot(of: app, name: "recordings-swipe-delete-last-section")
+    }
+
+    func testSearchSwipeDeletionCancelPreservesHitsThenConfirmRemovesSection() {
+        let app = isolatedApp()
+        app.launchArguments = ["-uiFixture", "1", "-appLanguage", "en", "-uiFixtureSelectedTab", "home"]
+        app.launch()
+        let search = app.textFields["homeSearchField"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("latency\n")
+        let id = "fixture-meeting-standup"
+        let row = app.buttons["homeMeeting-\(id)"]
+        XCTAssertTrue(row.waitForExistence(timeout: 5))
+        let hits = app.buttons.matching(identifier: "homeSearchHit")
+        XCTAssertGreaterThan(hits.count, 0)
+        let originalHits = hits.allElementsBoundByIndex.map(\.label)
+        showSwipeDeletion(in: app, row: row, meetingID: id)
+        app.alerts.buttons["Cancel"].tap()
+        XCTAssertTrue(row.waitForExistence(timeout: 3))
+        XCTAssertEqual(hits.allElementsBoundByIndex.map(\.label), originalHits)
+        showSwipeDeletion(in: app, row: row, meetingID: id)
+        app.alerts.buttons.matching(identifier: "confirmMeetingDeletion").firstMatch.tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "homeSearchEmpty").firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(row.exists)
+        XCTAssertEqual(hits.count, 0)
+        app.tabBars.buttons["Meetings"].tap()
+        XCTAssertTrue(app.buttons["meetingRow-fixture-meeting-solo-memo"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["meetingRow-\(id)"].exists)
+        app.tabBars.buttons["Home"].tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "homeSearchEmpty").firstMatch.waitForExistence(timeout: 5))
+        attachScreenshot(of: app, name: "search-swipe-delete-last-result")
+    }
+
+    private func showSwipeDeletion(in app: XCUIApplication, row: XCUIElement, meetingID: String) {
+        row.swipeLeft()
+        let delete = app.buttons.matching(identifier: "deleteMeeting-\(meetingID)").firstMatch
+        XCTAssertTrue(delete.waitForExistence(timeout: 3))
+        delete.tap()
+        XCTAssertTrue(app.alerts.buttons.matching(identifier: "confirmMeetingDeletion").firstMatch.waitForExistence(timeout: 3))
+        XCTAssertTrue(app.alerts.buttons["Cancel"].exists)
+    }
+
+    func testMeetingDetailDeletionCanCancelThenDeleteAndRefreshSearch() {
+        let app = isolatedApp()
+        app.launchArguments = ["-uiFixture", "1", "-appLanguage", "en", "-uiFixtureSelectedTab", "home"]
+        app.launch()
+        let search = app.textFields["homeSearchField"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("latency")
+        let hit = app.buttons["homeSearchHit"].firstMatch
+        XCTAssertTrue(hit.waitForExistence(timeout: 5))
+        hit.tap()
+        app.buttons["meetingOptionsButton"].tap()
+        let delete = app.buttons["meetingDeleteMenuItem"]
+        XCTAssertTrue(delete.waitForExistence(timeout: 3))
+        delete.tap()
+        app.buttons["Cancel"].tap()
+        XCTAssertTrue(app.buttons["meetingOptionsButton"].exists)
+        app.buttons["meetingOptionsButton"].tap()
+        app.buttons["meetingDeleteMenuItem"].tap()
+        let confirm = app.buttons.matching(identifier: "confirmMeetingDeletion").firstMatch
+        XCTAssertTrue(confirm.waitForExistence(timeout: 3))
+        confirm.tap()
+        XCTAssertTrue(app.descendants(matching: .any).matching(identifier: "homeSearchEmpty").firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["homeSearchHit"].exists)
+        attachScreenshot(of: app, name: "meeting-deleted-search-refreshed")
+        app.terminate()
+    }
+
+    func testIdleAccessoryHiddenLanguageMenuAndEdgeSnapping() {
+        let app = isolatedApp()
+        app.launchArguments = ["-uiFixture", "1", "-appLanguage", "en", "-uiFixtureSelectedTab", "home"]
+        app.launch()
+        let record = app.buttons["globalRecordButton"]
+        XCTAssertTrue(record.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["recordingMiniBar"].exists)
+        attachScreenshot(of: app, name: "idle-home-no-accessory")
+        let start = record.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let destination = app.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.55))
+        start.press(forDuration: 0.1, thenDragTo: destination)
+        let snapped = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in record.frame.midX < app.frame.width * 0.2 }, object: nil
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [snapped], timeout: 3), .completed)
+        XCTAssertFalse(app.buttons["recordingMiniBar"].exists)
+        XCTAssertFalse(app.buttons["collapseRecordingButton"].exists)
+        app.tabBars.buttons["Settings"].tap()
+        let language = app.buttons["appLanguagePicker"]
+        XCTAssertTrue(language.waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["简体中文"].exists)
+        language.tap()
+        XCTAssertTrue(app.buttons["简体中文"].waitForExistence(timeout: 3))
+        app.buttons["简体中文"].tap()
+        XCTAssertTrue(app.navigationBars["设置"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["recordingMiniBar"].exists)
+        attachScreenshot(of: app, name: "compact-language-no-accessory")
+        app.terminate()
+    }
+
     func testHomeMeetingsSettingsTabsAndSearchHitReturn() {
         let app = launchFixture()
         let homeTab = app.tabBars.buttons["Home"].exists ? app.tabBars.buttons["Home"] : app.tabBars.buttons["主页"]
@@ -272,6 +440,7 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["主页"].waitForExistence(timeout: 5))
         let settings = app.tabBars.buttons["设置"].exists ? app.tabBars.buttons["设置"] : app.tabBars.buttons["Settings"]
         settings.tap()
+        app.buttons["appLanguagePicker"].tap()
         let english = app.buttons["English"]
         XCTAssertTrue(english.waitForExistence(timeout: 3))
         english.tap()
@@ -287,10 +456,13 @@ final class TranscriptUITests: XCTestCase {
         app.tabBars.buttons["Meetings"].tap()
         XCTAssertTrue(app.navigationBars["Meetings"].waitForExistence(timeout: 3))
         app.tabBars.buttons["Settings"].tap()
+        app.buttons["appLanguagePicker"].tap()
         app.buttons["简体中文"].tap()
         XCTAssertTrue(app.navigationBars["设置"].waitForExistence(timeout: 3))
         XCTAssertTrue(app.buttons["resetFloatingRecordButton"].label.contains("恢复"))
+        app.buttons["appLanguagePicker"].tap()
         XCTAssertTrue(app.buttons["System"].exists, "System choice follows system English, not the app override")
+        app.buttons["简体中文"].tap()
         app.tabBars.buttons["主页"].tap()
         XCTAssertTrue(app.navigationBars["主页"].waitForExistence(timeout: 3))
         XCTAssertEqual(app.buttons["homeSpeakerFilter"].label, "说话人")
@@ -310,8 +482,10 @@ final class TranscriptUITests: XCTestCase {
         ]
         app.launch()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
+        app.buttons["appLanguagePicker"].tap()
         XCTAssertTrue(app.buttons["跟随系统"].exists)
         XCTAssertFalse(app.buttons["System"].exists)
+        app.buttons["English"].tap()
         XCTAssertTrue(app.buttons["resetFloatingRecordButton"].label.contains("Reset"))
         attachScreenshot(of: app, name: "english-app-chinese-system-option")
     }
@@ -333,8 +507,8 @@ final class TranscriptUITests: XCTestCase {
         attachScreenshot(of: app, name: "appearance-home-selected-controls")
         app.tabBars.buttons["Settings"].tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["downloadModelButton"].isHittable)
-        XCTAssertTrue(app.buttons["English"].isHittable)
+        XCTAssertFalse(app.buttons["downloadModelButton"].exists)
+        XCTAssertTrue(app.buttons["appLanguagePicker"].isHittable)
         attachScreenshot(of: app, name: "appearance-settings-controls")
     }
 
@@ -350,14 +524,13 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertTrue(description.waitForExistence(timeout: 3))
         attachScreenshot(of: app, name: "settings-chinese-model-description")
         let chinese = description.label
-        XCTAssertTrue(chinese.contains("Nemotron 3.5 ASR"))
-        XCTAssertTrue(chinese.contains("流式"))
-        let ordinaryCopy = chinese.replacingOccurrences(of: "Nemotron 3.5 ASR", with: "")
-            .replacingOccurrences(of: "MB", with: "")
-        XCTAssertNil(ordinaryCopy.range(of: "[A-Za-z]", options: .regularExpression))
+        XCTAssertTrue(chinese.contains("Apple Speech"))
+        XCTAssertTrue(chinese.contains("无需下载"))
+        app.buttons["appLanguagePicker"].tap()
         app.buttons["English"].tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 3))
-        XCTAssertTrue(description.label.contains("downloaded once"))
+        XCTAssertTrue(description.label.contains("No Nemotron download is required"))
+        app.buttons["appLanguagePicker"].tap()
         app.buttons["简体中文"].tap()
         XCTAssertTrue(app.navigationBars["设置"].waitForExistence(timeout: 3))
         XCTAssertEqual(description.label, chinese)
@@ -436,6 +609,73 @@ final class TranscriptUITests: XCTestCase {
         tapDone(in: app)
     }
 
+    func testTranscriptManualBrowsingCanResumePlaybackFollowing() {
+        let app = isolatedApp()
+        app.launchArguments = [
+            "-uiFixture", "1", "-uiFixturePlayback", "1", "-appLanguage", "en",
+            "-uiFixtureOpenMeetingId", "fixture-meeting-playback"
+        ]
+        app.launch()
+        let play = app.buttons["audioPlayPauseButton"]
+        XCTAssertTrue(play.waitForExistence(timeout: 5))
+        play.tap()
+        let scroll = app.scrollViews["meetingTranscriptScrollView"]
+        scroll.swipeUp()
+        let follow = app.buttons["transcriptFollowPlayback"]
+        XCTAssertTrue(follow.waitForExistence(timeout: 3))
+        XCTAssertGreaterThanOrEqual(follow.frame.height, 44)
+        let visibleLine = scroll.buttons.allElementsBoundByIndex.first {
+            $0.identifier.hasPrefix("transcriptPlay-") && $0.isHittable
+        }
+        XCTAssertNotNil(visibleLine)
+        let browsingY = visibleLine?.frame.midY
+        // Wait for a real playback segment change; manual browsing must remain active.
+        let currentTime = app.staticTexts["audioCurrentTime"]
+        let initialTime = currentTime.label
+        let advances = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in currentTime.label != initialTime }, object: nil
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [advances], timeout: 4), .completed)
+        XCTAssertTrue(follow.exists)
+        if let visibleLine, let browsingY {
+            XCTAssertEqual(visibleLine.frame.midY, browsingY, accuracy: 2)
+        }
+        follow.tap()
+        XCTAssertTrue(follow.waitForNonExistence(timeout: 3))
+        XCTAssertEqual(play.label, "Pause audio")
+        attachScreenshot(of: app, name: "transcript-follow-resumed")
+    }
+
+    func testInsightsAccessibilityTextFitsAndRenameRemainsReachable() {
+        let app = isolatedApp()
+        app.launchArguments = [
+            "-uiFixture", "1", "-appLanguage", "en",
+            "-uiFixtureSelectedTab", "recordings",
+            "-uiFixtureOpenMeetingId", "fixture-meeting-review-90min",
+            "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"
+        ]
+        app.launch()
+        XCTAssertTrue(app.buttons["speakerInsightsButton"].waitForExistence(timeout: 5))
+        app.buttons["speakerInsightsButton"].tap()
+        let rename = app.buttons["speakerRenameButton.fixture-speaker-alexandra"]
+        XCTAssertTrue(rename.waitForExistence(timeout: 3))
+        for _ in 0..<5 where !rename.isHittable || rename.frame.maxY > app.frame.height {
+            app.swipeUp()
+        }
+        XCTAssertTrue(rename.isHittable)
+        XCTAssertGreaterThanOrEqual(rename.frame.height, 44)
+        XCTAssertGreaterThan(rename.frame.height, 52, "The accessibility-size name must wrap instead of truncating")
+        XCTAssertGreaterThanOrEqual(rename.frame.minX, 0)
+        XCTAssertLessThanOrEqual(rename.frame.maxX, app.frame.width)
+        XCTAssertLessThanOrEqual(rename.frame.maxY, app.frame.height)
+        XCTAssertFalse(app.staticTexts["45:00"].exists, "The compact time axis keeps endpoints instead of wrapping three timestamps")
+        attachScreenshot(of: app, name: "insights-accessibility-text")
+        rename.tap()
+        XCTAssertTrue(app.alerts["Edit speaker name"].waitForExistence(timeout: 3))
+        app.alerts["Edit speaker name"].buttons["Cancel"].tap()
+        XCTAssertTrue(rename.waitForExistence(timeout: 3))
+    }
+
     func testTranscriptTailIsFullyVisibleAndTapsRealFixtureAudio() {
         let app = isolatedApp()
         app.launchArguments = [
@@ -470,7 +710,10 @@ final class TranscriptUITests: XCTestCase {
         play.tap()
         XCTAssertEqual(play.label, "Play audio")
         XCTAssertFalse(app.buttons["meetingProcessByMacButton"].isEnabled)
-        XCTAssertTrue(app.staticTexts["meetingMacUnavailableReason"].label.contains("no transport service"))
+        XCTAssertEqual(
+            app.staticTexts["meetingMacUnavailableReason"].label,
+            "Open Transcript on your Mac, then look for it on your local network."
+        )
         attachScreenshot(of: app, name: "transcript-tail-seeked")
         app.buttons["BackButton"].tap()
         XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 3))

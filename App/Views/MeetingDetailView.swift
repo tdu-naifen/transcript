@@ -4,11 +4,16 @@ import TranscriptCore
 /// Meeting detail screen (UI.md §3): transcript in forward order with tap-to-seek
 /// playback, participants folded into the header, engineering info behind `⋯`.
 struct MeetingDetailView: View {
+    @Environment(\.dismiss) private var dismiss
     let meeting: Meeting
     let audioURL: URL?
     let onMeetingRenamed: () -> Void
     let onProcessByMac: (() -> Void)?
     let macUnavailableReason: String?
+    let onDelete: ((Meeting) async -> Bool)?
+    @State private var pendingDeletion: Meeting?
+    @State private var isDeleting = false
+    @State private var deletionFailed = false
 
     @State private var model: MeetingDetailModel
     @State private var isParticipantsExpanded = Self.debugStartExpanded
@@ -22,6 +27,7 @@ struct MeetingDetailView: View {
     @State private var emojiText = ""
     @State private var isEmojiPresented = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let accent = AppColors.controlTint
 
@@ -46,13 +52,15 @@ struct MeetingDetailView: View {
         macUnavailableReason: String? = nil,
         initialSeekMs: Int? = nil,
         recordingIsActive: (@MainActor () -> Bool)? = nil,
-        onMeetingRenamed: @escaping () -> Void = {}
+        onMeetingRenamed: @escaping () -> Void = {},
+        onDelete: ((Meeting) async -> Bool)? = nil
     ) {
         self.meeting = meeting
         self.audioURL = audioURL
         self.onMeetingRenamed = onMeetingRenamed
         self.onProcessByMac = onProcessByMac
         self.macUnavailableReason = macUnavailableReason
+        self.onDelete = onDelete
         _model = State(initialValue: MeetingDetailModel(
             meeting: meeting,
             audioURL: audioURL,
@@ -87,8 +95,25 @@ struct MeetingDetailView: View {
             ToolbarItem(placement: .topBarTrailing) { meetingOptions }
         }
         .tint(accent)
+        .modifier(MeetingDeletionConfirmation(meeting: $pendingDeletion) { meeting in
+            guard !isDeleting, let onDelete else { return }
+            isDeleting = true
+            model.playback.stop()
+            model.cancelReprocessing()
+            if await onDelete(meeting) {
+                dismiss()
+            } else {
+                deletionFailed = true
+            }
+            isDeleting = false
+        })
+        .alert(Text("library.delete_failed"), isPresented: $deletionFailed) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The meeting was not deleted. Stop any active recording and try again.", tableName: "MeetingDeletion")
+        }
         .sheet(isPresented: $isEngineeringDetailPresented) {
-            EngineeringDetailSheet(meeting: model.meeting, audioURL: audioURL)
+            EngineeringDetailSheet(meeting: model.meeting, audioURL: model.audioURL)
         }
         .sheet(isPresented: $isInsightsPresented) {
             SpeakerInsightsView(model: model)
@@ -149,7 +174,7 @@ struct MeetingDetailView: View {
         .onChange(of: model.renamingSpeakerId) { _, speakerId in
             renameText = speakerId.flatMap { model.speakersById[$0]?.resolvedName } ?? ""
         }
-        .task { await model.load() }
+        .task(id: model.speakerAnalysis.revision) { await model.load() }
         .onDisappear {
             model.playback.stop()
             model.cancelReprocessing()
@@ -195,6 +220,18 @@ struct MeetingDetailView: View {
             .accessibilityIdentifier("speakerInsightsMenuItem")
             Button("Details", systemImage: "info.circle") {
                 isEngineeringDetailPresented = true
+            }
+            if onDelete != nil {
+                Divider()
+                Button(role: .destructive) { pendingDeletion = model.meeting } label: {
+                    Label {
+                        Text("meetings.delete.action", tableName: "MeetingDeletion")
+                    } icon: {
+                        Image(systemName: "trash")
+                    }
+                }
+                .disabled(isDeleting)
+                .accessibilityIdentifier("meetingDeleteMenuItem")
             }
         } label: {
             Image(systemName: "ellipsis")
@@ -287,8 +324,27 @@ struct MeetingDetailView: View {
 
     private var participantsHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if let state = model.speakerAnalysis.states[model.meeting.id] {
+                switch state {
+                case .preparing, .analyzing:
+                    HStack {
+                        ProgressView().controlSize(.small)
+                        Text(state == .preparing ? "Preparing animal recognition resources…" : "Identifying animal voices…", tableName: "AppleSpeech")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
+                case .failed(let message):
+                    Text(message).font(.footnote).foregroundStyle(.secondary)
+                    Button {
+                        Task { await model.speakerAnalysis.enqueue(model.meeting, retry: true) }
+                    } label: { Text("Retry animal recognition", tableName: "AppleSpeech") }
+                case .complete: EmptyView()
+                }
+            }
             Button {
-                withAnimation { isParticipantsExpanded.toggle() }
+                withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+                    isParticipantsExpanded.toggle()
+                }
             } label: {
                 HStack(spacing: 8) {
                     SpeakerDotsView(colorIndexes: model.participants.map(\.colorIndex))
@@ -300,9 +356,11 @@ struct MeetingDetailView: View {
                         .font(.caption)
                         .foregroundStyle(.tertiary)
                 }
+                .frame(minHeight: 44)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityValue(Text(isParticipantsExpanded ? "Expanded" : "Collapsed", tableName: "AcceptanceUI"))
             .accessibilityIdentifier("participantsToggle")
 
             if isParticipantsExpanded {
@@ -313,7 +371,7 @@ struct MeetingDetailView: View {
                         }
                     }
                 }
-                .transition(.opacity.combined(with: .move(edge: .top)))
+                .transition(reduceMotion ? .identity : .opacity.combined(with: .move(edge: .top)))
             }
         }
         .padding(.horizontal)
@@ -321,21 +379,40 @@ struct MeetingDetailView: View {
     }
 
     private var transcript: some View {
+        MeetingTranscriptView(model: model, onReprocess: { isReprocessingConfirmationPresented = true }) {
+            VStack(alignment: .leading, spacing: 6) {
+                Text(model.meeting.title)
+                    .font(.title2.weight(.bold))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityAddTraits(.isHeader)
+                Text(headerMetadata)
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal)
+            participantsHeader
+        }
+    }
+
+    private func acceptanceText(_ key: String) -> String {
+        LocalizationManager.shared.text(key, table: "AcceptanceUI")
+    }
+}
+
+/// Keep playback ticks out of the detail header, sheets and toolbar.
+private struct MeetingTranscriptView<Header: View>: View {
+    let model: MeetingDetailModel
+    let onReprocess: () -> Void
+    @ViewBuilder let header: Header
+    @State private var followsPlayback = true
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        let currentID = model.currentUtteranceId
         ScrollViewReader { proxy in
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    VStack(alignment: .leading, spacing: 6) {
-                        Text(model.meeting.title)
-                            .font(.title2.weight(.bold))
-                            .fixedSize(horizontal: false, vertical: true)
-                            .accessibilityAddTraits(.isHeader)
-                        Text(headerMetadata)
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                    .padding(.horizontal)
-                    participantsHeader
-
+                    header
                     if let loadFailure = model.loadFailure {
                         ContentUnavailableView(
                             "无法加载转写", systemImage: "exclamationmark.triangle", description: Text(loadFailure)
@@ -349,9 +426,7 @@ struct MeetingDetailView: View {
                             Text(acceptanceText("Reprocess the original audio to create a transcript."))
                         } actions: {
                             if model.hasLocalAudioForReprocessing {
-                                Button(acceptanceText("Reprocess")) {
-                                    isReprocessingConfirmationPresented = true
-                                }
+                                Button(acceptanceText("Reprocess"), action: onReprocess)
                                 .buttonStyle(.borderedProminent)
                                 .tint(AppColors.filledControl)
                                 .disabled(model.isReprocessing)
@@ -364,8 +439,11 @@ struct MeetingDetailView: View {
                                 TranscriptRow(
                                     utterance: utterance,
                                     speaker: utterance.speakerId.flatMap { model.speakersById[$0] },
-                                    isCurrent: utterance.id == model.currentUtteranceId,
-                                    onTapLine: { model.seek(to: utterance) },
+                                    isCurrent: utterance.id == currentID,
+                                    onTapLine: {
+                                        followsPlayback = true
+                                        model.seek(to: utterance)
+                                    },
                                     onTapName: { model.beginRename(speakerId: $0) }
                                 )
                                 .id(utterance.id)
@@ -375,13 +453,47 @@ struct MeetingDetailView: View {
                     }
                 }
                 .padding(.top, 12)
-                .padding(.bottom, 24)
+                .padding(.bottom, followsPlayback ? 24 : 76)
             }
             .accessibilityIdentifier("meetingTranscriptScrollView")
-            .onChange(of: model.currentUtteranceId, initial: true) { _, newValue in
-                guard let newValue else { return }
-                withAnimation { proxy.scrollTo(newValue, anchor: .center) }
+            .onScrollPhaseChange { _, phase in
+                if phase == .interacting { followsPlayback = false }
             }
+            .overlay(alignment: .bottomTrailing) {
+                if !followsPlayback, currentID != nil {
+                    Button {
+                        followsPlayback = true
+                    } label: {
+                        Label {
+                            Text("Follow playback", tableName: "AcceptanceUI")
+                        } icon: {
+                            Image(systemName: "arrow.down.to.line")
+                        }
+                        .font(.subheadline.weight(.semibold))
+                        .padding(.horizontal, 12)
+                        .frame(minHeight: 44)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(AppColors.controlTint)
+                    .background(.regularMaterial, in: Capsule())
+                    .padding(12)
+                    .accessibilityHint(Text("Scroll to the current transcript segment.", tableName: "AcceptanceUI"))
+                    .accessibilityIdentifier("transcriptFollowPlayback")
+                }
+            }
+            .onChange(of: currentID, initial: true) { _, newValue in
+                if followsPlayback { scroll(to: newValue, using: proxy) }
+            }
+            .onChange(of: followsPlayback) { _, follows in
+                if follows { scroll(to: currentID, using: proxy) }
+            }
+        }
+    }
+
+    private func scroll(to id: String?, using proxy: ScrollViewProxy) {
+        guard let id else { return }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) {
+            proxy.scrollTo(id, anchor: .center)
         }
     }
 
@@ -527,6 +639,7 @@ private struct ParticipantRow: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+            .frame(minHeight: 44)
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -612,9 +725,14 @@ private struct SpeakerInsightsView: View {
     @State private var renamingSpeakerId: String?
     @State private var renameText = ""
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     @ScaledMetric(relativeTo: .body) private var labelWidth = 112
 
     var body: some View {
+        let utterancesBySpeaker = Dictionary(grouping: model.utterances, by: \.speakerId)
+        let rowLayout = dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 12))
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -628,16 +746,14 @@ private struct SpeakerInsightsView: View {
                     Text("Tap an animal name to edit it across all meetings. Tap its timeline to listen.", tableName: "AppleSpeech")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
-                    HStack(spacing: 12) {
+                    rowLayout {
                         Text("Animals", tableName: "AppleSpeech")
-                            .frame(width: labelWidth, alignment: .leading)
-                        HStack {
-                            Text("00:00")
-                            Spacer()
-                            Text(Format.clock(Double(model.meeting.durationMs) / 2_000))
-                            Spacer()
-                            Text(Format.clock(Double(model.meeting.durationMs) / 1_000))
+                            .frame(width: dynamicTypeSize.isAccessibilitySize ? nil : labelWidth, alignment: .leading)
+                        ViewThatFits(in: .horizontal) {
+                            timeAxis(includesMidpoint: true)
+                            timeAxis(includesMidpoint: false)
                         }
+                        .frame(maxWidth: .infinity)
                     }
                     .font(.caption.monospacedDigit())
                     .foregroundStyle(.secondary)
@@ -645,7 +761,7 @@ private struct SpeakerInsightsView: View {
                     .accessibilityIdentifier("speakerInsightsTimeAxis")
                     VStack(spacing: 0) {
                       ForEach(model.participants) { participant in
-                        HStack(spacing: 12) {
+                        rowLayout {
                         Button {
                             renamingSpeakerId = participant.id
                             renameText = participant.resolvedName
@@ -655,15 +771,17 @@ private struct SpeakerInsightsView: View {
                                     Circle()
                                         .fill(Color.speaker(colorIndex: participant.colorIndex))
                                         .frame(width: 9, height: 9)
+                                        .accessibilityHidden(true)
                                     Text(participant.resolvedName)
                                         .font(.subheadline.weight(.semibold))
-                                        .lineLimit(1)
+                                        .lineLimit(dynamicTypeSize.isAccessibilitySize ? nil : 2)
+                                        .fixedSize(horizontal: false, vertical: true)
                                 }
                                     Text("\(participant.percentage)%")
                                         .font(.caption.monospacedDigit())
                                         .foregroundStyle(.secondary)
                             }
-                            .frame(width: labelWidth, alignment: .leading)
+                            .frame(width: dynamicTypeSize.isAccessibilitySize ? nil : labelWidth, alignment: .leading)
                             .frame(minHeight: 52)
                             .contentShape(Rectangle())
                         }
@@ -673,9 +791,9 @@ private struct SpeakerInsightsView: View {
                         .accessibilityIdentifier("speakerRenameButton.\(participant.id)")
                         SpeakerTimeline(
                                     meetingDurationMs: model.meeting.durationMs,
-                                    utterances: model.utterances.filter { $0.speakerId == participant.id },
+                                    utterances: utterancesBySpeaker[participant.id] ?? [],
                                     color: Color.speaker(colorIndex: participant.colorIndex),
-                                    playbackProgress: model.playback.progress,
+                                    playback: model.playback,
                                     onSeek: { model.playback.seekAndPlay(toMs: $0) }
                                 )
                                 .frame(height: 52)
@@ -697,7 +815,7 @@ private struct SpeakerInsightsView: View {
                 }
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents(dynamicTypeSize.isAccessibilitySize ? [.large] : [.medium, .large])
         .accessibilityIdentifier("speakerInsightsSheet")
         .alert(acceptanceText("Edit speaker name"), isPresented: Binding(
             get: { renamingSpeakerId != nil },
@@ -717,6 +835,21 @@ private struct SpeakerInsightsView: View {
         }
     }
 
+    private func timeAxis(includesMidpoint: Bool) -> some View {
+        HStack {
+            Text("00:00")
+                .fixedSize()
+            Spacer()
+            if includesMidpoint {
+                Text(Format.clock(Double(model.meeting.durationMs) / 2_000))
+                    .fixedSize()
+                Spacer()
+            }
+            Text(Format.clock(Double(model.meeting.durationMs) / 1_000))
+                .fixedSize()
+        }
+    }
+
     private func acceptanceText(_ key: String) -> String {
         LocalizationManager.shared.text(key, table: "AcceptanceUI")
     }
@@ -726,7 +859,7 @@ private struct SpeakerTimeline: View {
     let meetingDurationMs: Int
     let utterances: [Utterance]
     let color: Color
-    let playbackProgress: Double
+    let playback: AudioPlaybackModel
     let onSeek: (Int) -> Void
 
     var body: some View {
@@ -748,10 +881,7 @@ private struct SpeakerTimeline: View {
                         .frame(height: 6)
                         .offset(x: proxy.size.width * start)
                 }
-                Rectangle()
-                    .fill(AppColors.controlTint)
-                    .frame(width: 1.5)
-                    .offset(x: proxy.size.width * playbackProgress)
+                TimelinePlaybackCursor(playback: playback, width: proxy.size.width)
             }
             .contentShape(Rectangle())
             .gesture(SpatialTapGesture().onEnded { value in
@@ -763,6 +893,19 @@ private struct SpeakerTimeline: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityHint(Text("Play this animal's first contribution", tableName: "AppleSpeech"))
         .accessibilityAction { onSeek(utterances.first?.startMs ?? 0) }
+    }
+
+    private struct TimelinePlaybackCursor: View {
+        let playback: AudioPlaybackModel
+        let width: CGFloat
+
+        var body: some View {
+            Rectangle()
+                .fill(AppColors.controlTint)
+                .frame(width: 1.5)
+                .offset(x: width * playback.progress)
+                .accessibilityHidden(true)
+        }
     }
 
     private func fraction(_ milliseconds: Int) -> CGFloat {

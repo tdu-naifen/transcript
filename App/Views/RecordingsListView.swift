@@ -26,6 +26,7 @@ struct RecordingsListView: View {
                             "meetings.empty.title", systemImage: "waveform",
                             description: Text("meetings.empty.description")
                         )
+                        .accessibilityIdentifier("meetingsEmpty")
                     }
                 } else {
                     ForEach(dateGroups) { group in
@@ -43,10 +44,28 @@ struct RecordingsListView: View {
                                 }
                                 .disabled(model.deletingIDs.contains(meeting.id))
                                 .swipeActions(allowsFullSwipe: false) {
+                                    // Only the confirmation performs deletion; keep the row until then.
+                                    Button { pendingDeletion = meeting } label: {
+                                        Label {
+                                            Text("meetings.delete.action", tableName: "MeetingDeletion")
+                                        } icon: {
+                                            Image(systemName: "trash")
+                                        }
+                                    }
+                                    .tint(.red)
+                                    .disabled(model.deletingIDs.contains(meeting.id))
+                                    .accessibilityIdentifier("deleteMeeting-\(meeting.id)")
+                                }
+                                .contextMenu {
                                     Button(role: .destructive) { pendingDeletion = meeting } label: {
-                                        Label("meetings.delete_local.action", systemImage: "trash")
+                                        Label {
+                                            Text("meetings.delete.action", tableName: "MeetingDeletion")
+                                        } icon: {
+                                            Image(systemName: "trash")
+                                        }
                                     }
                                     .disabled(model.deletingIDs.contains(meeting.id))
+                                    .accessibilityIdentifier("deleteMeeting-\(meeting.id)")
                                 }
                             }
                         } header: {
@@ -74,30 +93,15 @@ struct RecordingsListView: View {
                     onProcessByMac: { macSubmissionMeeting = meeting },
                     macUnavailableReason: macConnection.submissionBlockReason(meetingID: meeting.id),
                     recordingIsActive: { isRecordingActive() },
-                    onMeetingRenamed: { Task { await model.reload() } }
+                    onMeetingRenamed: { Task { await model.reload() } },
+                    onDelete: { await model.delete($0) }
                 )
             }
             .navigationTitle(LocalizationManager.shared.text("meetings.title"))
             .fullScreenCover(item: $macSubmissionMeeting) { meeting in
                 MacSubmissionView(meeting: meeting, model: macConnection)
             }
-            .confirmationDialog(
-                "meetings.delete_local.title",
-                isPresented: Binding(
-                    get: { pendingDeletion != nil },
-                    set: { if !$0 { pendingDeletion = nil } }
-                ),
-                titleVisibility: .visible,
-                presenting: pendingDeletion
-            ) { meeting in
-                Button("meetings.delete_local.action", role: .destructive) {
-                    pendingDeletion = nil
-                    Task { await model.delete(meeting) }
-                }
-                Button("common.cancel", role: .cancel) { pendingDeletion = nil }
-            } message: { meeting in
-                Text(meeting.title) + Text("\n") + Text("meetings.delete_local.scope")
-            }
+            .modifier(MeetingDeletionConfirmation(meeting: $pendingDeletion) { await model.delete($0) })
             .refreshable { await model.reload() }
             .task {
                 await model.reload()

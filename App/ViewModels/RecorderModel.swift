@@ -236,10 +236,11 @@ final class RecorderModel {
         }
         if let pendingStop {
             do {
-                _ = try await services.session.publish(
+                let saved = try await services.session.publish(
                     pendingStop,
                     as: stopFailure == nil ? .recorded : .failed
                 )
+                await services.speakerAnalysis.enqueue(saved)
             } catch {
                 stopFailure = error
             }

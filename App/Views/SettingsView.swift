@@ -58,14 +58,30 @@ struct SettingsView: View {
                         .accessibilityIdentifier("transcriptionModelDescription")
                 }
 
+                Section {
+                    LabeledContent("Sortformer + CAM++", value: LocalizationManager.shared.text("On-device", table: "AppleSpeech"))
+                    if services.speakerAnalysis.states.values.contains(.preparing) {
+                        HStack {
+                            ProgressView()
+                            Text("Preparing animal recognition resources…", tableName: "AppleSpeech")
+                        }
+                    }
+                    if let error = services.speakerAnalysis.errorMessage {
+                        Text(error).font(.footnote).foregroundStyle(.secondary)
+                    }
+                } header: {
+                    Text("Animal identities", tableName: "AppleSpeech")
+                } footer: {
+                    Text("Voiceprint resources are prepared separately from Apple Speech. Animal identities stay on this device.", tableName: "AppleSpeech")
+                }
+
                 Section("App Language") {
                     Picker("App Language", selection: $localization.language) {
                         ForEach(AppLanguage.allCases, id: \.self) { option in
                             Text(option.displayName).tag(option)
                         }
                     }
-                    .pickerStyle(.inline)
-                    .labelsHidden()
+                    .pickerStyle(.menu)
                     .accessibilityIdentifier("appLanguagePicker")
                 }
 

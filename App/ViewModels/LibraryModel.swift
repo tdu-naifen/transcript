@@ -11,6 +11,7 @@ final class LibraryModel {
     private(set) var isLoading = false
     private(set) var hasLoaded = false
     private(set) var deletingIDs: Set<String> = []
+    private(set) var deletionRevision = 0
     private(set) var errorMessage: String?
     private(set) var errorTitleKey = "library.load_failed"
 
@@ -31,6 +32,7 @@ final class LibraryModel {
     private let searchRepository: SearchRepository
     private let speakerRepository: SpeakerRepository
     private let store: AudioFileStore
+    private let recordingSession: RecordingSession
     private var reloadID = UUID()
     private(set) var nextCursor: SearchCursor?
     let database: AppDatabase
@@ -40,6 +42,7 @@ final class LibraryModel {
         searchRepository = SearchRepository(services.database)
         speakerRepository = SpeakerRepository(services.database)
         store = services.store
+        recordingSession = services.session
         database = services.database
     }
 
@@ -105,27 +108,37 @@ final class LibraryModel {
 
     /// Existing local deletion only. Never emits a cross-device delete or purges
     /// audio independently of the meeting. Keep audio intact if the DB delete fails.
-    func delete(_ meeting: Meeting) async {
-        guard deletingIDs.insert(meeting.id).inserted else { return }
+    @discardableResult
+    func delete(_ meeting: Meeting) async -> Bool {
+        guard deletingIDs.insert(meeting.id).inserted else { return false }
         defer { deletingIDs.remove(meeting.id) }
+        guard await recordingSession.activeMeetingId != meeting.id else {
+            errorTitleKey = "library.delete_failed"
+            errorMessage = LocalizationManager.shared.text("Stop this recording before deleting the meeting.", table: "MeetingDeletion")
+            return false
+        }
+        let stored: Meeting?
         do {
-            try await repository.delete(id: meeting.id)
+            stored = try await repository.fetch(id: meeting.id)
+            if stored != nil { try await repository.delete(id: meeting.id) }
         } catch {
             errorTitleKey = "library.delete_failed"
             errorMessage = error.localizedDescription
-            return
+            return false
         }
         // An older snapshot must not resurrect the deleted row in either tab.
         reloadID = UUID()
         isLoading = false
         meetings.removeAll { $0.id == meeting.id }
         participants.removeValue(forKey: meeting.id)
+        deletionRevision += 1
         errorMessage = nil
         do {
-            if let fileName = meeting.audioFileName { try store.remove(fileName: fileName) }
+            if let fileName = stored?.audioFileName { try store.remove(fileName: fileName) }
         } catch {
             errorTitleKey = "library.audio_cleanup_failed"
             errorMessage = error.localizedDescription
         }
+        return true
     }
 }

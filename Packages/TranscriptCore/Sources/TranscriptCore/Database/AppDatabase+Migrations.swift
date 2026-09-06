@@ -321,6 +321,29 @@ extension AppDatabase {
                 table.add(column: "emoji", .text)
             }
         }
+        migrator.registerMigration("v6_speaker_analysis_jobs") { db in
+            try db.create(table: "speakerAnalysisJob") { table in
+                table.primaryKey("meetingId", .text).references("meeting", onDelete: .cascade)
+                table.column("state", .text).notNull()
+                table.column("error", .text)
+                table.column("updatedAt", .datetime).notNull()
+            }
+        }
+        migrator.registerMigration("v7_meeting_deletion_slot_revision") { db in
+            try db.execute(sql: """
+                DROP TRIGGER meetingSpeaker_slot_revision_ad;
+                CREATE TRIGGER meetingSpeaker_slot_revision_ad
+                AFTER DELETE ON meetingSpeaker
+                WHEN old.displayIndex >= 0
+                    AND EXISTS (SELECT 1 FROM meeting WHERE id = old.meetingId)
+                BEGIN
+                    INSERT INTO meetingSpeakerSlotRevision(meetingId, displayIndex, revision)
+                    VALUES (old.meetingId, old.displayIndex, 1)
+                    ON CONFLICT(meetingId, displayIndex)
+                    DO UPDATE SET revision = revision + 1;
+                END;
+                """)
+        }
         return migrator
     }
 }

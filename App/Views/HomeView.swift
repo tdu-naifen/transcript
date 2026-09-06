@@ -2,6 +2,7 @@ import SwiftUI
 import TranscriptCore
 
 struct HomeView: View {
+    @State private var pendingDeletion: Meeting?
     let services: AppServices
     let library: LibraryModel
     @Binding var path: NavigationPath
@@ -35,6 +36,9 @@ struct HomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
+                if model.hasSearchConditions, library.errorMessage != nil {
+                    Section { LibraryErrorView(model: library) }
+                }
                 Section {
                     searchField
                     ViewThatFits(in: .horizontal) {
@@ -42,9 +46,7 @@ struct HomeView: View {
                         VStack(alignment: .leading, spacing: 12) { filterButtons }
                     }
                     if model.usesDateRange {
-                        Text(model.startDate, format: .dateTime.year().month().day())
-                            + Text(" – ")
-                            + Text(model.endDate, format: .dateTime.year().month().day())
+                        Text("\(Text(model.startDate, format: .dateTime.year().month().day())) – \(Text(model.endDate, format: .dateTime.year().month().day()))")
                     }
                     if model.hasSearchConditions {
                         Button("home.filters.clear") { model.clearFilters() }
@@ -85,6 +87,10 @@ struct HomeView: View {
                                         )
                                     }
                                     .accessibilityIdentifier("homeMeeting-\(result.meeting.id)")
+                                    .swipeActions(allowsFullSwipe: false) {
+                                        deleteButton(result.meeting, role: nil).tint(.red)
+                                    }
+                                    .contextMenu { deleteButton(result.meeting) }
                                     if result.titleMatched {
                                         Label("home.search.titleMatched", systemImage: "textformat")
                                             .font(.caption)
@@ -134,6 +140,11 @@ struct HomeView: View {
                                 NavigationLink(value: meeting) {
                                     MeetingRow(meeting: meeting, participants: library.participants[meeting.id] ?? [])
                                 }
+                                .accessibilityIdentifier("homeMeeting-\(meeting.id)")
+                                .swipeActions(allowsFullSwipe: false) {
+                                    deleteButton(meeting, role: nil).tint(.red)
+                                }
+                                .contextMenu { deleteButton(meeting) }
                             }
                         }
                     }
@@ -180,6 +191,10 @@ struct HomeView: View {
                 await library.reload()
                 if model.hasSearchConditions { await model.resetAndSearch()?.value }
             }
+            .modifier(MeetingDeletionConfirmation(meeting: $pendingDeletion) { await library.delete($0) })
+            .onChange(of: library.deletionRevision) { _, _ in
+                if model.hasSearchConditions { model.resetAndSearch() }
+            }
             .task { await library.reload() }
             .onChange(of: model.query) { _, _ in model.filtersChanged() }
             .onChange(of: model.speakerIDs) { _, _ in model.filtersChanged() }
@@ -213,8 +228,22 @@ struct HomeView: View {
                 macUnavailableReason: macConnection.submissionBlockReason(meetingID: meeting.id),
                 initialSeekMs: initialSeekMs,
                 recordingIsActive: { isRecordingActive() },
-                onMeetingRenamed: { Task { await library.reload() } }
+                onMeetingRenamed: { Task { await library.reload() } },
+                onDelete: { await library.delete($0) }
             )
+    }
+
+    private func deleteButton(_ meeting: Meeting, role: ButtonRole? = .destructive) -> some View {
+        // Swipe confirmation must not optimistically remove a row before the user confirms.
+        Button(role: role) { pendingDeletion = meeting } label: {
+            Label {
+                Text("meetings.delete.action", tableName: "MeetingDeletion")
+            } icon: {
+                Image(systemName: "trash")
+            }
+        }
+        .disabled(library.deletingIDs.contains(meeting.id))
+        .accessibilityIdentifier("deleteMeeting-\(meeting.id)")
     }
 
     private var searchField: some View {
