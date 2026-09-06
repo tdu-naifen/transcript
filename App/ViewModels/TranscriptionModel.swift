@@ -5,15 +5,20 @@ import TranscriptCore
 
 /// Live transcript state for the record screen.
 ///
-/// Owns nothing heavier than an array of lines: the engine and the ~665 MB of weights
-/// live behind ``LiveTranscriber``, an actor, so nothing here ever blocks on inference.
+/// Apple's speech analyzer runs off the main actor and uses system-managed assets.
 @MainActor
 @Observable
 final class TranscriptionModel {
-    enum RecordingError: Error {
-        case requiredModelsMissing
+    enum RecordingError: LocalizedError {
         case processingNotRunning
         case noTranscriptProduced
+
+        var errorDescription: String? {
+            switch self {
+            case .processingNotRunning: String(localized: "Transcription is not running. Your audio is preserved.")
+            case .noTranscriptProduced: String(localized: "No transcript was produced. Your audio is preserved.")
+            }
+        }
     }
 
     enum Status: Equatable {
@@ -33,7 +38,9 @@ final class TranscriptionModel {
     private(set) var speakersByIndex: [Int: Speaker] = [:]
 
     private let services: AppServices
-    private var transcriber: LiveTranscriber?
+    private var transcriber: (any AppleTranscribing)?
+    private let makeTranscriber: () -> any AppleTranscribing
+    private var audioOnly = false
     private var diarizer: SpeakerDiarizer?
     private var eventTask: Task<Void, Never>?
     private var diarizationTask: Task<Void, Never>?
@@ -45,10 +52,11 @@ final class TranscriptionModel {
         diarization: @Sendable () async throws -> Void
     )?
 
-    init(services: AppServices) {
+    init(services: AppServices, makeTranscriber: @escaping () -> any AppleTranscribing = { AppleLiveTranscriber() }) {
         self.services = services
+        self.makeTranscriber = makeTranscriber
         self.injectedFinishOperations = nil
-        status = services.areRecordingModelsInstalled ? .idle : .modelMissing
+        status = .idle
     }
 
     init(
@@ -58,16 +66,40 @@ final class TranscriptionModel {
         diarizationFinish: @escaping @Sendable () async throws -> Void
     ) {
         self.services = services
+        self.makeTranscriber = { AppleLiveTranscriber() }
         self.injectedFinishOperations = (asr: asrFinish, diarization: diarizationFinish)
         self.currentMeetingId = meetingId
-        status = services.areRecordingModelsInstalled ? .idle : .modelMissing
+        status = .idle
     }
 
     var isAvailable: Bool { status != .modelMissing }
 
     func refreshAvailability() {
         guard status == .idle || status == .modelMissing else { return }
-        status = services.areRecordingModelsInstalled ? .idle : .modelMissing
+        status = .idle
+    }
+
+    func prepare() async throws {
+        status = .preparing
+        audioOnly = false
+        let transcriber = makeTranscriber()
+        do {
+            try await transcriber.prepare(locale: services.recordingLocale)
+            self.transcriber = transcriber
+        } catch is CancellationError {
+            await transcriber.cancelAndWait()
+            status = .idle
+            throw CancellationError()
+        } catch {
+            await transcriber.cancelAndWait()
+            if case AppleLiveTranscriber.Failure.resourcesNotReady = error {
+                services.speechResources.prepare(locale: services.recordingLocale)
+            }
+            // Transcription availability must not prevent saving microphone audio.
+            self.transcriber = nil
+            audioOnly = true
+            status = .failed(error.localizedDescription)
+        }
     }
 
     /// `chunks` must be subscribed before capture starts so no chunk is missed while
@@ -77,13 +109,6 @@ final class TranscriptionModel {
         chunks: AsyncStream<AudioChunk>,
         diarizationChunks: AsyncStream<AudioChunk>
     ) throws {
-        let modelPath = DiarizationModelStore.sortformerMainModelPath()
-        guard services.areRecordingModelsInstalled,
-              DiarizationModelStore.isSortformerInstalled(at: modelPath),
-              let engine = services.asrEngine() else {
-            status = .modelMissing
-            throw RecordingError.requiredModelsMissing
-        }
         lines.removeAll()
         diarizationSegments.removeAll()
         diarizationTimeline = DiarizationTimelineAccumulator()
@@ -91,26 +116,27 @@ final class TranscriptionModel {
         processingFailure = nil
         detectedLanguage = nil
         currentMeetingId = meetingId
+        if audioOnly { return }
+        guard let transcriber else { throw RecordingError.processingNotRunning }
         status = .preparing
-
-        let transcriber = LiveTranscriber(engine: engine, configuration: .init(
-            meetingId: meetingId,
-            deviceId: services.deviceId,
-            utterances: UtteranceRepository(services.database),
-            modelDirectory: ASRModelStore.bundle().directory,
-            language: services.asrLanguage
-        ))
-        self.transcriber = transcriber
+        let store = AppleTranscriptStore(
+            repository: UtteranceRepository(services.database),
+            meetingID: meetingId, deviceID: services.deviceId
+        )
 
         eventTask = Task { [weak self] in
             let events = await transcriber.events()
-            await transcriber.run(chunks: chunks)
+            await transcriber.run(chunks: chunks, meetingID: meetingId, services: store)
             for await event in events {
                 await self?.apply(event)
             }
         }
 
-        startDiarization(meetingId: meetingId, chunks: diarizationChunks, modelPath: modelPath)
+        // Speaker attribution is optional; Apple speech never depends on Sortformer.
+        let modelPath = DiarizationModelStore.sortformerMainModelPath()
+        if DiarizationModelStore.isSortformerInstalled(at: modelPath) {
+            startDiarization(meetingId: meetingId, chunks: diarizationChunks, modelPath: modelPath)
+        }
     }
 
     func finish() async throws {
@@ -119,10 +145,15 @@ final class TranscriptionModel {
             asr: @Sendable () async throws -> Void,
             diarization: @Sendable () async throws -> Void
         )
-        if let transcriber, let diarizer {
+        if audioOnly {
+            currentMeetingId = nil
+            audioOnly = false
+            return
+        } else if let transcriber {
+            let diarizer = self.diarizer
             finishOperations = (
                 asr: { try await transcriber.finishAndWait() },
-                diarization: { try await diarizer.finishAndWait() }
+                diarization: { try await diarizer?.finishAndWait() }
             )
         } else if let injectedFinishOperations {
             finishOperations = injectedFinishOperations
@@ -144,7 +175,7 @@ final class TranscriptionModel {
         }
         do {
             try await reconcileSpeakerAssignments()
-            try await requireTranscriptProduced()
+            if injectedFinishOperations != nil { try await requireTranscriptProduced() }
         } catch {
             if failure == nil { failure = error }
             errorMessageForDiarization(String(describing: error))
@@ -188,7 +219,7 @@ final class TranscriptionModel {
         switch event {
         case .ready(let info):
             status = .running
-            computeUnit = info.dominantComputeUnit
+            computeUnit = "Apple Speech"
             detectedLanguage = info.language.fixedLocaleIdentifier
         case .segment(let segment):
             if let existing = lines.firstIndex(where: { $0.id == segment.id }) {
@@ -205,6 +236,7 @@ final class TranscriptionModel {
                 }
             }
         case .failed(let message):
+            if processingFailure == nil { processingFailure = message }
             status = .failed(message)
         case .finished:
             if status == .running || status == .preparing { status = .idle }

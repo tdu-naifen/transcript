@@ -4,13 +4,13 @@ import TranscriptCore
 struct SettingsView: View {
     let services: AppServices
     @Binding var path: NavigationPath
-    @State private var models: ModelDownloadModel?
     @State private var localization = LocalizationManager.shared
+    @State private var recordingLanguage = "auto"
 
     static var modelDescription: String {
         LocalizationManager.shared.text(
-            "Nemotron 3.5 ASR streaming, 2240 ms tier. Roughly 665 MB, downloaded once "
-                + "and kept in Application Support. Recording works without it."
+            "Transcription uses Apple Speech on this device. iOS manages language resources and may download them the first time. No Nemotron download is required.",
+            table: "AppleSpeech"
         )
     }
 
@@ -18,8 +18,38 @@ struct SettingsView: View {
         NavigationStack {
             List {
                 Section {
-                    if let models {
-                        ModelRow(model: models)
+                    LabeledContent {
+                        Text("Apple Speech")
+                    } label: {
+                        Text("Transcription engine", tableName: "AppleSpeech")
+                    }
+                    Picker(selection: $recordingLanguage) {
+                        Text("System", tableName: "AppleSpeech").tag("auto")
+                        Text("English (US)").tag("en-US")
+                        Text("简体中文").tag("zh-CN")
+                    } label: {
+                        Text("Recording language", tableName: "AppleSpeech")
+                    }
+                    .accessibilityIdentifier("recordingLanguagePicker")
+                    switch services.speechResources.state(for: services.recordingLocale) {
+                    case .idle:
+                        EmptyView()
+                    case .preparing:
+                        HStack {
+                            ProgressView()
+                            Text("Preparing Apple language resources…", tableName: "AppleSpeech")
+                        }
+                    case .ready:
+                        Label {
+                            Text("Apple language resources ready", tableName: "AppleSpeech")
+                        } icon: { Image(systemName: "checkmark.circle") }
+                    case .failed(let message):
+                        Text(message).foregroundStyle(.secondary)
+                        Button {
+                            services.speechResources.prepare(locale: services.recordingLocale)
+                        } label: {
+                            Text("Retry Apple language setup", tableName: "AppleSpeech")
+                        }
                     }
                 } header: {
                     Text("Transcription model")
@@ -56,34 +86,9 @@ struct SettingsView: View {
             .navigationTitle(LocalizationManager.shared.text("Settings"))
             .scrollContentBackground(.hidden)
             .background(AppColors.settingsBackground)
-            .task {
-                if models == nil { models = ModelDownloadModel(services: services) }
-                models?.observe()
-            }
-        }
-    }
-}
-
-private struct ModelRow: View {
-    @Bindable var model: ModelDownloadModel
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            LabeledContent("Status", value: model.statusText)
-
-            if case .downloading = model.state {
-                ProgressView(value: model.state.fraction)
-                Button("Cancel", role: .destructive) { Task { await model.cancel() } }
-                    .accessibilityIdentifier("cancelModelDownloadButton")
-            } else if model.isInstalled {
-                Button("Remove download", role: .destructive) { Task { await model.remove() } }
-                    .accessibilityIdentifier("removeModelButton")
-            } else {
-                Button("Download model") { Task { await model.download() } }
-                    .buttonStyle(.borderedProminent)
-                    .tint(AppColors.filledControl)
-                    .disabled(model.isWorking)
-                    .accessibilityIdentifier("downloadModelButton")
+            .onAppear { recordingLanguage = services.asrLanguage.promptKey }
+            .onChange(of: recordingLanguage) { _, language in
+                services.asrLanguage = language == "auto" ? .auto : .locale(language)
             }
         }
     }

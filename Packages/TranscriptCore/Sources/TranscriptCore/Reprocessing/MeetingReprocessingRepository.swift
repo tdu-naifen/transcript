@@ -70,6 +70,7 @@ public struct MeetingReprocessingRepository: Sendable {
         utterances drafts: [ReprocessedUtteranceDraft],
         speakers speakerDrafts: [ReprocessedSpeakerDraft],
         deviceId: String,
+        engine: TranscriptionEngine = .nemotron,
         now: Date = Date(),
         cancellationCheck: @escaping @Sendable () throws -> Void = { try Task.checkCancellation() }
     ) async throws -> MeetingReprocessingResult {
@@ -153,7 +154,7 @@ public struct MeetingReprocessingRepository: Sendable {
                     speakerId: draft.speakerIndex.flatMap { speakerIdsByIndex[$0] },
                     localeIdentifier: draft.localeIdentifier,
                     confidence: draft.confidence,
-                    engine: .nemotron,
+                    engine: engine,
                     revision: 1,
                     createdAt: now,
                     updatedAt: now,

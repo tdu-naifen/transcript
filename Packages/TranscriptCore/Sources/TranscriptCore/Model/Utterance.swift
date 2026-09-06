@@ -1,10 +1,10 @@
 import Foundation
 import GRDB
 
-/// PLAN §5.1 / §10: Nemotron is the only engine; there is no Apple `SpeechTranscriber`
-/// fallback. Kept as an enum because a second engine is plausible later.
+/// Keep the legacy engine value readable for existing meetings.
 public enum TranscriptionEngine: String, Codable, Sendable, CaseIterable {
     case nemotron
+    case appleSpeech
 }
 
 /// Layer B: append-only transcript segment, written only by the iPhone.

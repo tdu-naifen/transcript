@@ -1,6 +1,6 @@
 import Foundation
 
-public struct LiveRecordingDrainError: Error, Sendable, Equatable, CustomStringConvertible {
+public struct LiveRecordingDrainError: LocalizedError, Sendable, Equatable, CustomStringConvertible {
     public let failures: [String]
 
     public init(failures: [String]) {
@@ -8,6 +8,7 @@ public struct LiveRecordingDrainError: Error, Sendable, Equatable, CustomStringC
     }
 
     public var description: String { failures.joined(separator: "\n") }
+    public var errorDescription: String? { description }
 }
 
 /// Waits for both inference branches even when one fails, so neither branch loses its

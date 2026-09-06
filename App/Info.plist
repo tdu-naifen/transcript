@@ -24,6 +24,10 @@
 	<string>Transcript uses the microphone to record meetings and transcribe them entirely on this device. Audio never leaves your iPhone unless you choose to sync it to your own Mac.</string>
 	<key>NSSupportsLiveActivities</key>
 	<true/>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Transcript uses Apple speech recognition to transcribe your recordings on this device.</string>
+	<key>LSSupportsGameMode</key>
+	<false/>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>Transcript uses the local network to discover your own Mac so recordings and transcripts can be synced directly between your devices, without any server in between.</string>
 	<key>NSBonjourServices</key>
@@ -38,7 +42,6 @@
 	<key>UIRequiredDeviceCapabilities</key>
 	<array>
 		<string>arm64</string>
-		<string>iphone-performance-gaming-tier</string>
 	</array>
 	<key>UILaunchScreen</key>
 	<dict/>

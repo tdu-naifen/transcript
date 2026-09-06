@@ -24,6 +24,13 @@ public struct MeetingReprocessingSummary: Sendable, Equatable {
     public let speakerCount: Int
     public let identifiedSpeakerCount: Int
     public let usedVoiceprintIdentification: Bool
+
+    public init(utteranceCount: Int, speakerCount: Int, identifiedSpeakerCount: Int, usedVoiceprintIdentification: Bool) {
+        self.utteranceCount = utteranceCount
+        self.speakerCount = speakerCount
+        self.identifiedSpeakerCount = identifiedSpeakerCount
+        self.usedVoiceprintIdentification = usedVoiceprintIdentification
+    }
 }
 
 public enum MeetingReprocessingError: Error, Sendable, Equatable {

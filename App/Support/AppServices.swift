@@ -16,10 +16,7 @@ final class AppServices {
     let modelDownloader: ASRModelDownloader
     let meetingReprocessor: MeetingReprocessingCoordinator
     let audioOwnership: AudioSessionOwnership
-
-    /// Kept alive between recordings so the ~600 MB load is paid once per launch.
-    /// Its language is set per-run by ``LiveTranscriber``, not baked in at creation.
-    private var engine: StreamingNemotronMultilingualAsrManager?
+    let speechResources = AppleSpeechResources()
 
     init(
         database: AppDatabase? = nil,
@@ -50,15 +47,9 @@ final class AppServices {
         recovery = RecordingRecovery(database: self.database, deviceId: deviceId, store: self.store)
         modelDownloader = ASRModelDownloader()
         meetingReprocessor = MeetingReprocessingCoordinator(
-            database: self.database, deviceId: deviceId, recordingSession: session
+            database: self.database, deviceId: deviceId, recordingSession: session,
+            resources: speechResources
         )
-    }
-
-    var areRecordingModelsInstalled: Bool {
-        ASRModelStore.bundle().isInstalled
-            && DiarizationModelStore.isSortformerInstalled(
-                at: DiarizationModelStore.sortformerMainModelPath()
-            )
     }
 
     /// The chosen transcription language, persisted across launches.
@@ -74,14 +65,8 @@ final class AppServices {
         }
     }
 
-    /// Nil when no model is installed — recording still works, transcription simply
-    /// does not happen.
-    func asrEngine() -> StreamingNemotronMultilingualAsrManager? {
-        guard ASRModelStore.bundle().isInstalled else { return nil }
-        if let engine { return engine }
-        let created = StreamingNemotronMultilingualAsrManager()
-        engine = created
-        return created
+    var recordingLocale: Locale {
+        Locale(identifier: asrLanguage.fixedLocaleIdentifier ?? Locale.current.identifier)
     }
 
     private static let languageKey = "asrLanguage"

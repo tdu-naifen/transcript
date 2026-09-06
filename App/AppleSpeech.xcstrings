@@ -1,0 +1,195 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Transcribing with Apple Speech…": { "localizations": { "zh-Hans": { "stringUnit": { "state": "translated", "value": "正在使用 Apple Speech 转写…" } } } },
+    "Apple language resources are being prepared. This recording will save audio only; transcription will be available for the next recording." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在准备 Apple 语言资源。本次录音仅保存音频；资源就绪后，下次录音即可转写。"
+          }
+        }
+      }
+    },
+    "Apple language resources ready" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple 语言资源已就绪"
+          }
+        }
+      }
+    },
+    "Apple on-device transcription is unavailable on this device. Audio recording is still available." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此设备不支持 Apple 本机转写，仍可录制并保存音频。"
+          }
+        }
+      }
+    },
+    "Apple transcription does not support the selected recording language. Audio recording is still available." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple 转写不支持所选录音语言，仍可录制并保存音频。"
+          }
+        }
+      }
+    },
+    "Apple transcription is unavailable. Audio recording is still available." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Apple 转写暂不可用，仍可录制并保存音频。"
+          }
+        }
+      }
+    },
+    "Local network access is off. Enable Local Network for Transcript in Settings, then try again." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "本地网络权限已关闭。请在系统设置中为 Transcript 开启本地网络权限，然后重试。"
+          }
+        }
+      }
+    },
+    "No Mac found yet. Keep Transcript open on your Mac and connect both devices to the same local network." : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "暂未找到 Mac。请保持 Mac 上的 Transcript 打开，并将两台设备连接到同一本地网络。"
+          }
+        }
+      }
+    },
+    "Preparing Apple language resources…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在准备 Apple 语言资源…"
+          }
+        }
+      }
+    },
+    "Preparing Apple transcription…" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在准备 Apple 转写…"
+          }
+        }
+      }
+    },
+    "Recording language" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "录音语言"
+          }
+        }
+      }
+    },
+    "Retry Apple language setup" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "重试准备 Apple 语言资源"
+          }
+        }
+      }
+    },
+    "Speech recognition access is off. Enable it in Settings to transcribe. Audio recording is still available." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "语音识别权限已关闭，请在系统设置中开启以使用转写。仍可录制并保存音频。"
+          }
+        }
+      }
+    },
+    "Stop searching" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "停止查找"
+          }
+        }
+      }
+    },
+    "System" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "跟随系统"
+          }
+        }
+      }
+    },
+    "The audio could not be converted for Apple transcription." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法将音频转换为 Apple 转写所需的格式。"
+          }
+        }
+      }
+    },
+    "This Mac was discovered, but secure pairing is not available yet. No meeting data has been sent." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已发现这台 Mac，但安全配对尚未就绪。没有发送任何会议数据。"
+          }
+        }
+      }
+    },
+    "Transcription engine" : {
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "转写引擎"
+          }
+        }
+      }
+    },
+    "Transcription uses Apple Speech on this device. iOS manages language resources and may download them the first time. No Nemotron download is required." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "转写使用设备上的 Apple Speech。语言资源由 iOS 管理，首次使用时可能需要下载。无需下载 Nemotron 模型。"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

@@ -14,7 +14,7 @@ struct LiveTranscriptView: View {
                 Text("\(model.lines.count) utterances")
                     .font(.subheadline.weight(.semibold))
                 Spacer()
-                Text("Nemotron")
+                Text("Apple Speech")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
@@ -22,7 +22,7 @@ struct LiveTranscriptView: View {
 
             switch model.status {
             case .modelMissing:
-                Text("Model not downloaded — recording still works. Download it in Settings to transcribe.")
+                Text("Apple transcription is unavailable. Audio recording is still available.", tableName: "AppleSpeech")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             case .failed(let message):
@@ -33,7 +33,7 @@ struct LiveTranscriptView: View {
             case .preparing:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
-                    Text("Loading model…").font(.footnote).foregroundStyle(.secondary)
+                    Text("Preparing Apple transcription…", tableName: "AppleSpeech").font(.footnote).foregroundStyle(.secondary)
                 }
             case .idle, .running:
                 if model.lines.isEmpty {

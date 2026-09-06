@@ -10,15 +10,12 @@ final class LocalizationTests: XCTestCase {
         for language in [AppLanguage.zhHans, .en, .zhHans] {
             localization.language = language
             let description = SettingsView.modelDescription
-            XCTAssertTrue(description.contains("Nemotron 3.5 ASR"))
-            XCTAssertTrue(description.contains("665 MB"))
+            XCTAssertTrue(description.contains("Apple Speech"))
+            XCTAssertFalse(description.contains("665 MB"))
             if language == .zhHans {
-                XCTAssertTrue(description.contains("流式"))
-                let ordinaryCopy = description.replacingOccurrences(of: "Nemotron 3.5 ASR", with: "")
-                    .replacingOccurrences(of: "MB", with: "")
-                XCTAssertNil(ordinaryCopy.range(of: "[A-Za-z]", options: .regularExpression))
+                XCTAssertTrue(description.contains("无需下载"))
             } else {
-                XCTAssertTrue(description.contains("downloaded once"))
+                XCTAssertTrue(description.contains("No Nemotron download is required"))
             }
         }
     }

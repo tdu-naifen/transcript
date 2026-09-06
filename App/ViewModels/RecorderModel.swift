@@ -159,9 +159,7 @@ final class RecorderModel {
                 return
             }
             processing.refreshAvailability()
-            guard processing.isAvailable else {
-                throw TranscriptionModel.RecordingError.requiredModelsMissing
-            }
+            try await processing.prepare()
             // Subscribed before capture starts, so no chunk is lost while the model
             // loads; the broadcast stream buffers until inference catches up.
             let chunks = services.session.chunks()
@@ -177,7 +175,7 @@ final class RecorderModel {
             _ = try? await services.session.abort()
             await processing.discard()
             phase = .idle
-            errorMessage = String(describing: error)
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -241,7 +239,7 @@ final class RecorderModel {
                 stopFailure = error
             }
         }
-        if let stopFailure { errorMessage = String(describing: stopFailure) }
+        if let stopFailure { errorMessage = stopFailure.localizedDescription }
         startedAt = nil
         recordingMeetingId = nil
         captureFailure = nil

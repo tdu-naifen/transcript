@@ -56,7 +56,7 @@ struct RecordView: View {
                                 .frame(maxHeight: .infinity)
 
                             LinearGradient(
-                                colors: [.white.opacity(0), .white],
+                                colors: [Color(uiColor: .secondarySystemGroupedBackground).opacity(0), Color(uiColor: .secondarySystemGroupedBackground)],
                                 startPoint: .top,
                                 endPoint: .bottom
                             )
@@ -81,7 +81,7 @@ struct RecordView: View {
                             .shadow(color: .black.opacity(0.1), radius: 16, y: 7)
                             .padding(.bottom, 16)
                         }
-                        .background(.white, in: RoundedRectangle(cornerRadius: 28, style: .continuous))
+                        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 28, style: .continuous))
                         .shadow(color: .black.opacity(0.05), radius: 14, y: 6)
 
                         if let notice = model.notice {

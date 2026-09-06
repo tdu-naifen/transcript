@@ -457,7 +457,7 @@ private struct MeetingReprocessingSheet: View {
     private func stageText(_ stage: MeetingReprocessingStage) -> String {
         switch stage {
         case .loadingAudio: text("Loading audio…")
-        case .transcribing: text("Transcribing with Nemotron…")
+        case .transcribing: LocalizationManager.shared.text("Transcribing with Apple Speech…", table: "AppleSpeech")
         case .detectingSpeakers: text("Detecting speakers with Sortformer…")
         case .identifyingSpeakers: text("Checking known voiceprints…")
         case .saving: text("Saving new transcript…")
