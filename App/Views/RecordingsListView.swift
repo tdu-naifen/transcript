@@ -9,6 +9,7 @@ struct RecordingsListView: View {
     let macConnection: MacConnectionModel
     @State private var pendingDeletion: Meeting?
     @State private var macSubmissionMeeting: Meeting?
+    @State private var didOpenFixtureMeeting = false
     @Environment(\.calendar) private var calendar
 
     var body: some View {
@@ -36,6 +37,7 @@ struct RecordingsListView: View {
                                         participants: model.participants[meeting.id] ?? []
                                     )
                                 }
+                                .accessibilityIdentifier("meetingRow-\(meeting.id)")
                                 .onAppear {
                                     loadMoreIfNeeded(meeting)
                                 }
@@ -145,9 +147,10 @@ struct RecordingsListView: View {
 
     private func openFixtureMeetingIfRequested() {
         #if DEBUG
-        guard path.isEmpty,
+        guard UIFixture.isRequested, !didOpenFixtureMeeting, path.isEmpty,
               let id = UserDefaults.standard.string(forKey: "uiFixtureOpenMeetingId"),
               let meeting = model.meetings.first(where: { $0.id == id }) else { return }
+        didOpenFixtureMeeting = true
         path.append(meeting)
         #endif
     }

@@ -103,13 +103,13 @@ final class TranscriptUITests: XCTestCase {
         speakerFilter.tap()
         let speaker = app.switches["homeSpeaker-fixture-speaker-alexandra"]
         XCTAssertTrue(speaker.waitForExistence(timeout: 3))
-        speaker.tap()
+        toggleSwitch(speaker)
         tapDone(in: app)
 
         app.buttons["homeDateFilter"].tap()
         let enabled = app.switches["homeDateRangeEnabled"]
         XCTAssertTrue(enabled.waitForExistence(timeout: 3))
-        enabled.tap()
+        toggleSwitch(enabled)
         tapDone(in: app)
 
         let settings = app.tabBars.buttons["Settings"].exists ? app.tabBars.buttons["Settings"] : app.tabBars.buttons["设置"]
@@ -258,6 +258,132 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertFalse(app.buttons["macFindDevicesButton"].isEnabled)
         XCTAssertFalse(app.staticTexts["Connected"].exists)
         tapDone(in: app)
+    }
+
+    func testTranscriptTailIsFullyVisibleAndTapsRealFixtureAudio() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-uiFixture", "1", "-uiFixturePlayback", "1", "-appLanguage", "en",
+            "-uiFixtureOpenMeetingId", "fixture-meeting-playback"
+        ]
+        app.launch()
+        let play = app.buttons["audioPlayPauseButton"]
+        XCTAssertTrue(play.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.tabBars.firstMatch.exists)
+        XCTAssertFalse(app.buttons["globalRecordButton"].exists)
+        let tail = app.buttons["transcriptPlay-fixture-playback-line-23"]
+        let scroll = app.scrollViews["meetingTranscriptScrollView"]
+        let waveform = app.otherElements["audioWaveformScrubber"]
+        for _ in 0..<16 {
+            if tail.exists && tail.isHittable && tail.frame.maxY <= waveform.frame.minY { break }
+            scroll.swipeUp(velocity: .fast)
+        }
+        XCTAssertTrue(tail.isHittable)
+        XCTAssertLessThanOrEqual(tail.frame.maxY, waveform.frame.minY)
+        XCTAssertGreaterThanOrEqual(tail.frame.minY, app.navigationBars.firstMatch.frame.maxY)
+        attachScreenshot(of: app, name: "transcript-tail-above-player")
+        tail.tap()
+        XCTAssertEqual(play.label, "Pause audio")
+        let time = app.staticTexts["audioCurrentTime"]
+        let seeked = XCTNSPredicateExpectation(
+            predicate: NSPredicate { _, _ in
+                ["00:23", "00:24", "0:23", "0:24"].contains(time.label)
+            }, object: nil
+        )
+        XCTAssertEqual(XCTWaiter.wait(for: [seeked], timeout: 3), .completed)
+        play.tap()
+        XCTAssertEqual(play.label, "Play audio")
+        XCTAssertFalse(app.buttons["meetingProcessByMacButton"].isEnabled)
+        XCTAssertTrue(app.staticTexts["meetingMacUnavailableReason"].label.contains("no transport service"))
+        attachScreenshot(of: app, name: "transcript-tail-seeked")
+        app.buttons["meetingBackButton"].tap()
+        XCTAssertTrue(app.tabBars.firstMatch.waitForExistence(timeout: 3))
+    }
+
+    func testSpeakerFilterUsesActualSpeakerHitsAndTitleMatchRemainsDistinct() {
+        let app = XCUIApplication()
+        app.launchArguments = ["-uiFixture", "1", "-uiFixtureSelectedTab", "home", "-appLanguage", "en"]
+        app.launch()
+        let search = app.textFields["homeSearchField"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("latency")
+        XCTAssertTrue(app.buttons["homeSearchHit"].firstMatch.waitForExistence(timeout: 3))
+        app.buttons["homeSpeakerFilter"].tap()
+        toggleSwitch(app.switches["homeSpeaker-fixture-speaker-alexandra"])
+        XCTAssertEqual(app.switches["homeSpeaker-fixture-speaker-alexandra"].value as? String, "1")
+        tapDone(in: app)
+        XCTAssertTrue(app.staticTexts["No matching meetings"].waitForExistence(timeout: 3))
+        app.buttons["homeSpeakerFilter"].tap()
+        toggleSwitch(app.switches["homeSpeaker-fixture-speaker-alexandra"])
+        toggleSwitch(app.switches["homeSpeaker-fixture-speaker-wei"])
+        tapDone(in: app)
+        let hit = app.buttons["homeSearchHit"].firstMatch
+        XCTAssertTrue(hit.waitForExistence(timeout: 3))
+        XCTAssertTrue(hit.label.contains("latency"))
+        hit.tap()
+        XCTAssertTrue(app.buttons["meetingBackButton"].waitForExistence(timeout: 3))
+        app.buttons["meetingBackButton"].tap()
+        XCTAssertEqual(search.value as? String, "latency")
+        XCTAssertTrue(app.buttons["homeSpeakerFilter"].label.contains("1 speakers"))
+        replaceText(in: search, with: "周会")
+        XCTAssertTrue(app.staticTexts["Title match"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["homeSearchHit"].exists)
+        app.buttons["homeMeeting-fixture-meeting-standup"].tap()
+        XCTAssertTrue(app.buttons["meetingBackButton"].waitForExistence(timeout: 3))
+        app.buttons["meetingBackButton"].tap()
+        XCTAssertEqual(search.value as? String, "周会")
+        XCTAssertTrue(app.buttons["homeSpeakerFilter"].label.contains("1 speakers"))
+        attachScreenshot(of: app, name: "speaker-filter-title-match-return")
+    }
+
+    func testHomeAndMeetingsCanPageAndTapLastRows() {
+        let app = XCUIApplication()
+        app.launchArguments = [
+            "-uiFixture", "1", "-uiFixturePagination", "1", "-uiFixtureSelectedTab", "home", "-appLanguage", "en"
+        ]
+        app.launch()
+        let search = app.textFields["homeSearchField"]
+        XCTAssertTrue(search.waitForExistence(timeout: 5))
+        search.tap()
+        search.typeText("Pagination")
+        let loadMore = app.buttons["homeLoadMore"]
+        scrollTo(loadMore, in: app)
+        loadMore.tap()
+        let last = app.buttons["homeMeeting-fixture-page-00"]
+        scrollTo(last, in: app)
+        last.tap()
+        XCTAssertTrue(app.navigationBars["Pagination 00"].waitForExistence(timeout: 3))
+        app.buttons["meetingBackButton"].tap()
+        XCTAssertTrue(last.isHittable, "Returning retains the loaded page and scroll position")
+        attachScreenshot(of: app, name: "home-paged-last-row-return")
+        for _ in 0..<18 {
+            if search.exists && search.isHittable { break }
+            app.swipeDown(velocity: .fast)
+        }
+        XCTAssertEqual(search.value as? String, "Pagination")
+        app.tabBars.buttons["Meetings"].tap()
+        let oldest = app.buttons["meetingRow-fixture-meeting-review-90min"]
+        scrollTo(oldest, in: app)
+        oldest.tap()
+        XCTAssertTrue(app.navigationBars["季度评审"].waitForExistence(timeout: 3))
+        attachScreenshot(of: app, name: "meetings-paged-last-row")
+    }
+
+    private func scrollTo(_ element: XCUIElement, in app: XCUIApplication) {
+        for _ in 0..<18 {
+            if element.exists && element.isHittable { break }
+            app.swipeUp(velocity: .fast)
+        }
+        XCTAssertTrue(element.isHittable)
+    }
+
+    private func toggleSwitch(_ element: XCUIElement) {
+        XCTAssertTrue(element.waitForExistence(timeout: 3))
+        let oldValue = element.value as? String
+        let control = element.switches.firstMatch
+        if control.exists { control.tap() } else { element.tap() }
+        XCTAssertEqual(element.value as? String, oldValue == "1" ? "0" : "1")
     }
 
     func testAcousticAcceptance() {

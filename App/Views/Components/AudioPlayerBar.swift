@@ -28,6 +28,7 @@ struct AudioPlayerBar: View {
 
                 HStack {
                     Text(Format.clock(Double(playback.currentTimeMs) / 1_000))
+                        .accessibilityIdentifier("audioCurrentTime")
                     Spacer()
                     Text(Format.clock(Double(playback.durationMs) / 1_000))
                 }

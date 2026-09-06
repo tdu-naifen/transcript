@@ -203,7 +203,8 @@ final class RecordingActivityLifecycleTests: XCTestCase {
     }
 
     private func makeServices() throws -> (AppServices, LifecycleCaptureEngine) {
-        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("lifecycle-\(UUID().uuidString)", isDirectory: true)
         let store = try AudioFileStore.standard(applicationSupport: root)
         let engine = LifecycleCaptureEngine()
         let services = try AppServices(database: .inMemory(), store: store, captureEngine: engine)

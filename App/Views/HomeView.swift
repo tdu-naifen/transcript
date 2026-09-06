@@ -84,6 +84,7 @@ struct HomeView: View {
                                             participants: result.participants.map(\.speaker)
                                         )
                                     }
+                                    .accessibilityIdentifier("homeMeeting-\(result.meeting.id)")
                                     if result.titleMatched {
                                         Label("home.search.titleMatched", systemImage: "textformat")
                                             .font(.caption)

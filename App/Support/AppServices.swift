@@ -28,7 +28,7 @@ final class AppServices {
         audioOwnership: AudioSessionOwnership = .shared
     ) throws {
         self.database = try database ?? Self.makeDatabase()
-        self.store = try store ?? AudioFileStore.standard()
+        self.store = try store ?? Self.makeAudioStore()
         self.audioOwnership = audioOwnership
         deviceId = UIDevice.current.identifierForVendor?.uuidString ?? "unknown-device"
         session = RecordingSession(
@@ -46,11 +46,23 @@ final class AppServices {
     /// mix with real recordings and never persist into a normal launch.
     private static func makeDatabase() throws -> AppDatabase {
         #if DEBUG
-        if UserDefaults.standard.integer(forKey: "uiFixture") == 1 {
+        if UIFixture.isRequested {
             return try AppDatabase.inMemory()
         }
         #endif
         return try AppDatabase.onDisk()
+    }
+
+    private static func makeAudioStore() throws -> AudioFileStore {
+        #if DEBUG
+        if UIFixture.isRequested {
+            let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("TranscriptUIFixture", isDirectory: true)
+                .appendingPathComponent(UUID().uuidString, isDirectory: true)
+            return try AudioFileStore.standard(applicationSupport: root)
+        }
+        #endif
+        return try AudioFileStore.standard()
     }
 
     var areRecordingModelsInstalled: Bool {

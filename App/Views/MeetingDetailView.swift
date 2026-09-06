@@ -236,6 +236,7 @@ struct MeetingDetailView: View {
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity)
         .background(.regularMaterial)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("meetingBottomActions")
     }
 
@@ -551,6 +552,7 @@ private struct TranscriptRow: View {
             }
             .buttonStyle(.plain)
             .accessibilityHint("Play audio from this segment")
+            .accessibilityIdentifier("transcriptPlay-\(utterance.id)")
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
