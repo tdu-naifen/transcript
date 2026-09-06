@@ -139,6 +139,158 @@ final class TranscriptUITests: XCTestCase {
         }
     }
 
+    func testIdleRecordingLanguagePanelIsLocalizedAndDisabledInBothAppearances() {
+        for language in ["en", "zhHans"] {
+            for style in ["light", "dark"] {
+                assertIdleRecordingLanguagePanel(language: language, style: style, accessibilitySize: false)
+            }
+        }
+    }
+
+    func testIdleRecordingLanguagePanelFitsAccessibilityTextInBothLanguages() {
+        for language in ["en", "zhHans"] {
+            assertIdleRecordingLanguagePanel(language: language, style: "dark", accessibilitySize: true)
+        }
+    }
+
+    func testFutureMeetingLanguageSettingIsLocalizedAndSelectable() {
+        for language in ["en", "zhHans"] {
+            let app = isolatedApp()
+            app.launchArguments = [
+                "-uiFixture", "1", "-appLanguage", language,
+                "-uiFixtureSelectedTab", "settings", "-uiFixtureAppearance", "dark"
+            ]
+            app.launch()
+            let picker = app.buttons["recordingLanguagePicker"]
+            XCTAssertTrue(picker.waitForExistence(timeout: 5))
+            XCTAssertTrue(picker.label.contains(language == "en"
+                ? "Default language for new meetings" : "新会议的默认语言"))
+            picker.tap()
+            XCTAssertTrue(app.buttons["English (US)"].waitForExistence(timeout: 3))
+            app.buttons["English (US)"].tap()
+            XCTAssertTrue(picker.label.contains("English (US)"))
+            picker.tap()
+            XCTAssertTrue(app.buttons["简体中文"].waitForExistence(timeout: 3))
+            app.buttons["简体中文"].tap()
+            XCTAssertTrue(picker.label.contains("简体中文"))
+            XCTAssertFalse(app.buttons["recordingMiniBar"].exists)
+            XCTAssertFalse(app.buttons["collapseRecordingButton"].exists)
+            attachScreenshot(of: app, name: "future-meeting-language-\(language)-dark")
+            app.terminate()
+        }
+    }
+
+    private func assertIdleRecordingLanguagePanel(language: String, style: String, accessibilitySize: Bool) {
+        let app = isolatedApp()
+        app.launchArguments = [
+            "-uiFixture", "1", "-appLanguage", language,
+            "-uiFixtureSelectedTab", "home", "-uiFixtureExpandRecording", "1",
+            "-uiFixtureAppearance", style
+        ]
+        if accessibilitySize {
+            app.launchArguments += [
+                "-UIPreferredContentSizeCategoryName", "UICTContentSizeCategoryAccessibilityXXXL"
+            ]
+        }
+        app.launch()
+        let collapse = app.buttons["collapseRecordingButton"]
+        XCTAssertTrue(collapse.waitForExistence(timeout: 5))
+        let menu = app.buttons["meetingLanguageMenu"]
+        XCTAssertTrue(menu.waitForExistence(timeout: 3))
+        let scroll = app.scrollViews["recordingContentScrollView"]
+        XCTAssertTrue(scroll.exists)
+        let pause = app.buttons["recordingPauseButton"]
+        let primary = app.buttons["recordingPrimaryButton"]
+        for control in [collapse, pause, primary] {
+            assertFullyVisible(control, inside: app.frame)
+            XCTAssertTrue(control.isHittable)
+        }
+        revealRecordingElement(menu, in: scroll)
+        assertFullyVisible(menu, inside: scroll.frame)
+        let evidence = "idle-recording-language-\(language)-\(style)-\(accessibilitySize ? "AXXXL" : "standard")"
+        attachScreenshot(of: app, name: evidence)
+        let bounds = XCTAttachment(string: "viewport=\(app.frame), menu=\(menu.frame), collapse=\(collapse.frame)\n\(app.debugDescription)")
+        bounds.name = "\(evidence)-accessibility-bounds"
+        bounds.lifetime = .keepAlways
+        add(bounds)
+        XCTAssertEqual(menu.label, language == "en" ? "Audio only" : "仅录音")
+        XCTAssertFalse(menu.isEnabled, "The existing expanded fixture is idle, not a simulated live recording")
+        let explanation = app.staticTexts["meetingLanguageExplanation"]
+        XCTAssertEqual(explanation.label, language == "en"
+            ? "Language changes apply to subsequent audio only." : "切换语言仅影响之后的音频。")
+        revealRecordingElement(explanation, in: scroll)
+        assertFullyVisible(explanation, inside: scroll.frame)
+        if accessibilitySize {
+            XCTAssertGreaterThan(explanation.frame.height, menu.frame.height * 1.25, "Accessibility helper copy must wrap, not be ellipsized into one line")
+        }
+        attachScreenshot(of: app, name: "\(evidence)-complete-language-explanation")
+        let status = app.staticTexts["liveTranscriptStatus"]
+        revealRecordingElement(status, in: scroll)
+        assertFullyVisible(status, inside: scroll.frame)
+        if accessibilitySize {
+            XCTAssertGreaterThan(status.frame.height, menu.frame.height * 1.25, "The complete transcript helper must remain readable by scrolling")
+        }
+        attachScreenshot(of: app, name: "\(evidence)-complete-transcript-status")
+        for control in [collapse, pause, primary] {
+            assertFullyVisible(control, inside: app.frame)
+            XCTAssertTrue(control.isHittable)
+            XCTAssertFalse(control.frame.intersects(status.frame))
+        }
+        XCTAssertFalse(app.descendants(matching: .any)["meetingLanguagePreparation"].exists)
+        XCTAssertFalse(app.buttons[language == "en" ? "Cancel language change" : "取消切换语言"].exists)
+        XCTAssertFalse(app.buttons[language == "en" ? "Retry language change" : "重试切换语言"].exists)
+        XCTAssertTrue(collapse.isHittable)
+        collapse.tap()
+        XCTAssertTrue(app.buttons["globalRecordButton"].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.buttons["recordingMiniBar"].exists)
+        app.terminate()
+    }
+
+    private func assertFullyVisible(_ element: XCUIElement, inside viewport: CGRect, file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertTrue(element.exists, file: file, line: line)
+        XCTAssertFalse(element.frame.isEmpty, file: file, line: line)
+        XCTAssertTrue(viewport.insetBy(dx: -1, dy: -1).contains(element.frame),
+                      "\(element.identifier): \(element.frame) is not fully inside \(viewport)", file: file, line: line)
+    }
+
+    private func revealRecordingElement(_ element: XCUIElement, in scroll: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
+        for _ in 0..<8 {
+            if element.exists, !element.frame.isEmpty, scroll.frame.contains(element.frame) { return }
+            if element.exists, element.frame.minY < scroll.frame.minY { scroll.swipeDown(velocity: .slow) }
+            else { scroll.swipeUp(velocity: .slow) }
+        }
+        assertFullyVisible(element, inside: scroll.frame, file: file, line: line)
+    }
+
+    @discardableResult
+    private func revealSettingsControl(_ identifier: String, in app: XCUIApplication, towardBottom: Bool = true, file: StaticString = #filePath, line: UInt = #line) -> XCUIElement {
+        let element = app.buttons[identifier]
+        let list = app.collectionViews.firstMatch.exists ? app.collectionViews.firstMatch : app.tables.firstMatch
+        XCTAssertTrue(list.waitForExistence(timeout: 3), file: file, line: line)
+        for _ in 0..<8 {
+            let top = max(list.frame.minY, app.navigationBars.firstMatch.frame.maxY) + 8
+            let bottom = min(list.frame.maxY, app.tabBars.firstMatch.frame.minY) - 8
+            let viewport = CGRect(x: list.frame.minX, y: top, width: list.frame.width, height: max(0, bottom - top))
+            let floating = app.buttons["globalRecordButton"]
+            if element.exists, element.isHittable, viewport.contains(element.frame),
+               !floating.exists || !floating.frame.intersects(element.frame) {
+                let frame = settledFrame(of: element, file: file, line: line)
+                if viewport.contains(frame), !floating.exists || !floating.frame.intersects(frame) { return element }
+            }
+            if element.exists, !element.frame.isEmpty {
+                if element.frame.midY >= viewport.midY { list.swipeUp(velocity: .slow) }
+                else { list.swipeDown(velocity: .slow) }
+            } else if towardBottom {
+                list.swipeUp(velocity: .slow)
+            } else {
+                list.swipeDown(velocity: .slow)
+            }
+        }
+        assertFullyVisible(element, inside: list.frame, file: file, line: line)
+        XCTAssertTrue(element.isHittable, file: file, line: line)
+        return element
+    }
+
     func testFindMacStartsActualNetworkDiscovery() {
         let app = isolatedApp()
         app.launchArguments = ["-uiFixture", "1", "-appLanguage", "en", "-uiFixtureSelectedTab", "home"]
@@ -424,8 +576,7 @@ final class TranscriptUITests: XCTestCase {
 
         let settings = app.tabBars.buttons["Settings"].exists ? app.tabBars.buttons["Settings"] : app.tabBars.buttons["设置"]
         settings.tap()
-        let reset = app.buttons["resetFloatingRecordButton"]
-        XCTAssertTrue(reset.waitForExistence(timeout: 3))
+        let reset = revealSettingsControl("resetFloatingRecordButton", in: app)
         reset.tap()
         XCTAssertTrue(record.exists)
     }
@@ -440,12 +591,12 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["主页"].waitForExistence(timeout: 5))
         let settings = app.tabBars.buttons["设置"].exists ? app.tabBars.buttons["设置"] : app.tabBars.buttons["Settings"]
         settings.tap()
-        app.buttons["appLanguagePicker"].tap()
+        revealSettingsControl("appLanguagePicker", in: app).tap()
         let english = app.buttons["English"]
         XCTAssertTrue(english.waitForExistence(timeout: 3))
         english.tap()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["resetFloatingRecordButton"].label.contains("Reset"))
+        XCTAssertTrue(revealSettingsControl("resetFloatingRecordButton", in: app).label.contains("Reset"))
         app.tabBars.buttons["Home"].tap()
         XCTAssertTrue(app.navigationBars["Home"].waitForExistence(timeout: 3))
         XCTAssertEqual(app.buttons["homeSpeakerFilter"].label, "Speakers")
@@ -456,11 +607,11 @@ final class TranscriptUITests: XCTestCase {
         app.tabBars.buttons["Meetings"].tap()
         XCTAssertTrue(app.navigationBars["Meetings"].waitForExistence(timeout: 3))
         app.tabBars.buttons["Settings"].tap()
-        app.buttons["appLanguagePicker"].tap()
+        revealSettingsControl("appLanguagePicker", in: app, towardBottom: false).tap()
         app.buttons["简体中文"].tap()
         XCTAssertTrue(app.navigationBars["设置"].waitForExistence(timeout: 3))
-        XCTAssertTrue(app.buttons["resetFloatingRecordButton"].label.contains("恢复"))
-        app.buttons["appLanguagePicker"].tap()
+        XCTAssertTrue(revealSettingsControl("resetFloatingRecordButton", in: app).label.contains("恢复"))
+        revealSettingsControl("appLanguagePicker", in: app, towardBottom: false).tap()
         XCTAssertTrue(app.buttons["System"].exists, "System choice follows system English, not the app override")
         app.buttons["简体中文"].tap()
         app.tabBars.buttons["主页"].tap()
@@ -482,11 +633,11 @@ final class TranscriptUITests: XCTestCase {
         ]
         app.launch()
         XCTAssertTrue(app.navigationBars["Settings"].waitForExistence(timeout: 5))
-        app.buttons["appLanguagePicker"].tap()
+        revealSettingsControl("appLanguagePicker", in: app).tap()
         XCTAssertTrue(app.buttons["跟随系统"].exists)
         XCTAssertFalse(app.buttons["System"].exists)
         app.buttons["English"].tap()
-        XCTAssertTrue(app.buttons["resetFloatingRecordButton"].label.contains("Reset"))
+        XCTAssertTrue(revealSettingsControl("resetFloatingRecordButton", in: app).label.contains("Reset"))
         attachScreenshot(of: app, name: "english-app-chinese-system-option")
     }
 
@@ -544,15 +695,15 @@ final class TranscriptUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.tabBars.buttons["Settings"].waitForExistence(timeout: 5))
         app.tabBars.buttons["Settings"].tap()
-        app.buttons["resetFloatingRecordButton"].tap()
+        revealSettingsControl("resetFloatingRecordButton", in: app).tap()
         app.tabBars.buttons["Home"].tap()
         let record = app.buttons["globalRecordButton"]
-        let initial = record.frame
+        let initial = settledFrame(of: record)
         record.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).press(
             forDuration: 0.2,
             thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.28, dy: 0.42))
         )
-        let moved = record.frame
+        let moved = settledFrame(of: record)
         XCTAssertGreaterThan(abs(initial.midX - moved.midX), 30)
         XCTAssertGreaterThan(abs(initial.midY - moved.midY), 30)
         XCTAssertFalse(app.buttons["collapseRecordingButton"].exists)
@@ -577,7 +728,7 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertEqual(record.frame.midX, moved.midX, accuracy: 3)
         XCTAssertEqual(record.frame.midY, moved.midY, accuracy: 3)
         app.tabBars.buttons["Settings"].tap()
-        app.buttons["resetFloatingRecordButton"].tap()
+        revealSettingsControl("resetFloatingRecordButton", in: app).tap()
         app.tabBars.buttons["Home"].tap()
         XCTAssertEqual(record.frame.midX, initial.midX, accuracy: 3)
         XCTAssertEqual(record.frame.midY, initial.midY, accuracy: 3)
@@ -587,6 +738,21 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertEqual(record.frame.midX, initial.midX, accuracy: 3)
         XCTAssertEqual(record.frame.midY, initial.midY, accuracy: 3)
         attachScreenshot(of: app, name: "floating-reset-persisted")
+    }
+
+    private func settledFrame(of element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) -> CGRect {
+        var previous = element.frame
+        var stableSamples = 0
+        for _ in 0..<25 {
+            Thread.sleep(forTimeInterval: 0.1)
+            let current = element.frame
+            if !current.isEmpty, current == previous { stableSamples += 1 }
+            else { stableSamples = 0 }
+            if stableSamples == 3 { return current }
+            previous = current
+        }
+        XCTFail("Control frame did not settle before measuring persisted position", file: file, line: line)
+        return previous
     }
 
     private func waitForWindow(in app: XCUIApplication, landscape: Bool) {
@@ -691,11 +857,16 @@ final class TranscriptUITests: XCTestCase {
         let tail = app.buttons["transcriptPlay-fixture-playback-line-23"]
         let scroll = app.scrollViews["meetingTranscriptScrollView"]
         let waveform = app.otherElements["audioWaveformScrubber"]
+        let follow = app.buttons["transcriptFollowPlayback"]
         for _ in 0..<16 {
-            if tail.exists && tail.isHittable && tail.frame.maxY <= waveform.frame.minY { break }
+            let readableBottom = follow.exists ? min(waveform.frame.minY, follow.frame.minY) : waveform.frame.minY
+            if tail.exists && tail.isHittable && tail.frame.maxY <= readableBottom { break }
             scroll.swipeUp(velocity: .fast)
         }
         XCTAssertTrue(tail.isHittable)
+        XCTAssertTrue(follow.waitForExistence(timeout: 3))
+        XCTAssertFalse(tail.frame.intersects(follow.frame), "Follow playback must not cover the final paragraph.")
+        XCTAssertLessThanOrEqual(tail.frame.maxY, follow.frame.minY)
         XCTAssertLessThanOrEqual(tail.frame.maxY, waveform.frame.minY)
         XCTAssertGreaterThanOrEqual(tail.frame.minY, app.navigationBars.firstMatch.frame.maxY)
         attachScreenshot(of: app, name: "transcript-tail-above-player")
@@ -710,6 +881,7 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [seeked], timeout: 3), .completed)
         play.tap()
         XCTAssertEqual(play.label, "Play audio")
+        XCTAssertFalse(follow.exists)
         XCTAssertFalse(app.buttons["meetingProcessByMacButton"].isEnabled)
         XCTAssertEqual(
             app.staticTexts["meetingMacUnavailableReason"].label,

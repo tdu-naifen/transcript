@@ -1,4 +1,5 @@
 import Foundation
+import CoreML
 import struct FluidAudio.DiarizerSegment
 import Observation
 import TranscriptCore
@@ -36,24 +37,52 @@ final class TranscriptionModel {
     private(set) var detectedLanguage: String?
     private(set) var diarizationSegments: [DiarizerSegment] = []
     private(set) var speakersByIndex: [Int: Speaker] = [:]
+    private(set) var displayedMeetingID: String?
+    private(set) var speakerProjection = SpeakerProjection.empty
+    private var diarizationIsRunning = false
+    private(set) var effectiveLocale: Locale?
+    private(set) var pendingLocale: Locale?
+    private(set) var languageSwitchFailure: RecordingLanguageIssue?
+    private(set) var speakerWarning: String?
+    private(set) var languageReadyForBoundary = false
+    var languageProgress: Double? { pendingLocale.flatMap { resources.fractionCompleted(for: $0) } }
 
     private let services: AppServices
+    private let resources: AppleSpeechResources
+    private let analyzerSlots = RecordingAnalyzerSlots()
+    private var preparedSlot: UUID?
     private var transcriber: (any AppleTranscribing)?
     private let makeTranscriber: () -> any AppleTranscribing
     private var audioOnly = false
+    private var resourceRecoveryLocale: Locale?
     private var diarizer: SpeakerDiarizer?
     private var eventTask: Task<Void, Never>?
     private var diarizationTask: Task<Void, Never>?
     private var currentMeetingId: String?
     private var diarizationTimeline = DiarizationTimelineAccumulator()
     private var processingFailure: String?
+    private var routingTask: Task<Void, Never>?
+    private var switchTask: Task<Void, Never>?
+    private var switchGeneration = UUID()
+    private var activeRunID: UUID?
+    private var acceptsSwitches = false
+    private var replacement: (engine: any AppleTranscribing, locale: Locale, slot: UUID)?
+    private var runs: [SpeechRun] = []
+    private struct SpeechRun {
+        let id: UUID
+        let engine: any AppleTranscribing
+        let channel: RecordingChunkChannel
+        let events: Task<Void, Never>
+    }
     private var injectedFinishOperations: (
         asr: @Sendable () async throws -> Void,
         diarization: @Sendable () async throws -> Void
     )?
 
-    init(services: AppServices, makeTranscriber: @escaping () -> any AppleTranscribing = { AppleLiveTranscriber() }) {
+    init(services: AppServices, resources: AppleSpeechResources? = nil, makeTranscriber: @escaping () -> any AppleTranscribing = { AppleLiveTranscriber() }) {
         self.services = services
+        // Future-default setup must not cancel a language change in the active meeting.
+        self.resources = resources ?? AppleSpeechResources()
         self.makeTranscriber = makeTranscriber
         self.injectedFinishOperations = nil
         status = .idle
@@ -66,9 +95,11 @@ final class TranscriptionModel {
         diarizationFinish: @escaping @Sendable () async throws -> Void
     ) {
         self.services = services
+        self.resources = services.speechResources
         self.makeTranscriber = { AppleLiveTranscriber() }
         self.injectedFinishOperations = (asr: asrFinish, diarization: diarizationFinish)
         self.currentMeetingId = meetingId
+        self.displayedMeetingID = meetingId
         status = .idle
     }
 
@@ -82,23 +113,35 @@ final class TranscriptionModel {
     func prepare() async throws {
         status = .preparing
         audioOnly = false
+        resourceRecoveryLocale = nil
+        effectiveLocale = nil
+        speakerWarning = nil
+        let locale = services.recordingLocale
+        let slot = try await analyzerSlots.acquire()
         let transcriber = makeTranscriber()
         do {
-            try await transcriber.prepare(locale: services.recordingLocale)
+            try Task.checkCancellation()
+            try await transcriber.prepare(locale: locale)
             self.transcriber = transcriber
+            preparedSlot = slot
+            effectiveLocale = locale
         } catch is CancellationError {
             await transcriber.cancelAndWait()
+            await analyzerSlots.release(slot)
             status = .idle
             throw CancellationError()
         } catch {
             await transcriber.cancelAndWait()
+            await analyzerSlots.release(slot)
             if case AppleLiveTranscriber.Failure.resourcesNotReady = error {
-                services.speechResources.prepare(locale: services.recordingLocale)
+                resourceRecoveryLocale = locale
+                resources.prepare(locale: locale)
             }
             // Transcription availability must not prevent saving microphone audio.
             self.transcriber = nil
             audioOnly = true
-            status = .failed(error.localizedDescription)
+            RecordingDiagnostics.log(error)
+            status = .failed((error as? AppleLiveTranscriber.Failure)?.localizedDescription ?? RecordingLanguageText.speechFailure)
         }
     }
 
@@ -113,23 +156,34 @@ final class TranscriptionModel {
         diarizationSegments.removeAll()
         diarizationTimeline = DiarizationTimelineAccumulator()
         speakersByIndex.removeAll()
+        speakerProjection = .empty
+        displayedMeetingID = meetingId
+        diarizationIsRunning = false
         processingFailure = nil
         detectedLanguage = nil
         currentMeetingId = meetingId
-        if audioOnly { return }
-        guard let transcriber else { throw RecordingError.processingNotRunning }
-        status = .preparing
-        let store = AppleTranscriptStore(
-            repository: UtteranceRepository(services.database),
-            meetingID: meetingId, deviceID: services.deviceId
-        )
-
-        eventTask = Task { [weak self] in
-            let events = await transcriber.events()
-            await transcriber.run(chunks: chunks, meetingID: meetingId, services: store)
-            for await event in events {
-                await self?.apply(event)
+        acceptsSwitches = true
+        if let transcriber, let effectiveLocale, let slot = preparedSlot {
+            preparedSlot = nil
+            activate(transcriber, locale: effectiveLocale, meetingID: meetingId, slot: slot)
+        } else if !audioOnly {
+            throw RecordingError.processingNotRunning
+        }
+        routingTask = Task { [weak self] in
+            for await chunk in chunks {
+                guard !Task.isCancelled, let self else { break }
+                if acceptsSwitches, let replacement {
+                    self.replacement = nil
+                    let old = runs.last
+                    activate(replacement.engine, locale: replacement.locale, meetingID: meetingId, slot: replacement.slot)
+                    pendingLocale = nil
+                    languageReadyForBoundary = false
+                    languageSwitchFailure = nil
+                    if let old { await old.channel.finish() }
+                }
+                if let run = runs.last { await run.channel.send(chunk) }
             }
+            if let run = self?.runs.last { await run.channel.finish() }
         }
 
         // Speaker attribution is optional; Apple speech never depends on Sortformer.
@@ -137,22 +191,138 @@ final class TranscriptionModel {
         if DiarizationModelStore.isSortformerInstalled(at: modelPath) {
             startDiarization(meetingId: meetingId, chunks: diarizationChunks, modelPath: modelPath)
         }
+        if audioOnly, let locale = resourceRecoveryLocale {
+            resourceRecoveryLocale = nil
+            switch resources.state(for: locale) {
+            case .preparing, .ready:
+                requestLanguage(locale)
+            case .failed(let issue):
+                pendingLocale = locale
+                languageSwitchFailure = issue
+            case .idle:
+                break
+            }
+        }
+    }
+
+    func requestLanguage(_ locale: Locale) {
+        guard acceptsSwitches, let meetingID = currentMeetingId else { return }
+        cancelLanguageSwitch()
+        pendingLocale = locale
+        let token = switchGeneration
+        switchTask = Task { [weak self] in
+            guard let self else { return }
+            var candidate: (any AppleTranscribing)?
+            var candidateSlot: UUID?
+            do {
+                try await resources.prepareAndWait(locale: locale)
+                try Task.checkCancellation()
+                guard switchGeneration == token, acceptsSwitches, currentMeetingId == meetingID else { return }
+                let slot = try await analyzerSlots.acquire()
+                candidateSlot = slot
+                try Task.checkCancellation()
+                guard switchGeneration == token, acceptsSwitches, currentMeetingId == meetingID else { throw CancellationError() }
+                let engine = makeTranscriber()
+                candidate = engine
+                try await engine.prepare(locale: locale)
+                try Task.checkCancellation()
+                guard switchGeneration == token, acceptsSwitches, currentMeetingId == meetingID else {
+                    throw CancellationError()
+                }
+                // The router commits this only at the next chunk boundary.
+                replacement = (engine, locale, slot)
+                candidateSlot = nil
+                languageReadyForBoundary = true
+            } catch {
+                if let candidate { await candidate.cancelAndWait() }
+                if let candidateSlot { await analyzerSlots.release(candidateSlot) }
+                guard switchGeneration == token else { return }
+                RecordingDiagnostics.log(error)
+                languageSwitchFailure = RecordingLanguageIssue(error, preserveSpeechReason: true)
+            }
+        }
+    }
+
+    func retryLanguageSwitch() {
+        if let pendingLocale { requestLanguage(pendingLocale) }
+    }
+
+    func cancelLanguageSwitch() {
+        switchGeneration = UUID()
+        switchTask?.cancel()
+        switchTask = nil
+        if let pendingLocale { resources.cancel(locale: pendingLocale) }
+        pendingLocale = nil
+        languageSwitchFailure = nil
+        languageReadyForBoundary = false
+        if let replacement {
+            self.replacement = nil
+            let slots = analyzerSlots
+            Task {
+                await replacement.engine.cancelAndWait()
+                await slots.release(replacement.slot)
+            }
+        }
+    }
+
+    func setLanguageSwitchingAllowed(_ allowed: Bool) {
+        acceptsSwitches = allowed && currentMeetingId != nil
+        if !allowed { cancelLanguageSwitch() }
+    }
+
+    private func activate(_ engine: any AppleTranscribing, locale: Locale, meetingID: String, slot: UUID) {
+        let id = UUID()
+        let channel = RecordingChunkChannel()
+        activeRunID = id
+        effectiveLocale = locale
+        detectedLanguage = locale.identifier
+        transcriber = engine
+        audioOnly = false
+        status = .preparing
+        let store = AppleTranscriptStore(
+            repository: UtteranceRepository(services.database), meetingID: meetingID, deviceID: services.deviceId
+        )
+        let slots = analyzerSlots
+        let events = Task { [weak self] in
+            let events = await engine.events()
+            await engine.run(chunks: channel.stream, meetingID: meetingID, services: store)
+            for await event in events {
+                guard !Task.isCancelled else { break }
+                await self?.apply(event, runID: id)
+            }
+            await channel.finish()
+            // Drain both the native results collector and our event consumer
+            // before another replacement may claim this analyzer slot.
+            _ = try? await engine.finishAndWait()
+            await slots.release(slot)
+        }
+        runs.append(SpeechRun(id: id, engine: engine, channel: channel, events: events))
     }
 
     func finish() async throws {
+        setLanguageSwitchingAllowed(false)
+        await routingTask?.value
+        routingTask = nil
         var failure: (any Error)?
         let finishOperations: (
             asr: @Sendable () async throws -> Void,
             diarization: @Sendable () async throws -> Void
         )
         if audioOnly {
-            currentMeetingId = nil
-            audioOnly = false
-            return
-        } else if let transcriber {
             let diarizer = self.diarizer
+            finishOperations = (asr: {}, diarization: { try await diarizer?.finishAndWait() })
+        } else if !runs.isEmpty {
+            let diarizer = self.diarizer
+            let engines = runs.map(\.engine)
             finishOperations = (
-                asr: { try await transcriber.finishAndWait() },
+                asr: {
+                    var failure: (any Error)?
+                    for engine in engines {
+                        do { try await engine.finishAndWait() }
+                        catch { if failure == nil || failure is RecordingSpeechUnavailable { failure = error } }
+                    }
+                    if let failure { throw failure }
+                },
                 diarization: { try await diarizer?.finishAndWait() }
             )
         } else if let injectedFinishOperations {
@@ -161,25 +331,25 @@ final class TranscriptionModel {
             throw RecordingError.processingNotRunning
         }
         do {
-            try await LiveRecordingDrain.wait(
-                asr: finishOperations.asr,
-                diarization: finishOperations.diarization
-            )
+            try await finishOperations.asr()
         } catch {
             failure = error
         }
+        do { try await finishOperations.diarization() }
+        catch { errorMessageForDiarization(String(describing: error)) }
+        for run in runs { await run.events.value }
         await eventTask?.value
         await diarizationTask?.value
         await diarizer?.cleanup()
-        if failure == nil, let processingFailure {
+        if (failure == nil || failure is RecordingSpeechUnavailable), let processingFailure {
             failure = LiveRecordingDrainError(failures: [processingFailure])
         }
         do {
             try await reconcileSpeakerAssignments()
             if injectedFinishOperations != nil { try await requireTranscriptProduced() }
         } catch {
-            if failure == nil { failure = error }
-            errorMessageForDiarization(String(describing: error))
+            if failure == nil || failure is RecordingSpeechUnavailable { failure = error }
+            RecordingDiagnostics.log(error)
         }
         eventTask = nil
         diarizationTask = nil
@@ -187,60 +357,116 @@ final class TranscriptionModel {
         self.diarizer = nil
         injectedFinishOperations = nil
         currentMeetingId = nil
+        audioOnly = false
+        runs.removeAll()
+        activeRunID = nil
         if let failure {
-            status = .failed(String(describing: failure))
+            RecordingDiagnostics.log(failure)
+            status = .failed(RecordingLanguageText.speechFailure)
             throw failure
         }
         status = .idle
     }
 
     func discard() async {
+        setLanguageSwitchingAllowed(false)
+        routingTask?.cancel()
+        for run in runs {
+            run.events.cancel()
+            await run.channel.finish()
+            await run.engine.cancelAndWait()
+        }
+        await routingTask?.value
+        routingTask = nil
+        runs.removeAll()
+        activeRunID = nil
         eventTask?.cancel()
         diarizationTask?.cancel()
         await transcriber?.cancelAndWait()
+        if let preparedSlot {
+            await analyzerSlots.release(preparedSlot)
+            self.preparedSlot = nil
+        }
         await diarizer?.cancelAndWait()
         eventTask = nil
         diarizationTask = nil
         transcriber = nil
         diarizer = nil
         currentMeetingId = nil
+        diarizationIsRunning = false
         if status == .running || status == .preparing { status = .idle }
     }
 
     func speaker(for segment: ASRSegment) -> Speaker? {
-        guard let index = SpeakerOverlapAssigner.speakerIndex(
-            utteranceStartMs: segment.startMs,
-            utteranceEndMs: segment.endMs,
-            segments: diarizationSegments
-        ) else { return nil }
-        return speakersByIndex[index]
+        speakerProjection.speaker(utteranceID: segment.id)
     }
 
-    private func apply(_ event: ASRTranscriptEvent) async {
+    var isIdentifyingSpeakers: Bool {
+        speakerIdentificationProgress == .identifying
+    }
+
+    var speakerIdentificationProgress: SpeakerProjection.IdentificationProgress {
+        if let progress = speakerProjection.identificationProgress { return progress }
+        if let id = displayedMeetingID {
+            switch services.speakerAnalysis.states[id] {
+            case .preparing: return .pending
+            case .analyzing: return .identifying
+            case .complete, .failed: return .unassigned
+            case nil: break
+            }
+        }
+        return diarizationIsRunning && speakerWarning == nil ? .identifying : .unassigned
+    }
+
+    func observeSpeakerProjection() async {
+        guard let id = displayedMeetingID else { return }
+        do {
+            try await SpeakerProjection.observe(database: services.database, meetingID: id) { [weak self] snapshot in
+                guard let self, displayedMeetingID == id else { return }
+                speakerProjection = snapshot
+            }
+        } catch is CancellationError {
+        } catch {
+            RecordingDiagnostics.log(error)
+        }
+    }
+
+    func refreshSpeakerProjection() async throws {
+        guard let id = displayedMeetingID else { return }
+        let snapshot = try await SpeakerProjection.fetch(database: services.database, meetingID: id)
+        guard displayedMeetingID == id else { return }
+        speakerProjection = snapshot
+    }
+
+    private func apply(_ event: ASRTranscriptEvent, runID: UUID) async {
         switch event {
         case .ready(let info):
+            guard runID == activeRunID else { return }
             status = .running
             computeUnit = "Apple Speech"
             detectedLanguage = info.language.fixedLocaleIdentifier
+            effectiveLocale = info.language.fixedLocaleIdentifier.map(Locale.init(identifier:))
         case .segment(let segment):
             if let existing = lines.firstIndex(where: { $0.id == segment.id }) {
                 lines[existing] = segment
             } else if !segment.text.isEmpty {
-                lines.insert(segment, at: 0)
+                lines.append(segment)
             }
-            if let locale = segment.localeIdentifier { detectedLanguage = locale }
+            lines.sort { ($0.startMs, $0.id) > ($1.startMs, $1.id) }
+            if runID == activeRunID, let locale = segment.localeIdentifier { detectedLanguage = locale }
             if segment.isFinal {
                 do {
                     try await reconcileSpeakerAssignments()
                 } catch {
-                    errorMessageForDiarization(String(describing: error))
+                    processingFailure = String(describing: error)
+                    RecordingDiagnostics.log(error)
                 }
             }
         case .failed(let message):
-            if processingFailure == nil { processingFailure = message }
-            status = .failed(message)
+            RecordingDiagnostics.log(message)
+            if runID == activeRunID { status = .failed(RecordingLanguageText.speechFailure) }
         case .finished:
-            if status == .running || status == .preparing { status = .idle }
+            if runID == activeRunID, status == .running || status == .preparing { status = .idle }
         }
     }
 
@@ -255,22 +481,32 @@ final class TranscriptionModel {
         chunks: AsyncStream<AudioChunk>,
         modelPath: URL
     ) {
-        let diarizer = SpeakerDiarizer(configuration: .init(mainModelPath: modelPath))
+        let diarizer = SpeakerDiarizer(configuration: Self.liveDiarizerConfiguration(modelPath: modelPath))
         self.diarizer = diarizer
+        diarizationIsRunning = true
         diarizationTask = Task { [weak self] in
             let events = await diarizer.events()
             await diarizer.run(chunks: chunks)
             for await event in events {
                 await self?.apply(event, meetingId: meetingId)
             }
+
         }
     }
 
-    private func apply(_ event: SpeakerDiarizer.Event, meetingId: String) async {
+    static func liveDiarizerConfiguration(modelPath: URL) -> SpeakerDiarizer.Configuration {
+        .init(mainModelPath: modelPath, computeUnits: .cpuAndNeuralEngine)
+    }
+
+    func apply(_ event: SpeakerDiarizer.Event, meetingId: String) async {
+        guard currentMeetingId == meetingId else { return }
         switch event {
-        case .ready, .finished:
-            break
+        case .ready:
+            diarizationIsRunning = true
+        case .finished:
+            diarizationIsRunning = false
         case .failed(let message):
+            diarizationIsRunning = false
             if status != .failed(message) {
                 errorMessageForDiarization(message)
             }
@@ -280,25 +516,23 @@ final class TranscriptionModel {
                 tentative: tentative.filter { (0..<4).contains($0.speakerIndex) }
             )
             diarizationSegments = diarizationTimeline.segments
-            let indexes = Set(diarizationSegments.map(\.speakerIndex)).sorted()
-            for index in indexes where speakersByIndex[index] == nil {
-                do {
-                    let repository = SpeakerRepository(services.database)
-                    let speaker = try await repository.createAnonymousSpeaker(deviceId: services.deviceId)
-                    try await repository.assignDisplayIndex(
-                        meetingId: meetingId,
-                        speakerId: speaker.id,
-                        displayIndex: index,
-                        deviceId: services.deviceId
-                    )
-                    speakersByIndex[index] = speaker
-                } catch {
-                    errorMessageForDiarization(String(describing: error))
-                }
+            // Tentative turns are not stable evidence for a global identity.
+            let indexes = Set(diarizationTimeline.finalized.map(\.speakerIndex)).sorted()
+            guard services.speakerAnalysis.states[meetingId] == nil else {
+                try? await refreshSpeakerProjection()
+                return
             }
             do {
+                let snapshot = try await SpeakerProjection.ensureLiveSlots(
+                    database: services.database, meetingID: meetingId,
+                    indexes: indexes, deviceID: services.deviceId
+                )
+                speakersByIndex = Dictionary(uniqueKeysWithValues: snapshot.slots.compactMap { slot in
+                    snapshot.speakersByID[slot.speakerId].map { (slot.displayIndex, $0) }
+                })
                 try await reconcileSpeakerAssignments()
             } catch {
+                processingFailure = String(describing: error)
                 errorMessageForDiarization(String(describing: error))
             }
         }
@@ -306,29 +540,27 @@ final class TranscriptionModel {
 
     private func reconcileSpeakerAssignments() async throws {
         guard let meetingId = currentMeetingId else { return }
-        let repository = UtteranceRepository(services.database)
-        let utterances = try await repository.fetch(meetingId: meetingId)
-        var assignments: [String: String] = [:]
-        for utterance in utterances {
-            guard let index = SpeakerOverlapAssigner.speakerIndex(
-                utteranceStartMs: utterance.startMs,
-                utteranceEndMs: utterance.endMs,
-                segments: diarizationSegments
-            ), let speaker = speakersByIndex[index], utterance.speakerId != speaker.id else { continue }
-            assignments[utterance.id] = speaker.id
+        let snapshot = try await SpeakerProjection.fetch(database: services.database, meetingID: meetingId)
+        guard snapshot.analysisState == nil, services.speakerAnalysis.states[meetingId] == nil else {
+            try await refreshSpeakerProjection()
+            return
         }
+        let identitiesBySlot = Dictionary(uniqueKeysWithValues: snapshot.slots.map { ($0.displayIndex, $0.speakerId) })
+        let assignments = SpeakerProjection.stableAssignments(
+            utterances: snapshot.utterances, finalized: diarizationTimeline.finalized,
+            identitiesBySlot: identitiesBySlot
+        )
         if !assignments.isEmpty {
-            try await repository.reassignSpeakers(
-                meetingId: meetingId,
-                assignments: assignments,
-                deviceId: services.deviceId
+            try await SpeakerProjection.backfillUnresolved(
+                database: services.database, snapshot: snapshot,
+                assignments: assignments, deviceID: services.deviceId
             )
         }
+        try await refreshSpeakerProjection()
     }
 
     private func errorMessageForDiarization(_ message: String) {
-        if processingFailure == nil { processingFailure = message }
-        guard status != .failed(message) else { return }
-        status = .failed(message)
+        RecordingDiagnostics.log(message)
+        speakerWarning = RecordingLanguageText.speakerFailure
     }
 }

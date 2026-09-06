@@ -43,14 +43,64 @@ final class RecordingActivityLifecycleTests: XCTestCase {
         await fulfillment(of: [entered], timeout: 5)
         XCTAssertEqual(fixture.engine.stopCount, 1)
         XCTAssertEqual(activity.ended, [fixture.meeting.id])
-        XCTAssertEqual(fixture.recorder.phase, .stopping)
+        XCTAssertEqual(fixture.recorder.phase, .processing)
+        XCTAssertFalse(fixture.recorder.isBusy)
+        XCTAssertTrue(fixture.recorder.isProcessingTranscript)
+        XCTAssertFalse(fixture.recorder.canStartRecording)
         let draining = try await MeetingRepository(fixture.services.database).fetch(id: fixture.meeting.id)
-        XCTAssertEqual(draining?.state, .recording)
+        XCTAssertEqual(draining?.state, .recorded)
+        XCTAssertEqual(draining?.durationMs, 100)
+        XCTAssertGreaterThan(draining?.audioByteCount ?? 0, 0)
+        await fixture.recorder.toggleRecording()
+        XCTAssertEqual(fixture.engine.stopCount, 1)
+        let protectedID = await fixture.services.session.activeMeetingId
+        XCTAssertEqual(protectedID, fixture.meeting.id)
 
         await gate.open()
         await stop.value
         let stored = try await MeetingRepository(fixture.services.database).fetch(id: fixture.meeting.id)
         XCTAssertEqual(stored?.state, .recorded)
+        XCTAssertFalse(fixture.recorder.isProcessingTranscript)
+        XCTAssertTrue(fixture.recorder.canStartRecording)
+    }
+
+    func testNinetyNineSecondDiskArchiveReopensWhileASRIsHeld() async throws {
+        let entered = expectation(description: "Held ASR entered after durable archive")
+        let gate = LifecycleGate(entered: entered)
+        let fixture = try await makeFixture(asrFinish: { await gate.wait() }, frameCount: 99 * 16_000)
+        let started = ContinuousClock.now
+        let stop = Task { await fixture.recorder.toggleRecording() }
+        await fulfillment(of: [entered], timeout: 10)
+        let archiveElapsed = started.duration(to: .now)
+        let root = fixture.services.store.directory.deletingLastPathComponent().deletingLastPathComponent()
+        let reopened = try AppDatabase.onDisk(directory: root)
+        defer { try? reopened.writer.close() }
+        let stored = try await MeetingRepository(reopened).fetch(id: fixture.meeting.id)
+        let row = try XCTUnwrap(stored)
+        XCTAssertEqual(row.state, .recorded)
+        XCTAssertEqual(row.durationMs, 99_000)
+        let hash = try IncrementalSHA256.hashFile(at: fixture.services.store.url(for: row.id))
+        XCTAssertEqual(row.audioSHA256, hash.sha256)
+        XCTAssertEqual(row.audioByteCount, hash.byteCount)
+        XCTAssertEqual(row.audioFileName, "\(row.id).m4a")
+        XCTAssertFalse(fixture.recorder.isBusy)
+        XCTAssertTrue(fixture.recorder.audioArchiveSaved)
+        XCTAssertFalse(fixture.recorder.canStartRecording)
+        let deletion = await LibraryModel(services: fixture.services).delete(row)
+        XCTAssertFalse(deletion)
+        await gate.open()
+        await stop.value
+        print("DURABILITY_APP archive=\(archiveElapsed) processingComplete=\(started.duration(to: .now))")
+    }
+
+    func testGeneralProcessingFailureCannotDowngradeDurableAudio() async throws {
+        let fixture = try await makeFixture(asrFinish: { throw CocoaError(.fileReadUnknown) })
+        await fixture.recorder.toggleRecording()
+        let row = try await MeetingRepository(fixture.services.database).fetch(id: fixture.meeting.id)
+        XCTAssertEqual(row?.state, .recorded)
+        XCTAssertGreaterThan(row?.audioByteCount ?? 0, 0)
+        XCTAssertNotNil(fixture.recorder.errorMessage)
+        XCTAssertTrue(fixture.recorder.canStartRecording)
     }
 
     func testCaptureFailureEndsActivityAndPreservesFailedRecording() async throws {
@@ -84,6 +134,18 @@ final class RecordingActivityLifecycleTests: XCTestCase {
         let stored = try await MeetingRepository(fixture.services.database).fetch(id: fixture.meeting.id)
         XCTAssertEqual(stored?.state, .recorded)
         XCTAssertEqual(fixture.engine.stopCount, 1)
+    }
+
+    func testSpeechFailureDoesNotMarkSuccessfullySealedAudioAsFailed() async throws {
+        let fixture = try await makeFixture(asrFinish: { throw RecordingSpeechUnavailable() })
+        await fixture.recorder.toggleRecording()
+        let stored = try await MeetingRepository(fixture.services.database).fetch(id: fixture.meeting.id)
+        XCTAssertEqual(stored?.state, .recorded)
+        XCTAssertGreaterThan(stored?.audioByteCount ?? 0, 0)
+        XCTAssertEqual(fixture.engine.stopCount, 1)
+        XCTAssertEqual(fixture.recorder.errorMessage, RecordingSpeechUnavailable().localizedDescription)
+        let rows = try await UtteranceRepository(fixture.services.database).fetch(meetingId: fixture.meeting.id)
+        XCTAssertEqual(rows.map(\.text), ["Preserved text"])
     }
 
     func testLateEndAndUpdateCannotAffectNextActivity() async throws {
@@ -184,9 +246,10 @@ final class RecordingActivityLifecycleTests: XCTestCase {
 
     private func makeFixture(
         activity: ActivitySpy = ActivitySpy(),
-        asrFinish: @escaping @Sendable () async throws -> Void = {}
+        asrFinish: @escaping @Sendable () async throws -> Void = {},
+        frameCount: Int = 1_600
     ) async throws -> Fixture {
-        let (services, engine) = try makeServices()
+        let (services, engine) = try makeServices(frameCount: frameCount)
         let meeting = try await services.session.start(title: "Lifecycle recording")
         try await UtteranceRepository(services.database).append(
             Utterance(
@@ -206,15 +269,17 @@ final class RecordingActivityLifecycleTests: XCTestCase {
         return Fixture(services: services, engine: engine, meeting: meeting, recorder: recorder)
     }
 
-    private func makeServices() throws -> (AppServices, LifecycleCaptureEngine) {
+    private func makeServices(frameCount: Int = 1_600) throws -> (AppServices, LifecycleCaptureEngine) {
         let root = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("lifecycle-\(UUID().uuidString)", isDirectory: true)
         let store = try AudioFileStore.standard(applicationSupport: root)
-        let engine = LifecycleCaptureEngine()
-        let services = try AppServices(database: .inMemory(), store: store, captureEngine: engine)
+        let engine = LifecycleCaptureEngine(frameCount: frameCount)
+        let services = try AppServices(database: .onDisk(directory: root), store: store, captureEngine: engine)
         let session = services.session
+        let database = services.database
         addTeardownBlock {
             session.invalidate()
+            try database.writer.close()
             try FileManager.default.removeItem(at: root)
         }
         return (services, engine)
@@ -305,6 +370,8 @@ private final class LifecycleCaptureEngine: AudioCaptureControlling, @unchecked 
     private var eventsContinuation: AsyncStream<AudioCaptureEvent>.Continuation?
     private var stops = 0
     var stopCount: Int { lock.withLock { stops } }
+    private let frameCount: Int
+    init(frameCount: Int = 1_600) { self.frameCount = frameCount }
 
     func chunks() -> AsyncStream<AudioChunk> {
         AsyncStream { continuation in lock.withLock { chunksContinuation = continuation } }
@@ -317,7 +384,8 @@ private final class LifecycleCaptureEngine: AudioCaptureControlling, @unchecked 
         lock.withLock {
             chunksContinuation?.yield(AudioChunk(
                 index: 0, startFrame: 0, sampleRate: 16_000,
-                samples: Array(repeating: 0, count: 1_600), isFinal: false
+                samples: (0..<frameCount).map { Float(sin(Double($0) * 2 * .pi * 440 / 16_000)) * 0.1 },
+                isFinal: false
             ))
         }
     }
@@ -328,11 +396,11 @@ private final class LifecycleCaptureEngine: AudioCaptureControlling, @unchecked 
         lock.withLock {
             stops += 1
             chunksContinuation?.yield(AudioChunk(
-                index: 1, startFrame: 1_600, sampleRate: 16_000, samples: [], isFinal: true
+                index: 1, startFrame: frameCount, sampleRate: 16_000, samples: [], isFinal: true
             ))
-            eventsContinuation?.yield(.stopped(frameCount: 1_600))
+            eventsContinuation?.yield(.stopped(frameCount: frameCount))
         }
-        return 1_600
+        return frameCount
     }
     func invalidate() {
         lock.withLock {

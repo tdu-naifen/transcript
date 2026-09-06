@@ -16,7 +16,7 @@ final class SpeakerAnalysisServiceTests: XCTestCase {
         let service = SpeakerAnalysisService(
             servicesDatabase: db, deviceID: "test", store: services.store,
             downloader: services.modelDownloader, enabled: true, engine: engine,
-            nextPending: { try await lookup.next() }
+            nextPending: { try await lookup.next() }, isActive: true
         )
         service.resume()
         await fulfillment(of: [entered], timeout: 2)
@@ -36,7 +36,7 @@ final class SpeakerAnalysisServiceTests: XCTestCase {
         let engine = AnalysisProbe(database: db)
         let service = SpeakerAnalysisService(
             servicesDatabase: db, deviceID: "test", store: services.store,
-            downloader: services.modelDownloader, enabled: true, engine: engine
+            downloader: services.modelDownloader, enabled: true, engine: engine, isActive: true
         )
         await service.enqueue(meeting)
         await service.waitForIdle()
@@ -83,6 +83,52 @@ final class SpeakerAnalysisServiceTests: XCTestCase {
         await services.speakerAnalysis.enqueue(meeting)
         let next = try await SpeakerAnalysisRepository(db).nextPending()
         XCTAssertNil(next)
+    }
+
+    func testInactiveJobsStayDurableAndResumeOnlyAfterCancellationDrains() async throws {
+        let db = try AppDatabase.inMemory()
+        let services = try AppServices(database: db)
+        let meeting = Meeting(title: "Background", startedAt: Date(), audioFileName: "test.m4a", state: .recorded, originDeviceId: "test")
+        try await MeetingRepository(db).insert(meeting)
+        let started = expectation(description: "Foreground analysis started")
+        let engine = CancellationAnalysisProbe(jobs: SpeakerAnalysisRepository(db), started: started)
+        let service = SpeakerAnalysisService(
+            servicesDatabase: db, deviceID: "test", store: services.store,
+            downloader: services.modelDownloader, enabled: true, engine: engine, isActive: false
+        )
+        await service.enqueue(meeting)
+        await service.waitForIdle()
+        let initialRuns = await engine.runs
+        XCTAssertEqual(initialRuns, 0)
+        let pending = try await SpeakerAnalysisRepository(db).state(meetingID: meeting.id)
+        XCTAssertEqual(pending, "pending")
+        service.setActive(true)
+        await fulfillment(of: [started], timeout: 2)
+        service.setActive(false)
+        await service.waitForIdle()
+        let cancelledState = try await SpeakerAnalysisRepository(db).state(meetingID: meeting.id)
+        XCTAssertEqual(cancelledState, "pending")
+        XCTAssertNil(service.errorMessage)
+        service.setActive(true)
+        await service.waitForIdle()
+        let runs = await engine.runs
+        XCTAssertEqual(runs, 2)
+        XCTAssertEqual(service.states[meeting.id], .complete)
+    }
+
+    private actor CancellationAnalysisProbe: SpeakerAnalyzing {
+        let jobs: SpeakerAnalysisRepository
+        let started: XCTestExpectation
+        var runs = 0
+        init(jobs: SpeakerAnalysisRepository, started: XCTestExpectation) { self.jobs = jobs; self.started = started }
+        func run(meetingID: String, audioURL: URL, progress: @escaping @Sendable (MeetingReprocessingStage) async -> Void) async throws {
+            runs += 1
+            if runs == 1 {
+                started.fulfill()
+                try await Task.sleep(for: .seconds(60))
+            }
+            try await jobs.setState(meetingID: meetingID, state: "complete")
+        }
     }
 }
 

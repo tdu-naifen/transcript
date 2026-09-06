@@ -5,15 +5,17 @@ import TranscriptCore
 /// keeps updating in place until the model commits it.
 struct LiveTranscriptView: View {
     let model: TranscriptionModel
+    var scrollsInternally = true
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 7) {
+            headerLayout {
                 Image(systemName: "list.bullet")
                     .font(.subheadline.weight(.semibold))
-                Text("\(model.lines.count) utterances")
+                Text("\(model.lines.count) utterances", tableName: "RecordingLanguage")
                     .font(.subheadline.weight(.semibold))
-                Spacer()
+                if !dynamicTypeSize.isAccessibilitySize { Spacer() }
                 Text("Apple Speech")
                     .font(.caption.weight(.semibold))
                     .foregroundStyle(.secondary)
@@ -29,7 +31,7 @@ struct LiveTranscriptView: View {
                 Text(message)
                     .font(.caption)
                     .foregroundStyle(.orange)
-                    .lineLimit(3)
+                    .fixedSize(horizontal: false, vertical: true)
             case .preparing:
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -40,28 +42,52 @@ struct LiveTranscriptView: View {
                     Text(model.status == .running ? "Listening…" : "Transcript appears here while recording.")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("liveTranscriptStatus")
                 }
             }
 
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 20) {
-                    ForEach(model.lines) { line in
-                        TranscriptLineView(line: line, speaker: model.speaker(for: line))
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            if let warning = model.speakerWarning {
+                Text(warning).font(.caption).foregroundStyle(.secondary)
             }
-            .animation(.default, value: model.lines.count)
+
+            if scrollsInternally {
+                ScrollView { transcriptLines }
+                    .animation(.default, value: model.lines.count)
+            } else {
+                transcriptLines
+            }
         }
         .padding(.horizontal, 20)
         .padding(.top, 20)
-        .padding(.bottom, 108)
+        .padding(.bottom, scrollsInternally ? 108 : 20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .task(id: model.displayedMeetingID) { await model.observeSpeakerProjection() }
+    }
+
+    private var headerLayout: AnyLayout {
+        dynamicTypeSize.isAccessibilitySize
+            ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8))
+            : AnyLayout(HStackLayout(spacing: 7))
+    }
+
+    private var transcriptLines: some View {
+        LazyVStack(alignment: .leading, spacing: 20) {
+            ForEach(model.lines) { line in
+                TranscriptLineView(
+                    line: line, speaker: model.speaker(for: line),
+                    unresolvedSpeakerText: model.speakerIdentificationProgress.text
+                )
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 private struct TranscriptLineView: View {
     let line: ASRSegment
     let speaker: Speaker?
+    let unresolvedSpeakerText: String
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -74,7 +100,7 @@ private struct TranscriptLineView: View {
                         .font(.caption.weight(.bold))
                         .foregroundStyle(Color.speaker(colorIndex: speaker.colorIndex))
                 } else {
-                    Text(acceptanceText(line.isFinal ? "Unknown speaker" : "Identifying speaker…"))
+                    Text(unresolvedSpeakerText)
                         .font(.caption.weight(.bold))
                         .foregroundStyle(.secondary)
                 }
@@ -83,7 +109,7 @@ private struct TranscriptLineView: View {
                     .foregroundStyle(line.isFinal ? Color(red: 0.94, green: 0.29, blue: 0.25) : .secondary)
             }
             Text(line.text)
-                .font(.system(size: 17, weight: .regular))
+                .font(.body)
                 .lineSpacing(3)
                 .foregroundStyle(line.isFinal ? .primary : .secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -97,7 +123,4 @@ private struct TranscriptLineView: View {
         return line.isFinal ? Color(red: 0.94, green: 0.29, blue: 0.25) : .secondary
     }
 
-    private func acceptanceText(_ key: String) -> String {
-        LocalizationManager.shared.text(key, table: "AcceptanceUI")
-    }
 }

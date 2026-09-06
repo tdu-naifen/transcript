@@ -28,23 +28,35 @@ struct SettingsView: View {
                         Text("English (US)").tag("en-US")
                         Text("简体中文").tag("zh-CN")
                     } label: {
-                        Text("Recording language", tableName: "AppleSpeech")
+                        Text("Default language for new meetings", tableName: "RecordingLanguage")
                     }
                     .accessibilityIdentifier("recordingLanguagePicker")
                     switch services.speechResources.state(for: services.recordingLocale) {
                     case .idle:
-                        EmptyView()
+                        Button {
+                            services.speechResources.prepare(locale: services.recordingLocale)
+                        } label: {
+                            Text("Prepare language", tableName: "RecordingLanguage")
+                        }
                     case .preparing:
                         HStack {
-                            ProgressView()
+                            ProgressView(value: services.speechResources.fractionCompleted(for: services.recordingLocale))
                             Text("Preparing Apple language resources…", tableName: "AppleSpeech")
+                        }
+                        Text("iOS manages the download. Preparation time varies.", tableName: "RecordingLanguage")
+                            .font(.footnote).foregroundStyle(.secondary)
+                        Button(role: .cancel) {
+                            services.speechResources.cancel(locale: services.recordingLocale)
+                        } label: {
+                            Text("Cancel language setup", tableName: "RecordingLanguage")
                         }
                     case .ready:
                         Label {
                             Text("Apple language resources ready", tableName: "AppleSpeech")
                         } icon: { Image(systemName: "checkmark.circle") }
-                    case .failed(let message):
-                        Text(message).foregroundStyle(.secondary)
+                    case .failed(let issue):
+                        Text(issue.text).foregroundStyle(.secondary)
+                            .accessibilityIdentifier("languageResourceFailure")
                         Button {
                             services.speechResources.prepare(locale: services.recordingLocale)
                         } label: {
@@ -56,6 +68,7 @@ struct SettingsView: View {
                 } footer: {
                     Text(Self.modelDescription)
                         .accessibilityIdentifier("transcriptionModelDescription")
+                    Text("System uses the device language, not automatic language detection. Change the current meeting language using its globe menu.", tableName: "RecordingLanguage")
                 }
 
                 Section {
@@ -102,9 +115,13 @@ struct SettingsView: View {
             .navigationTitle(LocalizationManager.shared.text("Settings"))
             .scrollContentBackground(.hidden)
             .background(AppColors.settingsBackground)
-            .onAppear { recordingLanguage = services.asrLanguage.promptKey }
+            .onAppear {
+                recordingLanguage = services.asrLanguage.promptKey
+                services.speechResources.prepare(locale: services.recordingLocale)
+            }
             .onChange(of: recordingLanguage) { _, language in
                 services.asrLanguage = language == "auto" ? .auto : .locale(language)
+                services.speechResources.prepare(locale: services.recordingLocale)
             }
         }
     }

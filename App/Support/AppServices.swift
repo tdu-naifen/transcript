@@ -18,6 +18,7 @@ final class AppServices {
     let audioOwnership: AudioSessionOwnership
     let speechResources = AppleSpeechResources()
     let speakerAnalysis: SpeakerAnalysisService
+    private(set) var recordingRecoveryError: String?
 
     init(
         database: AppDatabase? = nil,
@@ -58,7 +59,7 @@ final class AppServices {
         )
     }
 
-    /// The chosen transcription language, persisted across launches.
+    /// Default for future meetings. `.auto` follows the system locale; it does not detect speech language.
     var asrLanguage: ASRLanguage {
         get {
             guard let raw = UserDefaults.standard.string(forKey: Self.languageKey), raw != "auto" else {
@@ -80,13 +81,31 @@ final class AppServices {
     /// A recording left behind by a process that died is closed out before the user can
     /// start a new one (PLAN §3.2.1).
     func salvageCrashedRecordings() async -> Int {
+        recordingRecoveryError = nil
         let live = await session.activeMeetingId
         do {
-            return try await recovery.salvageInterruptedRecordings(
+            let recovered = try await recovery.salvageInterruptedRecordings(
                 excluding: live.map { [$0] } ?? []
-            ).count
+            )
+            if recovered.contains(where: { $0.state != .recorded }) {
+                recordingRecoveryError = Self.recoveryRetryMessage
+            }
+            return recovered.filter { $0.state == .recorded }.count
+        } catch let error as RecordingRecoveryError {
+            RecordingDiagnostics.log(error)
+            recordingRecoveryError = Self.recoveryRetryMessage
+            return error.recovered.filter { $0.state == .recorded }.count
         } catch {
+            RecordingDiagnostics.log(error)
+            recordingRecoveryError = error.localizedDescription
             return 0
         }
+    }
+
+    private static var recoveryRetryMessage: String {
+        LocalizationManager.shared.text(
+            "Some recordings could not be recovered. Any existing audio is unchanged. Unlock your device and reopen the recording screen to retry.",
+            table: "RecordingRecovery"
+        )
     }
 }

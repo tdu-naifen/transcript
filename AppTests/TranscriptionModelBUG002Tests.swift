@@ -64,7 +64,7 @@ final class TranscriptionModelBUG002Tests: XCTestCase {
             try await model.finish()
             XCTFail("finish should reject an empty transcript")
         } catch TranscriptionModel.RecordingError.noTranscriptProduced {
-            XCTAssertEqual(model.status, .failed("noTranscriptProduced"))
+            XCTAssertEqual(model.status, .failed(RecordingLanguageText.speechFailure))
         }
     }
 
@@ -83,7 +83,7 @@ final class TranscriptionModelBUG002Tests: XCTestCase {
             XCTFail("finish should propagate finalization read failure")
         } catch {
             XCTAssertTrue(String(describing: error).contains("utterance"))
-            XCTAssertEqual(model.status, .failed(String(describing: error)))
+            XCTAssertEqual(model.status, .failed(RecordingLanguageText.speechFailure))
         }
     }
 
@@ -114,7 +114,7 @@ final class TranscriptionModelBUG002Tests: XCTestCase {
             XCTFail("finish should propagate the storage failure")
         } catch {
             XCTAssertTrue(String(describing: error).contains("UNIQUE"))
-            XCTAssertEqual(model.status, .failed(String(describing: error)))
+            XCTAssertEqual(model.status, .failed(RecordingLanguageText.speechFailure))
         }
         let diarizationFinished = await diarizationProbe.finished
         XCTAssertTrue(diarizationFinished)
@@ -132,6 +132,24 @@ final class TranscriptionModelBUG002Tests: XCTestCase {
         } catch TranscriptionModel.RecordingError.processingNotRunning {
             XCTAssertTrue(true)
         }
+    }
+
+    func testOptionalDiarizationFailureDoesNotFailValidTranscriptOrAudio() async throws {
+        let (services, meeting) = try await makeFixture()
+        try await UtteranceRepository(services.database).append(Utterance(
+            meetingId: meeting.id, startMs: 0, endMs: 1000, text: "Valid speech", originDeviceId: "test-device"
+        ))
+        let model = TranscriptionModel(
+            services: services, meetingId: meeting.id,
+            asrFinish: {}, diarizationFinish: { throw CocoaError(.coderInvalidValue) }
+        )
+        try await model.finish()
+        XCTAssertEqual(model.status, .idle)
+        XCTAssertEqual(model.speakerWarning, RecordingLanguageText.speakerFailure)
+        let rows = try await UtteranceRepository(services.database).fetch(meetingId: meeting.id)
+        XCTAssertEqual(rows.map(\.text), ["Valid speech"])
+        let saved = try await MeetingRepository(services.database).fetch(id: meeting.id)
+        XCTAssertEqual(saved?.audioFileName, "recording.m4a")
     }
 
     private func makeFixture() async throws -> (AppServices, Meeting) {

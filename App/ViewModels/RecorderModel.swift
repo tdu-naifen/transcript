@@ -11,6 +11,7 @@ final class RecorderModel {
         case recording
         case paused
         case stopping
+        case processing
     }
 
     /// Interruption / route notices (UI.md), kept as data rather than pre-formatted
@@ -41,6 +42,9 @@ final class RecorderModel {
     }
 
     private(set) var phase: Phase = .idle
+    private(set) var isProcessingTranscript = false
+    private(set) var audioArchiveSaved = false
+    var canStartRecording: Bool { phase == .idle && !stopInProgress }
     private(set) var level: AudioLevel = .silence
     private(set) var elapsed: TimeInterval = 0
     private(set) var permission: MicrophonePermission.Status = .undetermined
@@ -62,6 +66,7 @@ final class RecorderModel {
     private var recordingMeetingId: String?
     private var stopInProgress = false
     private var captureFailure: String?
+    private var sceneIsActive = true
     private let processing: any RecordingTranscriptionControlling
     private let requestPermission: () async -> MicrophonePermission.Status
 
@@ -86,14 +91,31 @@ final class RecorderModel {
     var isActive: Bool { phase == .recording || phase == .paused }
     var recordingSampleRate: Double { services.session.configuration.archiveQuality.archiveSampleRate }
     var recordingLanguageLabel: String {
-        LocalizationManager.shared.resolvedLocale.localizedString(forIdentifier: services.recordingLocale.identifier)
-            ?? services.recordingLocale.identifier
+        guard let locale = transcription.effectiveLocale else {
+            return RecordingLanguageText.text("Audio only")
+        }
+        return LocalizationManager.shared.resolvedLocale.localizedString(forIdentifier: locale.identifier)
+            ?? locale.identifier
+    }
+
+    func selectRecordingLanguage(_ identifier: String) {
+        guard phase == .recording else { return }
+        transcription.requestLanguage(identifier == "auto" ? Locale.current : Locale(identifier: identifier))
+    }
+
+    func sceneActivityChanged(isActive: Bool) {
+        sceneIsActive = isActive
+        transcription.setLanguageSwitchingAllowed(isActive && phase == .recording)
     }
 
     var stateLabel: String {
         let localization = LocalizationManager.shared
         switch phase {
         case .idle: return localization.localized("Ready")
+        case .processing:
+            return audioArchiveSaved
+                ? localization.text("Audio saved. Finishing transcript…", table: "RecordingRecovery")
+                : localization.text("Finishing transcript…", table: "RecordingRecovery")
         case .starting: return localization.localized("Starting")
         case .recording: return localization.localized("Recording")
         case .paused: return localization.localized("Paused")
@@ -109,6 +131,10 @@ final class RecorderModel {
         didSalvage = true
         await activityController.cleanupOrphans()
         let salvaged = await services.salvageCrashedRecordings()
+        if let recoveryError = services.recordingRecoveryError {
+            errorMessage = recoveryError
+            didSalvage = false
+        }
         if salvaged > 0 {
             noticeKind = .recovered(count: salvaged)
         }
@@ -119,7 +145,7 @@ final class RecorderModel {
         switch phase {
         case .idle: await start()
         case .recording, .paused: await stop()
-        case .starting, .stopping: break
+        case .starting, .stopping, .processing: break
         }
     }
 
@@ -127,6 +153,7 @@ final class RecorderModel {
         do {
             switch phase {
             case .recording:
+                transcription.setLanguageSwitchingAllowed(false)
                 try await services.session.pause()
                 accumulated += Date().timeIntervalSince(startedAt ?? Date())
                 startedAt = nil
@@ -136,10 +163,12 @@ final class RecorderModel {
                 try await services.session.resume()
                 startedAt = Date()
                 phase = .recording
+                transcription.setLanguageSwitchingAllowed(sceneIsActive)
             default:
                 break
             }
         } catch {
+            transcription.setLanguageSwitchingAllowed(sceneIsActive && phase == .recording)
             errorMessage = String(describing: error)
         }
     }
@@ -151,12 +180,18 @@ final class RecorderModel {
     // MARK: - Private
 
     private func start() async {
-        guard phase == .idle else { return }
+        guard canStartRecording else { return }
         phase = .starting
         defer {
             if phase == .idle { services.audioOwnership.releaseCapture() }
         }
         do {
+            // A failed database write must be retried before a new capture replaces
+            // its pending archive. This does not restart an already drained encoder.
+            if await services.session.activeMeetingId != nil {
+                let pending = try await services.session.drainCapture()
+                _ = try await services.session.publish(pending, as: .recorded)
+            }
             try services.audioOwnership.prepareForCapture()
             permission = await requestPermission()
             guard permission == .granted else {
@@ -190,8 +225,10 @@ final class RecorderModel {
         lastActivitySecond = -1
         recordingMeetingId = meetingId
         captureFailure = nil
+        audioArchiveSaved = false
         startedAt = Date()
         phase = .recording
+        transcription.setLanguageSwitchingAllowed(sceneIsActive)
         startTicking()
         await activityController.start(meetingId: meetingId)
     }
@@ -199,6 +236,7 @@ final class RecorderModel {
     @discardableResult
     func requestStop() -> Task<Void, Never>? {
         guard isActive, let meetingId = recordingMeetingId else { return nil }
+        transcription.setLanguageSwitchingAllowed(false)
         return Task { @MainActor [weak self] in
             guard let self, recordingMeetingId == meetingId else { return }
             await stop()
@@ -212,22 +250,45 @@ final class RecorderModel {
             return
         }
         stopInProgress = true
-        defer { stopInProgress = false }
+        defer {
+            stopInProgress = false
+            isProcessingTranscript = false
+        }
         phase = .stopping
+        transcription.setLanguageSwitchingAllowed(false)
         stopTicking()
         var pendingStop: RecordingSession.PendingStop?
         var stopFailure: (any Error)?
+        var speechEndedEarly = false
         let activityController = activityController
         do {
-            pendingStop = try await services.session.drainCapture {
+            pendingStop = try await services.session.drainCapture(
+                archiveState: captureFailure == nil ? .recorded : .failed
+            ) {
                 await activityController.end(meetingId: meetingId)
             }
         } catch {
             stopFailure = error
             await activityController.end(meetingId: meetingId)
         }
+        if let stopFailure {
+            RecordingDiagnostics.log(stopFailure)
+            errorMessage = stopFailure.localizedDescription
+        }
+        // File and database durability never wait for ASR/diarization. Keep the
+        // processing/session fence, but release microphone ownership and busy UI.
+        isProcessingTranscript = true
+        audioArchiveSaved = pendingStop != nil
+        phase = .processing
+        startedAt = nil
+        level = .silence
+        services.audioOwnership.releaseCapture()
+        await library.reload()
         do {
             try await processing.finish()
+        } catch is RecordingSpeechUnavailable {
+            // A partial transcript is not a failed audio archive.
+            speechEndedEarly = true
         } catch {
             if stopFailure == nil { stopFailure = error }
         }
@@ -240,21 +301,29 @@ final class RecorderModel {
                     pendingStop,
                     as: stopFailure == nil ? .recorded : .failed
                 )
+                _ = try await MeetingRepository(services.database).refreshPrimaryLanguage(
+                    id: saved.id, deviceId: services.deviceId
+                )
                 await services.speakerAnalysis.enqueue(saved)
             } catch {
                 stopFailure = error
             }
         }
-        if let stopFailure { errorMessage = stopFailure.localizedDescription }
+        if let stopFailure {
+            RecordingDiagnostics.log(stopFailure)
+            errorMessage = stopFailure.localizedDescription
+        } else if speechEndedEarly {
+            errorMessage = RecordingSpeechUnavailable().localizedDescription
+        }
         startedAt = nil
         recordingMeetingId = nil
         captureFailure = nil
         accumulated = 0
         elapsed = 0
         level = .silence
-        phase = .idle
         services.audioOwnership.releaseCapture()
         await library.reload()
+        phase = .idle
     }
 
     private func startTicking() {
@@ -318,6 +387,7 @@ final class RecorderModel {
         switch event {
         case .interrupted:
             guard isActive else { return nil }
+            transcription.setLanguageSwitchingAllowed(false)
             phase = .paused
             level = .silence
             accumulated += Date().timeIntervalSince(startedAt ?? Date())
@@ -328,6 +398,7 @@ final class RecorderModel {
             if resumed {
                 startedAt = Date()
                 phase = .recording
+                transcription.setLanguageSwitchingAllowed(sceneIsActive)
                 noticeKind = nil
             } else {
                 noticeKind = .interrupted

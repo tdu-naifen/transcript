@@ -103,7 +103,12 @@ private struct ReadyView: View {
     }
 
     private var hasRecordingSession: Bool {
-        recorder.phase != .idle || isStartingRecording
+        recorder.phase != .idle || isStartingRecording || recorder.isProcessingTranscript
+    }
+
+    private var isCaptureActive: Bool {
+        services.audioOwnership.isCaptureReserved || isStartingRecording
+            || recorder.phase == .starting || recorder.isActive || recorder.phase == .stopping
     }
 
     var body: some View {
@@ -114,7 +119,7 @@ private struct ReadyView: View {
                         services: services,
                         library: library,
                         path: $homePath,
-                        isRecordingActive: { hasRecordingSession },
+                        isRecordingActive: { isCaptureActive },
                         macConnection: macConnection
                     )
                 }
@@ -123,7 +128,7 @@ private struct ReadyView: View {
                         model: library,
                         services: services,
                         path: $recordingsPath,
-                        isRecordingActive: { hasRecordingSession },
+                        isRecordingActive: { isCaptureActive },
                         macConnection: macConnection
                     )
                 }
@@ -152,11 +157,14 @@ private struct ReadyView: View {
         .overlay {
             if !isFloatingButtonHidden && !hasRecordingSession && !isRecordingExpanded && !isMeetingNamingPresented {
                 FloatingRecordButton(action: startRecording)
+                    .disabled(!recorder.canStartRecording || isStoppingRecording)
             }
         }
         .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.8), value: isRecordingExpanded)
         .task { macConnection.enablePairing() }
-        .onChange(of: scenePhase) { _, phase in
+        .onChange(of: scenePhase, initial: true) { _, phase in
+            services.speakerAnalysis.setActive(phase == .active)
+            recorder.sceneActivityChanged(isActive: phase == .active)
             if phase == .background { macConnection.suspendConnection() }
         }
         .onChange(of: services.speakerAnalysis.revision) { _, _ in
@@ -194,11 +202,19 @@ private struct ReadyView: View {
             } else if newPhase == .stopping && oldPhase != .stopping {
                 Task {
                     if activeMeeting == nil { await captureActiveMeeting() }
-                    presentMeetingNaming()
                 }
-            } else if newPhase == .idle && oldPhase == .stopping {
+            } else if newPhase == .idle && (oldPhase == .stopping || oldPhase == .processing) {
                 withAnimation(.snappy) { isRecordingExpanded = false }
                 Task { await library.reload() }
+            }
+        }
+        .onChange(of: recorder.audioArchiveSaved) { _, saved in
+            guard saved else { return }
+            withAnimation(.snappy) { isRecordingExpanded = false }
+            Task {
+                await captureActiveMeeting()
+                await library.reload()
+                presentMeetingNaming()
             }
         }
     }
@@ -206,14 +222,14 @@ private struct ReadyView: View {
     private func startRecording() {
         // Permission and startup both suspend before the model necessarily becomes busy.
         // Lock the root entry synchronously so a second tap cannot toggle the new session off.
-        guard recorder.phase == .idle, !isStartingRecording, !isStoppingRecording else { return }
+        guard recorder.canStartRecording, !isStartingRecording, !isStoppingRecording else { return }
         isStartingRecording = true
         activeMeeting = nil
         isRecordingExpanded = true
         Task {
             defer { isStartingRecording = false }
             await recorder.onAppear()
-            guard recorder.phase == .idle else { return }
+            guard recorder.canStartRecording else { return }
             await recorder.toggleRecording()
             await captureActiveMeeting()
         }
@@ -296,18 +312,31 @@ private struct RecordingMiniBar: View {
     let onExpand: () -> Void
     let onStop: () -> Void
 
+    private var statusLabel: String {
+        guard model.isProcessingTranscript else { return model.stateLabel }
+        return LocalizationManager.shared.text(
+            model.audioArchiveSaved ? "Audio saved. Finishing transcript…" : "Finishing transcript…",
+            table: "SpeakerProjection"
+        )
+    }
+
     var body: some View {
         HStack(spacing: 12) {
             Button(action: onExpand) {
                 HStack(spacing: 12) {
-                    Circle()
-                        .fill(model.isActive && model.phase != .paused ? Color.red : Color.secondary)
-                        .frame(width: 8, height: 8)
+                    if model.isProcessingTranscript && model.audioArchiveSaved {
+                        Image(systemName: "checkmark.circle").foregroundStyle(.secondary)
+                    } else {
+                        Circle()
+                            .fill(model.isActive && model.phase != .paused ? Color.red : Color.secondary)
+                            .frame(width: 8, height: 8)
+                    }
                     Text(Format.clock(model.elapsed))
                         .font(.subheadline.monospacedDigit().weight(.semibold))
-                    if model.isBusy {
+                    if model.isBusy || model.isProcessingTranscript {
                         ProgressView()
-                        Text(model.stateLabel).font(.caption)
+                        Text(statusLabel).font(.caption)
+                            .fixedSize(horizontal: false, vertical: true)
                     } else {
                         LevelMeterView(level: model.level, isActive: model.phase == .recording)
                             .accessibilityHidden(true)
@@ -319,7 +348,7 @@ private struct RecordingMiniBar: View {
                 .contentShape(Rectangle())
             }
             .accessibilityLabel("Expand recording")
-            .accessibilityValue("\(model.stateLabel), \(Format.clock(model.elapsed))")
+            .accessibilityValue("\(statusLabel), \(Format.clock(model.elapsed))")
             .accessibilityIdentifier("recordingMiniBar")
 
             Button(action: onStop) {

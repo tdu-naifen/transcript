@@ -1,0 +1,57 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Audio saved. Finishing transcript…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Audio saved. Finishing transcript…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "录音已保存，正在完成转写…"
+          }
+        }
+      }
+    },
+    "Finishing transcript…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Finishing transcript…"
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在完成转写…"
+          }
+        }
+      }
+    },
+    "Some recordings could not be recovered. Any existing audio is unchanged. Unlock your device and reopen the recording screen to retry." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Some recordings could not be recovered. Any existing audio is unchanged. Unlock your device and reopen the recording screen to retry."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "部分录音暂时无法恢复，现有音频文件未被更改。请解锁设备后重新打开录音页面重试。"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

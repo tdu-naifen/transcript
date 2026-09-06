@@ -20,6 +20,9 @@ protocol AppleFileTranscribing: Actor {
 
 /// Apple's analyzer consumes the existing capture stream; it never owns the microphone.
 actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
+    private struct StorageFailure: Error {
+        let underlying: any Error
+    }
     enum Failure: LocalizedError {
         case unavailable
         case unsupportedLanguage
@@ -38,7 +41,7 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
             case .invalidAudio:
                 String(localized: "The audio could not be converted for Apple transcription.", table: "AppleSpeech")
             case .resourcesNotReady:
-                String(localized: "Apple language resources are being prepared. This recording will save audio only; transcription will be available for the next recording.", table: "AppleSpeech")
+                RecordingLanguageText.resourcesNeeded
             }
         }
     }
@@ -49,6 +52,8 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
     private var locale: Locale?
     private var task: Task<Void, Never>?
     private var terminalFailure: (any Error)?
+    private var originMs = 0
+    private let streamID = UUID().uuidString
     private let stream: AsyncStream<ASRTranscriptEvent>
     private let continuation: AsyncStream<ASRTranscriptEvent>.Continuation
 
@@ -80,22 +85,55 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
             throw Failure.invalidAudio
         }
         let analyzer = SpeechAnalyzer(modules: [speech])
-        try await analyzer.prepareToAnalyze(in: format)
+        do {
+            try await analyzer.prepareToAnalyze(in: format)
+            try Task.checkCancellation()
+        } catch {
+            await analyzer.cancelAndFinishNow()
+            throw error
+        }
         self.speech = speech
         self.analyzer = analyzer
         self.format = format
         self.locale = locale
     }
 
-    static func installResources(locale requested: Locale) async throws {
+    static func installResources(
+        locale requested: Locale,
+        progress: @escaping @Sendable (Double?) async -> Void = { _ in }
+    ) async throws {
         guard SpeechTranscriber.isAvailable else { throw Failure.unavailable }
         guard let locale = await SpeechTranscriber.supportedLocale(equivalentTo: requested) else {
             throw Failure.unsupportedLanguage
         }
         let speech = SpeechTranscriber(locale: locale, preset: .timeIndexedProgressiveTranscription)
-        if let installation = try await AssetInventory.assetInstallationRequest(supporting: [speech]) {
-            try await installation.downloadAndInstall()
-        }
+        try await installIfNeeded(
+            isInstalled: { await AssetInventory.status(forModules: [speech]) == .installed },
+            install: {
+                if let installation = try await AssetInventory.assetInstallationRequest(supporting: [speech]) {
+                    let monitor = Task {
+                        while !Task.isCancelled {
+                            let value = installation.progress
+                            await progress(value.totalUnitCount > 0 ? value.fractionCompleted : nil)
+                            try? await Task.sleep(for: .milliseconds(250))
+                        }
+                    }
+                    defer { monitor.cancel() }
+                    try await installation.downloadAndInstall()
+                }
+            }
+        )
+    }
+
+    static func installIfNeeded(
+        isInstalled: @Sendable () async -> Bool,
+        install: @Sendable () async throws -> Void
+    ) async throws {
+        if await isInstalled() { return }
+        try Task.checkCancellation()
+        try await install()
+        try Task.checkCancellation()
+        guard await isInstalled() else { throw Failure.resourcesNotReady }
     }
 
     func run(chunks: AsyncStream<AudioChunk>, meetingID: String, services: AppleTranscriptStore) {
@@ -147,6 +185,9 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
 
     private func consume(_ chunks: AsyncStream<AudioChunk>, meetingID: String, store: AppleTranscriptStore) async {
         defer {
+            self.analyzer = nil
+            self.speech = nil
+            self.format = nil
             continuation.yield(.finished)
             continuation.finish()
         }
@@ -161,10 +202,12 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
                 let segment = Self.segment(
                     text: String(result.text.characters),
                     range: result.range, isFinal: result.isFinal,
-                    meetingID: meetingID, locale: locale.identifier
+                    meetingID: meetingID, locale: locale.identifier,
+                    offsetMs: originMs, streamID: streamID
                 )
                 if result.isFinal, !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    try await store.append(segment)
+                    do { try await store.append(segment) }
+                    catch { throw StorageFailure(underlying: error) }
                 }
                 continuation.yield(.segment(segment))
             }
@@ -173,8 +216,13 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
             let converter = try AppleAudioConverter(outputFormat: format)
             try await analyzer.start(inputSequence: inputs)
             continuation.yield(.ready(.init(language: .locale(locale.identifier), loadSeconds: 0)))
+            var hasOrigin = false
             for await chunk in chunks {
                 try Task.checkCancellation()
+                if !hasOrigin {
+                    originMs = chunk.startMs
+                    hasOrigin = true
+                }
                 if let buffer = try converter.convert(chunk) {
                     inputContinuation.yield(AnalyzerInput(buffer: buffer))
                 }
@@ -191,23 +239,28 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
             inputContinuation.finish()
             collector.cancel()
             await analyzer.cancelAndFinishNow()
-            _ = await collector.result
-            if !Task.isCancelled { fail(error) }
+            let result = await collector.result
+            if !Task.isCancelled {
+                if case .failure(let storage as StorageFailure) = result { fail(storage) }
+                else { fail(error) }
+            }
         }
     }
 
     private func fail(_ error: any Error) {
-        terminalFailure = error
-        continuation.yield(.failed(error.localizedDescription))
+        RecordingDiagnostics.log(error)
+        terminalFailure = (error as? StorageFailure)?.underlying ?? RecordingSpeechUnavailable()
+        continuation.yield(.failed(RecordingLanguageText.speechFailure))
     }
 
     nonisolated static func segment(
-        text: String, range: CMTimeRange, isFinal: Bool, meetingID: String, locale: String
+        text: String, range: CMTimeRange, isFinal: Bool, meetingID: String, locale: String,
+        offsetMs: Int = 0, streamID: String? = nil
     ) -> ASRSegment {
-        let start = max(0, Int((range.start.seconds * 1_000).rounded()))
-        let end = max(start, Int((CMTimeRangeGetEnd(range).seconds * 1_000).rounded()))
+        let start = offsetMs + max(0, Int((range.start.seconds * 1_000).rounded()))
+        let end = max(start, offsetMs + Int((CMTimeRangeGetEnd(range).seconds * 1_000).rounded()))
         return ASRSegment(
-            id: "\(meetingID)-apple-\(start)", text: text, startMs: start, endMs: end,
+            id: "\(meetingID)-apple-\(streamID.map { "\($0)-" } ?? "")\(start)", text: text, startMs: start, endMs: end,
             localeIdentifier: locale, isFinal: isFinal
         )
     }

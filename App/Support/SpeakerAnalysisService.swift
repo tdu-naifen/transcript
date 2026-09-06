@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import TranscriptCore
+import UIKit
 
 @MainActor
 @Observable
@@ -23,9 +24,11 @@ final class SpeakerAnalysisService {
     private let fetchNext: @Sendable () async throws -> String?
     private var wakeup = UUID()
     @ObservationIgnored private var worker: Task<Void, Never>?
+    private var isActive: Bool
 
-    init(servicesDatabase: AppDatabase, deviceID: String, store: AudioFileStore, downloader: ASRModelDownloader, enabled: Bool, engine: (any SpeakerAnalyzing)? = nil, nextPending: (@Sendable () async throws -> String?)? = nil) {
+    init(servicesDatabase: AppDatabase, deviceID: String, store: AudioFileStore, downloader: ASRModelDownloader, enabled: Bool, engine: (any SpeakerAnalyzing)? = nil, nextPending: (@Sendable () async throws -> String?)? = nil, isActive: Bool? = nil) {
         self.enabled = enabled
+        self.isActive = isActive ?? (UIApplication.shared.applicationState == .active)
         let jobs = SpeakerAnalysisRepository(servicesDatabase)
         self.jobs = jobs
         self.fetchNext = nextPending ?? { try await jobs.nextPending() }
@@ -36,6 +39,12 @@ final class SpeakerAnalysisService {
 
     func waitForIdle() async { await worker?.value }
 
+    func setActive(_ active: Bool) {
+        isActive = active
+        if active { resume() }
+        else { worker?.cancel() }
+    }
+
     func enqueue(_ meeting: Meeting, retry: Bool = false) async {
         guard enabled, meeting.audioFileName != nil, meeting.state != .recording else { return }
         do {
@@ -44,23 +53,30 @@ final class SpeakerAnalysisService {
             if try await jobs.state(meetingID: meeting.id) == "complete" {
                 states[meeting.id] = .complete
             } else if let reason = try await jobs.failure(meetingID: meeting.id) {
-                states[meeting.id] = .failed(reason)
+                RecordingDiagnostics.log(reason)
+                states[meeting.id] = .failed(RecordingLanguageText.speakerFailure)
             } else {
                 states[meeting.id] = .preparing
             }
             resume()
         } catch {
-            states[meeting.id] = .failed(error.localizedDescription)
-            errorMessage = error.localizedDescription
+            RecordingDiagnostics.log(error)
+            states[meeting.id] = .failed(RecordingLanguageText.speakerFailure)
+            errorMessage = RecordingLanguageText.speakerFailure
         }
     }
 
     func resume() {
-        guard enabled, worker == nil else { return }
+        guard enabled, isActive, worker == nil else { return }
         worker = Task {
-            defer { worker = nil }
+            defer {
+                worker = nil
+                if Task.isCancelled, isActive { resume() }
+            }
             do {
                 while true {
+                    try Task.checkCancellation()
+                    guard isActive else { break }
                     let observedWakeup = wakeup
                     guard let id = try await fetchNext() else {
                         if observedWakeup != wakeup { continue }
@@ -75,6 +91,8 @@ final class SpeakerAnalysisService {
                             throw CocoaError(.fileNoSuchFile)
                         }
                         let url = store.directory.appendingPathComponent(name)
+                        try Task.checkCancellation()
+                        guard isActive else { throw CancellationError() }
                         try await engine.run(meetingID: id, audioURL: url) { [weak self] stage in
                             await MainActor.run {
                                 self?.states[id] = stage == .loadingAudio ? .preparing : .analyzing
@@ -83,13 +101,31 @@ final class SpeakerAnalysisService {
                         states[id] = .complete
                         revision += 1
                     } catch {
+                        if Task.isCancelled || error is CancellationError {
+                            // The engine drains its child workers before returning. Never
+                            // overlap generations or re-enroll a completed voiceprint pass.
+                            let jobs = self.jobs
+                            let deferred = try await Task {
+                                guard try await jobs.state(meetingID: id) != "complete" else { return false }
+                                try await jobs.setState(meetingID: id, state: "pending")
+                                return true
+                            }.value
+                            if deferred {
+                                states[id] = nil
+                            }
+                            break
+                        }
+                        RecordingDiagnostics.log(error)
                         let reason = error.localizedDescription
-                        states[id] = .failed(reason)
+                        states[id] = .failed(RecordingLanguageText.speakerFailure)
                         try await jobs.setState(meetingID: id, state: "failed", error: reason)
                     }
                 }
             } catch {
-                errorMessage = error.localizedDescription
+                if !(error is CancellationError) {
+                    RecordingDiagnostics.log(error)
+                    errorMessage = RecordingLanguageText.speakerFailure
+                }
             }
         }
     }

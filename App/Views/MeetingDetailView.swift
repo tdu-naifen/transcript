@@ -174,7 +174,8 @@ struct MeetingDetailView: View {
         .onChange(of: model.renamingSpeakerId) { _, speakerId in
             renameText = speakerId.flatMap { model.speakersById[$0]?.resolvedName } ?? ""
         }
-        .task(id: model.speakerAnalysis.revision) { await model.load() }
+        .task { await model.observe() }
+        .task { await model.observeRecordingState() }
         .onDisappear {
             model.playback.stop()
             model.cancelReprocessing()
@@ -188,10 +189,12 @@ struct MeetingDetailView: View {
     private var participantsSummaryText: String {
         let localization = LocalizationManager.shared
         let count = model.participants.count
-        let peopleText = count == 1
-            ? localization.localized("1 participant")
-            : localization.localized("\(count) participants")
-        return "\(peopleText) · \(Format.duration(milliseconds: model.meeting.durationMs))"
+        let peopleText = count == 0
+            ? localization.text("Speakers not yet assigned", table: "SpeakerProjection")
+            : count == 1
+                ? localization.localized("1 participant")
+                : localization.localized("\(count) participants")
+        return "\(peopleText) · \(Format.duration(milliseconds: model.displayDurationMs))"
     }
 
     private var meetingOptions: some View {
@@ -324,7 +327,13 @@ struct MeetingDetailView: View {
 
     private var participantsHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
-            if let state = model.speakerAnalysis.states[model.meeting.id] {
+            if let status = model.recordingStatusText {
+                Text(status)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("meetingRecordingStatus")
+            }
+            if let state = model.resolvedSpeakerAnalysisState {
                 switch state {
                 case .preparing, .analyzing:
                     HStack {
@@ -335,9 +344,12 @@ struct MeetingDetailView: View {
                     }
                 case .failed(let message):
                     Text(message).font(.footnote).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("speakerAnalysisFailure")
                     Button {
-                        Task { await model.speakerAnalysis.enqueue(model.meeting, retry: true) }
+                        Task { await model.retrySpeakerAnalysis() }
                     } label: { Text("Retry animal recognition", tableName: "AppleSpeech") }
+                    .disabled(!model.canRetrySpeakerAnalysis)
+                    .accessibilityIdentifier("speakerAnalysisRetry")
                 case .complete: EmptyView()
                 }
             }
@@ -438,7 +450,8 @@ private struct MeetingTranscriptView<Header: View>: View {
                             ForEach(model.utterances) { utterance in
                                 TranscriptRow(
                                     utterance: utterance,
-                                    speaker: utterance.speakerId.flatMap { model.speakersById[$0] },
+                                    speaker: model.speaker(for: utterance),
+                                    unresolvedSpeakerText: model.speakerIdentificationProgress.text,
                                     isCurrent: utterance.id == currentID,
                                     onTapLine: {
                                         followsPlayback = true
@@ -453,13 +466,13 @@ private struct MeetingTranscriptView<Header: View>: View {
                     }
                 }
                 .padding(.top, 12)
-                .padding(.bottom, followsPlayback ? 24 : 76)
+                .padding(.bottom, 24)
             }
             .accessibilityIdentifier("meetingTranscriptScrollView")
             .onScrollPhaseChange { _, phase in
                 if phase == .interacting { followsPlayback = false }
             }
-            .overlay(alignment: .bottomTrailing) {
+            .safeAreaInset(edge: .bottom, alignment: .trailing, spacing: 0) {
                 if !followsPlayback, currentID != nil {
                     Button {
                         followsPlayback = true
@@ -652,6 +665,7 @@ private struct ParticipantRow: View {
 private struct TranscriptRow: View {
     let utterance: Utterance
     let speaker: Speaker?
+    let unresolvedSpeakerText: String
     let isCurrent: Bool
     let onTapLine: () -> Void
     let onTapName: (String) -> Void
@@ -676,7 +690,7 @@ private struct TranscriptRow: View {
                 .buttonStyle(.plain)
                 .accessibilityHint(Text(acceptanceText("Edit speaker name")))
             } else {
-                Text(acceptanceText("Unknown speaker"))
+                Text(unresolvedSpeakerText)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(.secondary)
             }
@@ -790,7 +804,7 @@ private struct SpeakerInsightsView: View {
                         .accessibilityLabel("\(acceptanceText("Edit speaker name")): \(participant.resolvedName)")
                         .accessibilityIdentifier("speakerRenameButton.\(participant.id)")
                         SpeakerTimeline(
-                                    meetingDurationMs: model.meeting.durationMs,
+                                    meetingDurationMs: model.displayDurationMs,
                                     utterances: utterancesBySpeaker[participant.id] ?? [],
                                     color: Color.speaker(colorIndex: participant.colorIndex),
                                     playback: model.playback,
@@ -841,11 +855,11 @@ private struct SpeakerInsightsView: View {
                 .fixedSize()
             Spacer()
             if includesMidpoint {
-                Text(Format.clock(Double(model.meeting.durationMs) / 2_000))
+                Text(Format.clock(Double(model.displayDurationMs) / 2_000))
                     .fixedSize()
                 Spacer()
             }
-            Text(Format.clock(Double(model.meeting.durationMs) / 1_000))
+            Text(Format.clock(Double(model.displayDurationMs) / 1_000))
                 .fixedSize()
         }
     }

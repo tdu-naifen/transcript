@@ -32,8 +32,12 @@ final class MeetingDetailModel {
     private(set) var loadFailure: String?
     private(set) var renamingSpeakerId: String?
     private(set) var reprocessingState: ReprocessingState = .idle
+    private(set) var speakerProjection = SpeakerProjection.empty
+    private(set) var sessionPhase: RecordingSession.Phase = .idle
+    private(set) var isCurrentRecording = false
 
-    private let utteranceRepository: UtteranceRepository
+    private let database: AppDatabase
+    private let session: RecordingSession
     private let speakerRepository: SpeakerRepository
     private let meetingRepository: MeetingRepository
     private let meetingReprocessor: MeetingReprocessingCoordinator
@@ -45,7 +49,9 @@ final class MeetingDetailModel {
     private let deviceId: String
     private var reprocessingTask: Task<Void, Never>?
     private var pendingInitialSeekMs: Int?
-    private var requestedUnknownBackfill = false
+    private var requestedSpeakerAnalysis = false
+    private var isRequestingSpeakerAnalysis = false
+    private var isRetryingSpeakerAnalysis = false
 
     init(
         meeting: Meeting,
@@ -53,7 +59,8 @@ final class MeetingDetailModel {
         services: AppServices,
         isRecordingActive: Bool = false,
         initialSeekMs: Int? = nil,
-        recordingIsActive: (@MainActor () -> Bool)? = nil
+        recordingIsActive: (@MainActor () -> Bool)? = nil,
+        speakerAnalysisService: SpeakerAnalysisService? = nil
     ) {
         self.pendingInitialSeekMs = initialSeekMs
         self.meeting = meeting
@@ -64,11 +71,12 @@ final class MeetingDetailModel {
             recordingIsActive: recordingIsActive,
             audioOwnership: services.audioOwnership
         )
-        self.utteranceRepository = UtteranceRepository(services.database)
+        self.database = services.database
+        self.session = services.session
         self.speakerRepository = SpeakerRepository(services.database)
         self.meetingRepository = MeetingRepository(services.database)
         self.meetingReprocessor = services.meetingReprocessor
-        self.speakerAnalysis = services.speakerAnalysis
+        self.speakerAnalysis = speakerAnalysisService ?? services.speakerAnalysis
         self.audioURL = audioURL
         self.audioStore = services.store
         self.audioOwnership = services.audioOwnership
@@ -97,36 +105,102 @@ final class MeetingDetailModel {
         return false
     }
 
+    var displayDurationMs: Int {
+        max(meeting.durationMs, speakerProjection.extentMs)
+    }
+
+    var speakerIdentificationProgress: SpeakerProjection.IdentificationProgress {
+        if let progress = speakerProjection.identificationProgress { return progress }
+        switch speakerAnalysis.states[meeting.id] {
+        case .preparing: return .pending
+        case .analyzing: return .identifying
+        default: return .unassigned
+        }
+    }
+
+    var resolvedSpeakerAnalysisState: SpeakerAnalysisService.State? {
+        switch speakerProjection.analysisState {
+        case "failed": return .failed(RecordingLanguageText.speakerFailure)
+        case "complete": return .complete
+        case "pending", "rerun": return .preparing
+        case "running":
+            if speakerAnalysis.states[meeting.id] == .preparing { return .preparing }
+            return .analyzing
+        default: return speakerAnalysis.states[meeting.id]
+        }
+    }
+
+    var canRetrySpeakerAnalysis: Bool {
+        guard case .failed = resolvedSpeakerAnalysisState else { return false }
+        return !isRetryingSpeakerAnalysis && !isCurrentRecording
+    }
+
+    func retrySpeakerAnalysis() async {
+        guard canRetrySpeakerAnalysis else { return }
+        isRetryingSpeakerAnalysis = true
+        defer { isRetryingSpeakerAnalysis = false }
+        guard await session.activeMeetingId != meeting.id else { return }
+        await speakerAnalysis.enqueue(meeting, retry: true)
+        await load()
+    }
+
+    var recordingStatusText: String? {
+        let key: String
+        if isCurrentRecording {
+            switch sessionPhase {
+            case .recording: key = "Recording in progress"
+            case .paused: key = "Recording paused"
+            case .idle:
+                key = speakerProjection.hasDurableArchive
+                    ? "Audio saved. Finishing transcript…"
+                    : "Finishing recording…"
+            }
+        } else if meeting.state == .recording {
+            key = "Recording is not finalized"
+        } else if meeting.durationMs == 0, displayDurationMs > 0 {
+            key = "Duration shown from available transcript"
+        } else {
+            return nil
+        }
+        return LocalizationManager.shared.text(key, table: "SpeakerProjection")
+    }
+
+    func speaker(for utterance: Utterance) -> Speaker? {
+        speakerProjection.speaker(utteranceID: utterance.id)
+    }
+
+    func observe() async {
+        await load()
+        do {
+            try await SpeakerProjection.observe(database: database, meetingID: meeting.id) { [weak self] snapshot in
+                self?.applyProjection(snapshot)
+            }
+        } catch is CancellationError {
+        } catch {
+            loadFailure = String(describing: error)
+        }
+    }
+
+    /// Session state is actor-owned, not Observable. Poll only while this screen is
+    /// visible; this neither subscribes to microphone samples nor acquires audio.
+    func observeRecordingState() async {
+        while !Task.isCancelled {
+            let id = await session.activeMeetingId
+            let phase = await session.currentPhase
+            isCurrentRecording = id == meeting.id
+            sessionPhase = isCurrentRecording ? phase : .idle
+            if !isCurrentRecording { await enqueueSpeakerAnalysisIfReady() }
+            do { try await Task.sleep(for: .milliseconds(500)) }
+            catch { return }
+        }
+    }
+
     func load() async {
         do {
-            async let fetchedUtterances = utteranceRepository.fetch(meetingId: meeting.id)
-            async let fetchedSpeakers = speakerRepository.speakers(inMeeting: meeting.id)
-            async let fetchedMeeting = meetingRepository.fetch(id: meeting.id)
-            let (utterances, speakers, meeting) = try await (
-                fetchedUtterances, fetchedSpeakers, fetchedMeeting
-            )
+            let snapshot = try await SpeakerProjection.fetch(database: database, meetingID: meeting.id)
             try Task.checkCancellation()
-            self.utterances = utterances
-            if let meeting {
-                self.meeting = meeting
-                let resolvedURL = meeting.audioFileName.map { audioStore.directory.appendingPathComponent($0) } ?? audioURL
-                if resolvedURL != audioURL || playback.durationMs != meeting.durationMs {
-                    playback.stop()
-                    audioURL = resolvedURL
-                    playback = AudioPlaybackModel(
-                        url: resolvedURL, durationMs: meeting.durationMs,
-                        recordingIsActive: recordingIsActive, audioOwnership: audioOwnership
-                    )
-                }
-            }
-            applySpeakers(speakers.map(\.speaker))
-            loadFailure = nil
-            if self.meeting.audioFileName != nil,
-               speakers.isEmpty || utterances.contains(where: { $0.speakerId == nil }) {
-                let needsBackfill = utterances.contains(where: { $0.speakerId == nil }) && !requestedUnknownBackfill
-                requestedUnknownBackfill = true
-                await speakerAnalysis.enqueue(self.meeting, retry: needsBackfill)
-            }
+            applyProjection(snapshot)
+            await enqueueSpeakerAnalysisIfReady()
             // Consume once after data is ready, not on every appearance or reload.
             if let initialSeekMs = pendingInitialSeekMs {
                 pendingInitialSeekMs = nil
@@ -137,6 +211,49 @@ final class MeetingDetailModel {
         } catch {
             loadFailure = String(describing: error)
         }
+    }
+
+    private func enqueueSpeakerAnalysisIfReady() async {
+        guard !requestedSpeakerAnalysis, !isRequestingSpeakerAnalysis,
+              meeting.audioFileName != nil, speakerProjection.analysisState == nil else { return }
+        isRequestingSpeakerAnalysis = true
+        defer { isRequestingSpeakerAnalysis = false }
+        // A durable archive can be played while ASR still drains. Only publication
+        // releases the transcript fence; capture's idle phase is not sufficient.
+        guard await session.activeMeetingId != meeting.id else { return }
+        do {
+            let snapshot = try await SpeakerProjection.fetch(database: database, meetingID: meeting.id)
+            try Task.checkCancellation()
+            guard let saved = snapshot.meeting, saved.state != .recording, saved.audioFileName != nil,
+                  snapshot.analysisState == nil,
+                  snapshot.observedSpeakers.isEmpty || snapshot.utterances.contains(where: { $0.speakerId == nil })
+            else { return }
+            requestedSpeakerAnalysis = true
+            // Existing jobs, including deliberately unresolved completed results,
+            // are never retried merely because their detail screen was opened.
+            await speakerAnalysis.enqueue(saved)
+        } catch is CancellationError {
+        } catch {
+            RecordingDiagnostics.log(error)
+        }
+    }
+
+    private func applyProjection(_ snapshot: SpeakerProjection) {
+        speakerProjection = snapshot
+        utterances = snapshot.utterances
+        if let meeting = snapshot.meeting { self.meeting = meeting }
+        let resolvedURL = meeting.audioFileName.map { audioStore.directory.appendingPathComponent($0) } ?? audioURL
+        let playbackDuration = meeting.durationMs > 0 ? meeting.durationMs : displayDurationMs
+        if resolvedURL != audioURL || playback.durationMs != playbackDuration {
+            playback.stop()
+            audioURL = resolvedURL
+            playback = AudioPlaybackModel(
+                url: resolvedURL, durationMs: playbackDuration,
+                recordingIsActive: recordingIsActive, audioOwnership: audioOwnership
+            )
+        }
+        applySpeakers(snapshot.speakers)
+        loadFailure = nil
     }
 
     /// Core interaction (UI.md §3b): tapping a transcript line jumps playback there.
@@ -260,8 +377,8 @@ final class MeetingDetailModel {
             try await speakerRepository.rename(
                 id: speakerId, displayName: trimmed.isEmpty ? nil : trimmed, deviceId: deviceId
             )
-            let speakers = try await speakerRepository.speakers(inMeeting: meeting.id)
-            applySpeakers(speakers.map(\.speaker))
+            let snapshot = try await SpeakerProjection.fetch(database: database, meetingID: meeting.id)
+            applyProjection(snapshot)
         } catch {
             loadFailure = String(describing: error)
         }
@@ -272,7 +389,8 @@ final class MeetingDetailModel {
         let percentages = SpeakerTalkShare.percentages(
             utterances: utterances, speakerIds: speakers.map(\.id)
         )
-        participants = speakers.map { speaker in
+        let observedIDs = Set(utterances.filter { $0.endMs > $0.startMs }.compactMap(\.speakerId))
+        participants = speakers.filter { observedIDs.contains($0.id) }.map { speaker in
             ParticipantSummary(
                 id: speaker.id,
                 resolvedName: speaker.resolvedName,
