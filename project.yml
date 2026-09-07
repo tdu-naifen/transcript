@@ -37,6 +37,9 @@ targets:
       - path: MacApp
       - path: Shared/Pairing
       - path: Shared/Sync/MeetingCopyWire.swift
+      - path: Shared/AutomaticSyncUI
+      - path: App/Support/AutomaticSyncChannel.swift
+      - path: App/Support/AutomaticSyncResourceChannel.swift
     dependencies:
       - package: TranscriptCore
         product: TranscriptCore
@@ -101,6 +104,10 @@ targets:
       - path: App
       - path: Shared/Pairing
       - path: Shared/Sync
+        excludes:
+          - AutomaticSyncWire.swift
+          - AutomaticSyncResourceWire.swift
+      - path: Shared/AutomaticSyncUI
     dependencies:
       - package: TranscriptCore
         product: TranscriptCore
@@ -194,6 +201,8 @@ schemes:
       config: Debug
     test:
       config: Debug
+      environmentVariables:
+        TRANSCRIPT_MAC_TEST_RUN_ID: "$(TRANSCRIPT_MAC_TEST_RUN_ID)"
       targets:
         - TranscriptMacTests
         - TranscriptMacUITests

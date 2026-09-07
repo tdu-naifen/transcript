@@ -256,7 +256,7 @@ final class MacMeetingCopyConnectionTests: XCTestCase {
         _ = try await rpc(chunk(fixture.operation, asset: .audio, offset: 0,
                                 bytes: Data(fixture.audio.prefix(Wire.chunkLimit))), client)
         XCTAssertNotNil(environment.controller.progress)
-        environment.harness.server.unpair(try XCTUnwrap(environment.harness.server.connectedPeer))
+        await environment.harness.server.unpair(try XCTUnwrap(environment.harness.server.connectedPeer))
         do {
             _ = try await client.receive()
             XCTFail("Unpair must close the authenticated receiving socket")

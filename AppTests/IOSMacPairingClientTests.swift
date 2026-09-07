@@ -1,5 +1,6 @@
 import CryptoKit
 import Network
+import TranscriptCore
 import XCTest
 @testable import Transcript
 
@@ -37,11 +38,13 @@ final class IOSMacPairingClientTests: XCTestCase {
         await model.perform(.selectDevice(discovery.device.id))
         XCTAssertNil(model.pendingAction, "Socket negotiation cannot occupy the model action gate")
         try await pairingEventually { client.isAwaitingApproval }
+        XCTAssertEqual(client.networkStage, .identityVerified)
         guard case .pairing(let pairing) = model.connection else { return XCTFail("Expected comparison UI") }
         XCTAssertFalse(pairing.confirmedOnPhone)
         XCTAssertFalse(pairing.confirmedOnMac)
         await model.perform(.confirmPairing)
         try await pairingEventually { model.isConnected }
+        XCTAssertEqual(client.networkStage, .authenticated)
         XCTAssertFalse(model.supportsMeetingTransfer)
         XCTAssertNotNil(model.submissionBlockReason(meetingID: "local-meeting"))
         XCTAssertTrue(model.jobs.isEmpty)
@@ -50,7 +53,15 @@ final class IOSMacPairingClientTests: XCTestCase {
         XCTAssertTrue(model.isConnected)
         try await pairingEventually { heartbeatReceived }
 
+        let database = try AppDatabase.inMemory()
+        model.installAutomaticSync(database: database)
+        let repository = AutomaticSyncRepository(database)
+        let peerID = AutomaticSyncChannel.peerID(try XCTUnwrap(model.automaticSyncPeer))
+        try await repository.configure(peerID: peerID, enabled: true, voiceprints: .allowed)
         await model.perform(.unpair)
+        let revokedStatus = try await repository.status(peerID: peerID)
+        XCTAssertFalse(revokedStatus.enabled)
+        XCTAssertEqual(revokedStatus.voiceprints, .revoked)
         XCTAssertNil(client.pairedPeer)
         discovery.endpointToPublish = try await pendingServer.start()
         await model.perform(.discover)
@@ -218,9 +229,11 @@ final class IOSMacPairingClientTests: XCTestCase {
         connection.betterPathUpdateHandler?(false)
         try await Task.sleep(for: .milliseconds(30))
         XCTAssertFalse(client.isConnected, "Network readiness is not authentication or bilateral approval")
+        XCTAssertEqual(client.networkStage, .identityVerified, "A late ready callback must not overwrite the verified boundary")
         XCTAssertTrue(store.saved.isEmpty)
         connection.stateUpdateHandler?(.waiting(.posix(.ENETDOWN)))
         try await pairingEventually { client.isFailed && closed }
+        XCTAssertEqual(client.networkStage, .identityVerified, "Retain the failing stage after closing the socket")
         XCTAssertNil(connection.stateUpdateHandler)
         XCTAssertNil(connection.viabilityUpdateHandler)
         XCTAssertNil(connection.pathUpdateHandler)
@@ -551,7 +564,7 @@ extension IOSMacPairingClient {
 enum PairingTestError: Error { case timeout, storage, unexpectedMessage }
 
 @MainActor
-private final class PairingDiscoveryProbe: MacDiscovering {
+final class PairingDiscoveryProbe: MacDiscovering {
     let device = MacConnectionModel.Device(id: "test-candidate", name: "Untrusted Bonjour label")
     var onUpdate: (@MainActor (MacDiscoveryUpdate) -> Void)?
     var endpointToPublish: NWEndpoint

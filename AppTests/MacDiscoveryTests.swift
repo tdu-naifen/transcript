@@ -68,9 +68,9 @@ final class MacDiscoveryTests: XCTestCase {
         let prefix = "Transcript-TXT-\(UUID().uuidString)"
         let names = ["\(prefix)-supported", "\(prefix)-absent", "\(prefix)-wrong"]
         let records: [Data?] = [
-            NetService.data(fromTXTRecord: ["meeting-copy": Data("2".utf8)]),
+            NetService.data(fromTXTRecord: ["meeting-copy": Data("2".utf8), "automatic-sync": Data("1".utf8)]),
             nil,
-            NetService.data(fromTXTRecord: ["meeting-copy": Data("1".utf8)])
+            NetService.data(fromTXTRecord: ["meeting-copy": Data("1".utf8), "automatic-sync": Data("2".utf8)])
         ]
         let listeners = try names.map { _ in try NWListener(using: .tcp, on: .any) }
         defer { listeners.forEach { $0.cancel() } }
@@ -122,6 +122,8 @@ final class MacDiscoveryTests: XCTestCase {
         XCTAssertTrue(supported.meetingCopyProbeHint, "Actual meeting-copy=2 TXT must enable the discovery hint")
         for device in candidates {
             XCTAssertEqual(device.meetingCopyProbeHint, device.name == names[0])
+            XCTAssertEqual(device.automaticSyncProbeHint, device.name == names[0],
+                           "Only the exact new protocol TXT hint may permit its authenticated probe")
             guard case .service(let name, let type, let domain, let interface) = discovery.endpoint(for: device.id) else {
                 return XCTFail("The actual discovered Network endpoint must be retained")
             }

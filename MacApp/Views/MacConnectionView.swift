@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import TranscriptCore
 
 struct MacConnectionView: View {
     @Environment(MacWorkspace.self) private var workspace
@@ -7,6 +8,8 @@ struct MacConnectionView: View {
     @Environment(\.colorSchemeContrast) private var contrast
     @State private var settingsError: String?
     @State private var peerToUnpair: MacPairedDevice?
+    @State private var syncRepository: AutomaticSyncRepository?
+    @State private var syncStorageError: String?
 
     private var service: MacBonjourService { workspace.bonjour }
     private var tint: Color { MacTheme.tint(scheme: scheme, contrast: contrast) }
@@ -46,9 +49,7 @@ struct MacConnectionView: View {
                         title: service.pairing.isConnected ? "Authenticated connection" : "Not connected",
                         color: service.pairing.isConnected ? .green : .red
                     )
-                    Text(workspace.meetingCopy.canReceive
-                         ? "Meeting receiving is enabled. Send or retry explicitly from your iPhone."
-                         : "Enable meeting receiving below to accept copies from your paired iPhone.")
+                    Text("Connection, synchronization and processing are separate. Review this device's permissions below.", tableName: "AutomaticSync")
                     .font(.caption).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
@@ -66,6 +67,14 @@ struct MacConnectionView: View {
                     }
                 }
                 pairingControls
+                AutomaticSyncProgressView(
+                    sending: service.pairing.automaticSyncSending, progress: service.pairing.automaticSyncProgress
+                )
+                if let problem = service.pairing.automaticSyncProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange).textSelection(.enabled)
+                }
+                automaticSyncControls
                 receivingControls
                 instruction(1, title: "Open Transcript on your iPhone",
                             detail: "Go to Home → Connection and choose Find a Mac. Keep Wi-Fi enabled on both devices.")
@@ -76,7 +85,7 @@ struct MacConnectionView: View {
                         .font(.headline)
                     Text("Trusted device identities are stored in Keychain. Reconnection verifies the saved identity without asking you to compare another code.")
                         .foregroundStyle(.secondary)
-                    Text("Meeting copies include audio and transcript text, not voiceprints. Existing meetings are never overwritten. Processing, result return and automatic sync are not included.")
+                    Text("Legacy immutable copies include audio and transcript text, not voiceprints or later edits. Automatic synchronization uses a separately authorized, versioned protocol.", tableName: "AutomaticSync")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 MacInfoCard {
@@ -100,6 +109,7 @@ struct MacConnectionView: View {
             .frame(maxWidth: .infinity)
         }
         .navigationTitle("Connection")
+        .task { await prepareSyncSettings() }
         .alert("Unable to open System Settings", isPresented: Binding(
             get: { settingsError != nil },
             set: { if !$0 { settingsError = nil } }
@@ -113,7 +123,7 @@ struct MacConnectionView: View {
             set: { if !$0 { peerToUnpair = nil } }
         )) {
             Button("Unpair", role: .destructive) {
-                if let peerToUnpair { service.pairing.unpair(peerToUnpair) }
+                if let peerToUnpair { Task { await service.pairing.unpair(peerToUnpair) } }
                 peerToUnpair = nil
             }
             Button("Cancel", role: .cancel) { peerToUnpair = nil }
@@ -122,8 +132,46 @@ struct MacConnectionView: View {
         }
     }
 
+    @ViewBuilder private var automaticSyncControls: some View {
+        if !service.pairing.peers.isEmpty || syncStorageError != nil {
+            MacInfoCard {
+                if let syncRepository {
+                    ForEach(service.pairing.peers) { peer in
+                        Text(peer.name).font(.headline)
+                        AutomaticSyncSettingsView(
+                            repository: syncRepository, peerID: AutomaticSyncChannel.peerID(peer),
+                            setEnabled: { try await service.pairing.setAutomaticSyncEnabled($0, for: peer) },
+                            setVoiceprintConsent: { try await service.pairing.setVoiceprintSyncConsent($0, for: peer) }
+                        )
+                    }
+                }
+                if let syncStorageError {
+                    Label(syncStorageError, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange)
+                    Button {
+                        Task { await prepareSyncSettings() }
+                    } label: {
+                        Text("Retry", tableName: "AutomaticSync")
+                    }
+                }
+            }
+        }
+    }
+
+    private func prepareSyncSettings() async {
+        await workspace.startServices()
+        do {
+            let context = try await workspace.library.processingContext()
+            syncRepository = AutomaticSyncRepository(context.database)
+            syncStorageError = nil
+        } catch {
+            syncStorageError = error.localizedDescription
+        }
+    }
+
     private var receivingControls: some View {
         MacInfoCard {
+            Text("Legacy immutable copies", tableName: "AutomaticSync").font(.headline)
             Toggle("Allow meeting copies from paired devices", isOn: Binding(
                 get: { workspace.meetingCopy.isEnabled },
                 set: { workspace.setMeetingCopyEnabled($0) }

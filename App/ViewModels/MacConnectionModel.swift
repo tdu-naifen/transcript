@@ -13,6 +13,8 @@ final class MacConnectionModel {
         let id: String
         let name: String
         var meetingCopyProbeHint = false
+        var automaticSyncProbeHint = false
+        var automaticSyncResourcesProbeHint = false
     }
 
     struct Pairing: Equatable {
@@ -122,6 +124,16 @@ final class MacConnectionModel {
     private(set) var discoveryTimedOut = false
     private(set) var trustedDevice: Device?
     private(set) var supportsMeetingTransfer = false
+    private(set) var automaticSyncStatus: AutomaticSyncRepository.Status?
+    private(set) var automaticSyncProblem: String?
+    private(set) var automaticSyncSending = false
+    private(set) var automaticSyncProgress: AutomaticSyncResourceChannel.Progress?
+    private(set) var automaticSyncRepository: AutomaticSyncRepository?
+    var automaticSyncPeer: MacPairedDevice? { pairingClient?.pairedPeer }
+    var automaticSyncSettingsContext: (repository: AutomaticSyncRepository, peerID: String)? {
+        guard let repository = automaticSyncRepository, let peer = automaticSyncPeer else { return nil }
+        return (repository, AutomaticSyncChannel.peerID(peer))
+    }
     @ObservationIgnored private var onAction: ActionHandler?
     @ObservationIgnored private let discovery: (any MacDiscovering)?
     @ObservationIgnored private var discoveryTimeout: Task<Void, Never>?
@@ -159,6 +171,14 @@ final class MacConnectionModel {
             onAction = { [weak self] action in
                 guard let self else { throw CancellationError() }
                 switch action {
+                case .unpair:
+                    self.pairingClient?.disconnect()
+                    if let repository = self.automaticSyncRepository, let peer = self.automaticSyncPeer {
+                        let id = AutomaticSyncChannel.peerID(peer)
+                        try await repository.configure(peerID: id, enabled: false)
+                        try await repository.setVoiceprintConsent(peerID: id, state: .revoked)
+                    }
+                    try self.handlePairingAction(action)
                 case .retryTask(let id):
                     guard let sender = self.sender else { throw PairingActionError.transferUnavailable }
                     do { try await sender.retry(id: id) }
@@ -190,6 +210,95 @@ final class MacConnectionModel {
         self.sender = sender
         sender.onChange = { [weak self] in Task { await self?.refreshCopyJobs() } }
         await refreshCopyJobs()
+    }
+
+    /// Installs the durable adapter; does not grant per-device sharing permission.
+    func installAutomaticSync(database: AppDatabase, audioDirectory: URL? = nil) {
+        guard automaticSyncRepository == nil, let client = pairingClient else { return }
+        let repository = AutomaticSyncRepository(database)
+        automaticSyncRepository = repository
+        client.makeAutomaticSyncChannel = { [weak self, weak client] peer, send in
+            guard let client else { return nil }
+            self?.automaticSyncProblem = nil
+            return AutomaticSyncChannel(
+                storage: .repository(repository, peer: peer, isTrusted: { [weak client] in
+                    try client?.isConnectedAndTrusted(peer) ?? false
+                }),
+                send: send, onFailure: { [weak client] in client?.disconnect() },
+                onProblem: { [weak self] error in self?.automaticSyncProblem = String(describing: error) },
+                onSending: { [weak self] in self?.automaticSyncSending = $0 }
+            )
+        }
+        if let audioDirectory {
+            client.makeAutomaticSyncResourceChannel = { [weak self, weak client] peer, send in
+                guard let client else { return nil }
+                return AutomaticSyncResourceChannel(
+                    storage: .repository(database: database, peer: peer, audioDirectory: audioDirectory, isTrusted: { [weak client] in
+                        try client?.isConnectedAndTrusted(peer) ?? false
+                    }, peerAllowsVoiceprints: { [weak client] in
+                        client?.peerAllowsAutomaticSyncVoiceprints == true
+                    }),
+                    send: send, onFailure: { [weak client] in client?.disconnect() },
+                    onProblem: { [weak self] error in self?.automaticSyncProblem = String(describing: error) },
+                    onProgress: { [weak self] in self?.automaticSyncProgress = $0 }
+                )
+            }
+        }
+        do { try client.startAutomaticSyncOnAuthenticatedConnection() }
+        catch {
+            client.disconnect()
+            actionError = Self.text("Could not start automatic sync on the trusted connection.")
+        }
+        Task {
+            do { try await repository.collectRevokedFiles() }
+            catch { actionError = Self.text("Could not finish removing revoked sync resources.") }
+            await refreshAutomaticSyncStatus()
+        }
+    }
+
+    func automaticSyncConfigurationChanged() {
+        pairingClient?.disconnect()
+        Task {
+            await refreshAutomaticSyncStatus()
+            if foreground { beginRecovery(source: "sync-settings") }
+        }
+    }
+
+    func refreshAutomaticSyncStatus() async {
+        guard let repository = automaticSyncRepository, let peer = pairingClient?.pairedPeer else {
+            automaticSyncStatus = nil
+            return
+        }
+        do { automaticSyncStatus = try await repository.status(peerID: AutomaticSyncChannel.peerID(peer)) }
+        catch { actionError = Self.text("Could not read automatic sync settings.") }
+    }
+
+    func setAutomaticSyncEnabled(_ enabled: Bool, for expectedPeer: MacPairedDevice? = nil) async throws {
+        guard persistentIntents.isEmpty, pendingAction != .unpair,
+              let repository = automaticSyncRepository, let client = pairingClient,
+              let peer = client.pairedPeer,
+              expectedPeer == nil || expectedPeer?.publicKey == peer.publicKey else {
+            throw PairingActionError.transferUnavailable
+        }
+        client.disconnect()
+        try await repository.configure(peerID: AutomaticSyncChannel.peerID(peer), enabled: enabled)
+        await refreshAutomaticSyncStatus()
+        if foreground { beginRecovery(source: "sync-settings") }
+    }
+
+    func setVoiceprintSyncConsent(
+        _ consent: AutomaticSyncRepository.Wire.Consent, for expectedPeer: MacPairedDevice? = nil
+    ) async throws {
+        guard persistentIntents.isEmpty, pendingAction != .unpair,
+              let repository = automaticSyncRepository, let client = pairingClient,
+              let peer = client.pairedPeer,
+              expectedPeer == nil || expectedPeer?.publicKey == peer.publicKey else {
+            throw PairingActionError.transferUnavailable
+        }
+        client.disconnect()
+        try await repository.setVoiceprintConsent(peerID: AutomaticSyncChannel.peerID(peer), state: consent)
+        await refreshAutomaticSyncStatus()
+        if foreground { beginRecovery(source: "sync-consent") }
     }
 
     func sendMeetingCopy(meetingID: String) async throws {
@@ -269,7 +378,9 @@ final class MacConnectionModel {
                 throw PairingActionError.candidateUnavailable
             }
             selectedCandidate = candidate
-            client.connect(to: endpoint, allowMeetingCopyProbe: candidate.meetingCopyProbeHint, requiredPeer: client.pairedPeer)
+            client.connect(to: endpoint, allowMeetingCopyProbe: candidate.meetingCopyProbeHint, requiredPeer: client.pairedPeer,
+                           allowAutomaticSyncProbe: candidate.automaticSyncProbeHint,
+                           allowAutomaticSyncResourcesProbe: candidate.automaticSyncResourcesProbeHint)
         case .confirmPairing:
             client.approve()
         case .cancelPairing:
@@ -440,7 +551,9 @@ final class MacConnectionModel {
                             attempted.insert(candidate.id)
                             self.selectedCandidate = candidate
                             MacNetworkDiagnostics.endpoint(endpoint, event: "recovery-candidate", generation: generation)
-                            client.connect(to: endpoint, allowMeetingCopyProbe: candidate.meetingCopyProbeHint, requiredPeer: pin)
+                            client.connect(to: endpoint, allowMeetingCopyProbe: candidate.meetingCopyProbeHint, requiredPeer: pin,
+                                           allowAutomaticSyncProbe: candidate.automaticSyncProbeHint,
+                                           allowAutomaticSyncResourcesProbe: candidate.automaticSyncResourcesProbeHint)
                         }
                         try await Task.sleep(for: .milliseconds(50))
                     }

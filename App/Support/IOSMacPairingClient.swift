@@ -5,6 +5,12 @@ import OSLog
 
 @MainActor
 final class IOSMacPairingClient {
+    /// The last completed boundary, not a claim about USB or Wi-Fi delivery.
+    enum NetworkStage: String {
+        case endpointSelected, transportReady, commitmentReceived, identityVerified
+        case authenticated, capabilityAccepted, transferReplyReceived
+    }
+
     enum State: Equatable {
         case idle
         case connecting
@@ -67,6 +73,11 @@ final class IOSMacPairingClient {
         var pendingRequest: MeetingCopyWire.Message?
         var reply: CheckedContinuation<MeetingCopyWire.Message, any Error>?
         var requestDeadline: Task<Void, Never>?
+        var automaticSync: AutomaticSyncChannel?
+        var automaticSyncResources: AutomaticSyncResourceChannel?
+        var syncNegotiation: Task<Void, Never>?
+        var automaticSyncProbeAllowed = false
+        var automaticSyncResourcesProbeAllowed = false
 
         init(transport: MacPairingTransport, expectedPeer: MacPairedDevice?) {
             self.transport = transport
@@ -85,6 +96,9 @@ final class IOSMacPairingClient {
             pongDeadline?.cancel()
             sendTail?.cancel()
             requestDeadline?.cancel()
+            syncNegotiation?.cancel()
+            automaticSync?.stop()
+            automaticSyncResources?.stop()
             let reply = reply
             self.reply = nil
             pendingRequest = nil
@@ -99,8 +113,37 @@ final class IOSMacPairingClient {
     private var session: Session?
     private(set) var pairedPeer: MacPairedDevice?
     private(set) var state: State = .idle
+    private(set) var networkStage: NetworkStage?
     var onUpdate: ((State) -> Void)?
     var onTransferReadiness: ((Bool) -> Void)?
+    var makeAutomaticSyncChannel: AutomaticSyncChannel.Factory?
+    var makeAutomaticSyncResourceChannel: AutomaticSyncResourceChannel.Factory?
+    var peerAllowsAutomaticSyncVoiceprints: Bool { session?.automaticSync?.peerVoiceprintsAllowed == true }
+
+    func startAutomaticSyncOnAuthenticatedConnection() throws {
+        guard let current = session, current.connected, let peer = current.peer,
+              current.automaticSyncProbeAllowed, current.automaticSync == nil,
+              let makeAutomaticSyncChannel else { return }
+        guard try isConnectedAndTrusted(peer) else { throw ClientError.invalidTrust }
+        current.automaticSync = makeAutomaticSyncChannel(peer, { [weak self, weak current] message in
+            guard let self, let current else { throw CancellationError() }
+            try await self.enqueue(message, on: current).value
+        })
+        guard current.automaticSync != nil else { return }
+        if current.automaticSyncResourcesProbeAllowed {
+            current.automaticSyncResources = makeAutomaticSyncResourceChannel?(peer, { [weak self, weak current] message in
+                guard let self, let current else { throw CancellationError() }
+                try await self.enqueue(message, on: current).value
+            })
+        }
+        current.syncNegotiation = Task { [weak self, weak current] in
+            guard let self, let current else { return }
+            do {
+                try await current.automaticSync?.negotiate()
+                try await current.automaticSyncResources?.negotiate()
+            } catch { self.fail(error, session: current) }
+        }
+    }
     var supportsMeetingTransfer: Bool { session?.transferAccepted == true }
     var transferSessionID: UUID? { supportsMeetingTransfer ? session?.id : nil }
     var canProbeMeetingTransfer: Bool { session?.connected == true && session?.probeAllowed == true }
@@ -125,10 +168,18 @@ final class IOSMacPairingClient {
             publish(.failed(message: message(for: error)))
             throw error
         }
+
     }
 
-    func connect(to endpoint: NWEndpoint, allowMeetingCopyProbe: Bool = false, requiredPeer: MacPairedDevice? = nil) {
+    func isConnectedAndTrusted(_ peer: MacPairedDevice) throws -> Bool {
+        guard session?.connected == true, session?.peer?.publicKey == peer.publicKey else { return false }
+        return try storedPeer()?.publicKey == peer.publicKey
+    }
+
+    func connect(to endpoint: NWEndpoint, allowMeetingCopyProbe: Bool = false, requiredPeer: MacPairedDevice? = nil,
+                 allowAutomaticSyncProbe: Bool = false, allowAutomaticSyncResourcesProbe: Bool = false) {
         stopSession()
+        networkStage = nil
         do {
             pairedPeer = try storedPeer()
             if let requiredPeer, pairedPeer?.publicKey != requiredPeer.publicKey {
@@ -147,7 +198,10 @@ final class IOSMacPairingClient {
                 expectedPeer: pairedPeer
             )
             session = next
+            networkStage = .endpointSelected
             next.probeAllowed = allowMeetingCopyProbe
+            next.automaticSyncProbeAllowed = allowAutomaticSyncProbe
+            next.automaticSyncResourcesProbeAllowed = allowAutomaticSyncResourcesProbe
             MacNetworkDiagnostics.endpoint(endpoint, event: "connect", generation: next.id)
             observeNetwork(for: next)
             next.transport.start()
@@ -168,6 +222,9 @@ final class IOSMacPairingClient {
             Task { @MainActor in
                 guard let self, let current, self.session === current else { return }
                 MacNetworkDiagnostics.path(current.transport.connection.currentPath, event: event, generation: current.id)
+                if event == "transport-ready", self.networkStage == .endpointSelected {
+                    self.recordStage(.transportReady, on: current)
+                }
                 guard invalid,
                       !onlyIfAuthenticated || current.connected else { return }
                 self.fail(MeetingCopyProblem(code: .network), session: current)
@@ -303,6 +360,7 @@ final class IOSMacPairingClient {
             throw MacPairingError.invalidMessage
         }
         let commitment = try bytes(commitmentFrame, type: "commit", count: 32)
+        recordStage(.commitmentReceived, on: current)
         try await current.transport.send(MacPairingFrame(type: "reveal", payload: hello.base64EncodedString()))
         try requireCurrent(current)
         let reveal = try await current.transport.receive()
@@ -335,6 +393,7 @@ final class IOSMacPairingClient {
               try Curve25519.Signing.PublicKey(rawRepresentation: server.identity).isValidSignature(
                 proof, for: MacPairingCrypto.signatureInput(role: "server", transcript: transcript)
               ) else { throw MacPairingError.invalidMessage }
+        recordStage(.identityVerified, on: current)
         let peer = current.expectedPeer ?? MacPairedDevice(
             publicKey: server.identity, name: server.name, pairedAt: Date()
         )
@@ -366,14 +425,20 @@ final class IOSMacPairingClient {
         try await enqueue(MacPairingMessage(type: "ready"), on: current).value
         try requireCurrent(current)
         current.connected = true
+        recordStage(.authenticated, on: current)
         MacNetworkDiagnostics.path(current.transport.connection.currentPath, event: "authenticated", generation: current.id)
         armDeadline(timeouts.idle, for: current)
         startHeartbeat(for: current)
         publish(.connected(peer))
         try requireCurrent(current)
+        try startAutomaticSyncOnAuthenticatedConnection()
         while true {
             let message = try await receive(on: current)
-            if message.type == MeetingCopyWire.innerType {
+            if message.type == "automaticSyncResources.v1", let channel = current.automaticSyncResources {
+                try await channel.handle(message)
+            } else if message.type == "automaticSync.v1", let channel = current.automaticSync {
+                try await channel.handle(message)
+            } else if message.type == MeetingCopyWire.innerType {
                 try handleTransferReply(message, on: current)
             } else if message.type == "pong", message.value == nil, current.awaitingPong {
                 current.awaitingPong = false
@@ -403,7 +468,10 @@ final class IOSMacPairingClient {
         guard allowed.contains(reply.type) else { throw MacPairingError.invalidMessage }
         if request.type == .capabilities {
             current.transferAccepted = true
+            recordStage(.capabilityAccepted, on: current)
             onTransferReadiness?(true)
+        } else {
+            recordStage(.transferReplyReceived, on: current)
         }
         current.requestDeadline?.cancel()
         current.requestDeadline = nil
@@ -519,6 +587,7 @@ final class IOSMacPairingClient {
 
     private func fail(_ error: any Error, session current: Session) {
         guard session === current else { return }
+        MacNetworkDiagnostics.logger.error("event=session-failed generation=\(current.id.uuidString, privacy: .public) lastBoundary=\(self.networkStage?.rawValue ?? "unknown", privacy: .public)")
         let text: String
         let rejected: Bool
         if case .rejected? = error as? MacPairingError { rejected = true }
@@ -536,6 +605,15 @@ final class IOSMacPairingClient {
         }
         stopSession(transferError: MeetingCopyProblem(error))
         publish(.failed(message: text))
+    }
+
+    private func recordStage(_ stage: NetworkStage, on current: Session) {
+        guard session === current else { return }
+        networkStage = stage
+        MacNetworkDiagnostics.path(
+            current.transport.connection.currentPath,
+            event: "boundary-\(stage.rawValue)", generation: current.id
+        )
     }
 
     private func message(for error: any Error) -> String {

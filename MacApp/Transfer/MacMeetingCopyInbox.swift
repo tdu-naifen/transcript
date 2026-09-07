@@ -363,6 +363,7 @@ actor MacMeetingCopyInbox {
                 originDeviceId: manifest.originDeviceID
             )
             try meeting.insert(db)
+            try AutomaticSyncRepository.captureSealedAudio(db, meeting: meeting)
             for segment in transcript.segments {
                 try Task.checkCancellation()
                 guard try !Self.recordExists(db, table: "utterance", id: segment.id) else {

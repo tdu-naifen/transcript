@@ -52,6 +52,7 @@ final class MacBonjourService {
     private(set) var advertisedName: String?
     private(set) var isEnabled = false
     private(set) var advertisesMeetingCopy = false
+    private(set) var advertisesAutomaticSync = false
     private(set) var isSuspended = false
 
     let connectionExplanation = String(
@@ -66,7 +67,7 @@ final class MacBonjourService {
         }
     }
 
-    @ObservationIgnored private let makeListener: @MainActor (String, Bool) throws -> any MacBonjourListening
+    @ObservationIgnored private let makeListener: @MainActor (String, Bool, Bool) throws -> any MacBonjourListening
     @ObservationIgnored private var listener: (any MacBonjourListening)?
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var listenerReady = false
@@ -94,7 +95,7 @@ final class MacBonjourService {
             name: Self.normalizedName(serviceName), store: pairingStore ?? MacPairingKeychainStore()
         )
         self.pairing = pairing
-        self.makeListener = { try NetworkMacBonjourListener(name: $0, pairing: pairing, meetingCopy: $1) }
+        self.makeListener = { try NetworkMacBonjourListener(name: $0, pairing: pairing, meetingCopy: $1, automaticSync: $2) }
     }
 
     init(
@@ -108,7 +109,7 @@ final class MacBonjourService {
         self.recoveryDelay = recoveryDelay
         self.serviceName = Self.normalizedName(serviceName)
         self.pairing = pairing ?? MacPairingServer(name: Self.normalizedName(serviceName))
-        self.makeListener = { name, _ in try makeListener(name) }
+        self.makeListener = { name, _, _ in try makeListener(name) }
     }
 
     isolated deinit {
@@ -163,6 +164,14 @@ final class MacBonjourService {
         startListener()
     }
 
+    func advertiseAutomaticSync(_ enabled: Bool) {
+        guard advertisesAutomaticSync != enabled else { return }
+        advertisesAutomaticSync = enabled
+        guard isEnabled, listener != nil else { return }
+        invalidateListener(stopPairing: false)
+        startListener()
+    }
+
     private func startListener(allowNewPairing: Bool = false) {
         guard !isSuspended else { return }
         guard listener == nil else { return }
@@ -178,7 +187,7 @@ final class MacBonjourService {
         logger.info("Starting Bonjour advertisement with authenticated pairing.")
 
         do {
-            let listener = try makeListener(serviceName, advertisesMeetingCopy)
+            let listener = try makeListener(serviceName, advertisesMeetingCopy, advertisesAutomaticSync)
             self.listener = listener
             listener.start { [weak self] event in
                 guard let self, self.generation == currentGeneration else { return }
@@ -356,19 +365,26 @@ private final class NetworkMacBonjourListener: MacBonjourListening {
     private let queue = DispatchQueue(label: "com.transcript.mac-bonjour-publisher")
     private var active = false
 
-    init(name: String, pairing: MacPairingServer, meetingCopy: Bool) throws {
+    init(name: String, pairing: MacPairingServer, meetingCopy: Bool, automaticSync: Bool) throws {
         let parameters = NWParameters.tcp
         parameters.includePeerToPeer = true
         listener = try NWListener(using: parameters)
+        var capabilities: [String: Data] = [:]
+        if meetingCopy { capabilities["meeting-copy"] = Data("2".utf8) }
+        if automaticSync {
+            capabilities["automatic-sync"] = Data("1".utf8)
+            capabilities["automatic-sync-resources"] = Data("1".utf8)
+        }
         listener.service = NWListener.Service(
             name: name, type: MacBonjourService.serviceType,
-            txtRecord: meetingCopy ? NetService.data(fromTXTRecord: ["meeting-copy": Data("2".utf8)]) : nil
+            txtRecord: capabilities.isEmpty ? nil : NetService.data(fromTXTRecord: capabilities)
         )
         listener.newConnectionHandler = { [weak self, weak pairing] connection in
             Task { @MainActor in
                 guard self?.active == true, let pairing else { connection.cancel(); return }
                 pairing.accept(connection)
             }
+
         }
     }
 

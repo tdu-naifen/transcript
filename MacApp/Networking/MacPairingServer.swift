@@ -3,6 +3,7 @@ import Foundation
 import Network
 import Observation
 import OSLog
+import TranscriptCore
 
 enum MacAuthenticatedConnectionError: String, LocalizedError {
     case closed, idleTimeout, unsupportedRequest
@@ -42,7 +43,15 @@ final class MacPairingServer {
     private(set) var peers: [MacPairedDevice] = []
     private(set) var allowsNewPairing = false
     private(set) var localApproved = false
+    private(set) var automaticSyncProblem: String?
+    private(set) var automaticSyncSending = false
+    private(set) var automaticSyncProgress: AutomaticSyncResourceChannel.Progress?
     @ObservationIgnored var makeMeetingCopySession: MeetingCopySessionFactory?
+    @ObservationIgnored var makeAutomaticSyncChannel: AutomaticSyncChannel.Factory?
+    @ObservationIgnored var makeAutomaticSyncResourceChannel: AutomaticSyncResourceChannel.Factory?
+    @ObservationIgnored private var automaticSyncRepository: AutomaticSyncRepository?
+    @ObservationIgnored private var onAutomaticAudioImported: (@MainActor (AutomaticSyncResourceChannel.AudioImport) async throws -> Void)?
+    @ObservationIgnored private var revokingTrust = false
     @ObservationIgnored private let store: any MacPairingIdentityStoring
     @ObservationIgnored private var session: MacPairingSession?
     @ObservationIgnored private var enableTask: Task<Void, Never>?
@@ -74,6 +83,81 @@ final class MacPairingServer {
     }
 
     var isConnected: Bool { state == .connected && connectedPeer != nil }
+    var peerAllowsAutomaticSyncVoiceprints: Bool { session?.peerAllowsVoiceprints == true }
+
+    func installAutomaticSync(
+        database: AppDatabase, audioDirectory: URL? = nil,
+        onAudioImported: @escaping @MainActor (AutomaticSyncResourceChannel.AudioImport) async throws -> Void = { _ in }
+    ) {
+        guard automaticSyncRepository == nil else { return }
+        let repository = AutomaticSyncRepository(database)
+        automaticSyncRepository = repository
+        onAutomaticAudioImported = onAudioImported
+        makeAutomaticSyncChannel = { [weak self] peer, send in
+            guard let self else { return nil }
+            automaticSyncProblem = nil
+            return AutomaticSyncChannel(
+                storage: .repository(repository, peer: peer, isTrusted: { [weak self] in
+                    try self?.isConnectedAndTrusted(peer) ?? false
+                }),
+                send: send, onFailure: { [weak self] in self?.disconnect() },
+                onProblem: { [weak self] error in self?.automaticSyncProblem = String(describing: error) },
+                onSending: { [weak self] in self?.automaticSyncSending = $0 }
+            )
+        }
+        if let audioDirectory {
+            makeAutomaticSyncResourceChannel = { [weak self] peer, send in
+                guard let self else { return nil }
+                return AutomaticSyncResourceChannel(
+                    storage: .repository(database: database, peer: peer, audioDirectory: audioDirectory, isTrusted: { [weak self] in
+                        try self?.isConnectedAndTrusted(peer) ?? false
+                    }, peerAllowsVoiceprints: { [weak self] in
+                        self?.peerAllowsAutomaticSyncVoiceprints == true
+                    }, onAudioImported: onAudioImported),
+                    send: send, onFailure: { [weak self] in self?.disconnect() },
+                    onProblem: { [weak self] error in self?.automaticSyncProblem = String(describing: error) },
+                    onProgress: { [weak self] in self?.automaticSyncProgress = $0 }
+                )
+            }
+        }
+    }
+
+    func replayAutomaticAudioImports() async throws {
+        guard let repository = automaticSyncRepository, let onAutomaticAudioImported else { return }
+        for imported in try await repository.verifiedAudioImports() {
+            guard !revokingTrust,
+                  try store.peers().contains(where: { AutomaticSyncChannel.peerID($0) == imported.peerID }) else { continue }
+            let status = try await repository.status(peerID: imported.peerID)
+            guard status.enabled, !revokingTrust,
+                  try store.peers().contains(where: { AutomaticSyncChannel.peerID($0) == imported.peerID }) else { continue }
+            try await onAutomaticAudioImported(.init(
+                meetingID: imported.meetingID, inputRevision: imported.audioSHA256,
+                peerID: imported.peerID, operationID: imported.operationID
+            ))
+        }
+    }
+
+    func automaticSyncStatus(for peer: MacPairedDevice) async throws -> AutomaticSyncRepository.Status? {
+        try await automaticSyncRepository?.status(peerID: AutomaticSyncChannel.peerID(peer))
+    }
+
+    func setAutomaticSyncEnabled(_ enabled: Bool, for peer: MacPairedDevice) async throws {
+        guard !revokingTrust, let repository = automaticSyncRepository,
+              try store.peers().contains(where: { $0.publicKey == peer.publicKey }) else {
+            throw MacPairingError.identityMismatch
+        }
+        disconnect()
+        try await repository.configure(peerID: AutomaticSyncChannel.peerID(peer), enabled: enabled)
+    }
+
+    func setVoiceprintSyncConsent(_ consent: AutomaticSyncRepository.Wire.Consent, for peer: MacPairedDevice) async throws {
+        guard !revokingTrust, let repository = automaticSyncRepository,
+              try store.peers().contains(where: { $0.publicKey == peer.publicKey }) else {
+            throw MacPairingError.identityMismatch
+        }
+        disconnect()
+        try await repository.setVoiceprintConsent(peerID: AutomaticSyncChannel.peerID(peer), state: consent)
+    }
 
     func enablePairing() {
         guard session == nil else { return }
@@ -89,7 +173,7 @@ final class MacPairingServer {
     }
 
     func accept(_ connection: NWConnection) {
-        guard session == nil else { connection.cancel(); return }
+        guard session == nil, !revokingTrust else { connection.cancel(); return }
         localApproved = false
         state = .negotiating
         let session = MacPairingSession(
@@ -97,6 +181,8 @@ final class MacPairingServer {
             handshakeTimeout: handshakeTimeout, confirmationTimeout: confirmationTimeout,
             idleTimeout: idleTimeout,
             makeMeetingCopySession: makeMeetingCopySession,
+            makeAutomaticSyncChannel: makeAutomaticSyncChannel,
+            makeAutomaticSyncResourceChannel: makeAutomaticSyncResourceChannel,
             allowPairing: { [weak self] in
                 guard let self, self.allowsNewPairing, self.attemptsLeft > 0 else { return false }
                 self.attemptsLeft -= 1
@@ -161,11 +247,19 @@ final class MacPairingServer {
         disconnect()
     }
 
-    func unpair(_ peer: MacPairedDevice) {
+    func unpair(_ peer: MacPairedDevice) async {
+        guard !revokingTrust else { return }
+        revokingTrust = true
+        defer { revokingTrust = false }
+        disableNewPairing()
+        disconnect()
         do {
+            if let repository = automaticSyncRepository {
+                let id = AutomaticSyncChannel.peerID(peer)
+                try await repository.configure(peerID: id, enabled: false)
+                try await repository.setVoiceprintConsent(peerID: id, state: .revoked)
+            }
             try store.remove(publicKey: peer.publicKey)
-            // Also close an in-flight handshake so it cannot restore a just-deleted pin.
-            disconnect()
             reloadPeers()
         } catch { state = .failed(error.localizedDescription) }
     }
@@ -178,6 +272,8 @@ final class MacPairingServer {
 
 @MainActor
 private final class MacPairingSession {
+    private let diagnosticID = UUID()
+    private var lastBoundary = "accepted"
     private let transport: MacPairingTransport
     private let name: String
     private let store: any MacPairingIdentityStoring
@@ -200,12 +296,20 @@ private final class MacPairingSession {
     private var authenticated = false
     private let makeMeetingCopySession: MacPairingServer.MeetingCopySessionFactory?
     private var meetingCopySession: MacMeetingCopySession?
+    private let makeAutomaticSyncChannel: AutomaticSyncChannel.Factory?
+    private let makeAutomaticSyncResourceChannel: AutomaticSyncResourceChannel.Factory?
+    private var automaticSync: AutomaticSyncChannel?
+    private var automaticSyncResources: AutomaticSyncResourceChannel?
+    var peerAllowsVoiceprints: Bool { automaticSync?.peerVoiceprintsAllowed == true }
+    private var sendTail: Task<Void, any Error>?
     private let logger = Logger(subsystem: "com.transcript.mac", category: "PairingSession")
 
     init(
         connection: NWConnection, name: String, store: any MacPairingIdentityStoring,
         handshakeTimeout: Duration, confirmationTimeout: Duration, idleTimeout: Duration,
         makeMeetingCopySession: MacPairingServer.MeetingCopySessionFactory?,
+        makeAutomaticSyncChannel: AutomaticSyncChannel.Factory?,
+        makeAutomaticSyncResourceChannel: AutomaticSyncResourceChannel.Factory?,
         allowPairing: @escaping @MainActor () -> Bool,
         onConfirmation: @escaping @MainActor (MacPairingServer.Confirmation) -> Void,
         onConnected: @escaping @MainActor (MacPairedDevice) -> Void,
@@ -218,6 +322,8 @@ private final class MacPairingSession {
         self.confirmationTimeout = confirmationTimeout
         self.idleTimeout = idleTimeout
         self.makeMeetingCopySession = makeMeetingCopySession
+        self.makeAutomaticSyncChannel = makeAutomaticSyncChannel
+        self.makeAutomaticSyncResourceChannel = makeAutomaticSyncResourceChannel
         self.allowPairing = allowPairing
         self.onConfirmation = onConfirmation
         self.onConnected = onConnected
@@ -226,11 +332,18 @@ private final class MacPairingSession {
 
     func start() {
         logger.info("Incoming connection accepted; awaiting identity verification.")
+        logPath(event: "accepted")
         transport.connection.stateUpdateHandler = { [weak self] state in
             Task { @MainActor [weak self] in
                 guard let self, !self.ended else { return }
                 switch state {
-                case .failed, .cancelled, .waiting:
+                case .ready:
+                    self.logPath(event: "transport-ready")
+                case .waiting(let error):
+                    self.logPath(event: "waiting-\(Self.errorCode(error))")
+                    if self.authenticated { self.finish(MacAuthenticatedConnectionError.closed) }
+                    else { self.finish(MacPairingError.unavailable) }
+                case .failed, .cancelled:
                     if self.authenticated { self.finish(MacAuthenticatedConnectionError.closed) }
                     else { self.finish(MacPairingError.unavailable) }
                 default:
@@ -243,6 +356,12 @@ private final class MacPairingSession {
             Task { @MainActor [weak self] in
                 guard let self, self.authenticated, !self.ended else { return }
                 self.finish(MacAuthenticatedConnectionError.closed)
+            }
+        }
+        self.transport.connection.pathUpdateHandler = { [weak self] _ in
+            Task { @MainActor [weak self] in
+                guard let self, !self.ended else { return }
+                self.logPath(event: "path-updated")
             }
         }
         transport.start()
@@ -280,7 +399,7 @@ private final class MacPairingSession {
         ended = true
         if let error {
             let reason = (error as? MacAuthenticatedConnectionError)?.rawValue ?? "handshakeFailure"
-            logger.error("Connection ended: authenticated=\(self.authenticated), reason=\(reason, privacy: .public)")
+            logger.error("Connection ended: authenticated=\(self.authenticated), reason=\(reason, privacy: .public) lastBoundary=\(self.lastBoundary, privacy: .public) generation=\(self.diagnosticID.uuidString, privacy: .public)")
         } else {
             logger.info("Connection closed locally: authenticated=\(self.authenticated)")
         }
@@ -288,11 +407,17 @@ private final class MacPairingSession {
         work?.cancel()
         meetingCopySession?.cancel()
         meetingCopySession = nil
+        automaticSync?.stop()
+        automaticSync = nil
+        automaticSyncResources?.stop()
+        automaticSyncResources = nil
+        sendTail?.cancel()
         readyRead?.cancel()
         approvalWaiter?.resume(returning: false)
         approvalWaiter = nil
         transport.connection.stateUpdateHandler = nil
         transport.connection.viabilityUpdateHandler = nil
+        transport.connection.pathUpdateHandler = nil
         transport.cancel()
         cipher = nil
         onEnd(error)
@@ -316,7 +441,14 @@ private final class MacPairingSession {
     private func send(_ message: MacPairingMessage) async throws {
         try ensureActive()
         guard let frame = try cipher?.seal(message) else { throw MacPairingError.invalidMessage }
-        try await transport.send(frame)
+        let previous = sendTail
+        let task = Task { [self] in
+            try await previous?.value
+            try ensureActive()
+            try await transport.send(frame)
+        }
+        sendTail = task
+        try await task.value
         try ensureActive()
     }
 
@@ -351,6 +483,7 @@ private final class MacPairingSession {
             throw MacPairingError.invalidMessage
         }
         let clientCommitment = try commit.bytes(expectedType: "commit", count: 32)
+        recordBoundary("commitmentReceived")
         let reconnect = mode == "reconnect"
         guard reconnect || allowPairing() else { throw MacPairingError.unavailable }
         let identity = try store.identity()
@@ -389,6 +522,7 @@ private final class MacPairingSession {
               try Curve25519.Signing.PublicKey(rawRepresentation: peer.identity).isValidSignature(
                 signature, for: MacPairingCrypto.signatureInput(role: "client", transcript: transcript)
               ) else { throw MacPairingError.identityMismatch }
+        recordBoundary("identityVerified")
         try await send(MacPairingMessage(
             type: "auth",
             value: identity.signature(for: MacPairingCrypto.signatureInput(role: "server", transcript: transcript))
@@ -426,20 +560,60 @@ private final class MacPairingSession {
         guard ready.type == "ready", ready.value == nil else { throw MacPairingError.invalidMessage }
         try ensureActive()
         authenticated = true
+        recordBoundary("authenticated")
         logger.info("Authenticated connection established.")
         onConnected(trusted)
         meetingCopySession = makeMeetingCopySession?(trusted, identity.publicKey.rawRepresentation)
+        automaticSync = makeAutomaticSyncChannel?(trusted, { [weak self] message in
+            guard let self else { throw CancellationError() }
+            try await self.send(message)
+        })
+        automaticSyncResources = makeAutomaticSyncResourceChannel?(trusted, { [weak self] message in
+            guard let self else { throw CancellationError() }
+            try await self.send(message)
+        })
         while true {
             setDeadline(idleTimeout)
             let message = try await receive()
             if message.type == "ping", message.value == nil {
                 try await send(.init(type: "pong"))
+            } else if message.type == "automaticSyncResources.v1", let automaticSyncResources {
+                try await automaticSyncResources.handle(message)
+            } else if message.type == "automaticSync.v1", let automaticSync {
+                try await automaticSync.handle(message)
             } else if message.type == MeetingCopyWire.innerType, let meetingCopySession {
                 let response = try await meetingCopySession.handle(message)
                 try await send(response)
+                recordBoundary("meetingCopyReplySent")
             } else {
                 throw MacAuthenticatedConnectionError.unsupportedRequest
             }
+        }
+
+    }
+
+    private func recordBoundary(_ boundary: String) {
+        lastBoundary = boundary
+        logPath(event: "boundary-\(boundary)")
+    }
+
+    private func logPath(event: String) {
+        let path = transport.connection.currentPath
+        let interfaces = path?.availableInterfaces.map {
+            "\($0.name):\($0.type):typeUsed=\(path?.usesInterfaceType($0.type) == true)"
+        }.sorted().joined(separator: ",") ?? "unknown"
+        let status = path.map { String(describing: $0.status) } ?? "unknown"
+        // Endpoint hashes correlate a route within logs without exposing names or addresses.
+        // Interface type is evidence of the selected path, not proof that USB carried data.
+        logger.info("event=\(event, privacy: .public) generation=\(self.diagnosticID.uuidString, privacy: .public) endpoint=\(String(describing: self.transport.connection.endpoint), privacy: .private(mask: .hash)) path=\(status, privacy: .public) interfaces=\(interfaces, privacy: .public)")
+    }
+
+    private static func errorCode(_ error: NWError) -> String {
+        switch error {
+        case .posix(let code): "posix-\(code.rawValue)"
+        case .dns(let code): "dns-\(code)"
+        case .tls(let code): "tls-\(code)"
+        default: "other"
         }
     }
 }

@@ -180,6 +180,7 @@ private struct ReadyView: View {
         .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.8), value: isRecordingExpanded)
         .task {
             macConnection.enablePairing()
+            macConnection.installAutomaticSync(database: services.database, audioDirectory: services.store.directory)
             await macConnection.enableMeetingCopies(database: services.database, store: services.store)
         }
         .task { await recorder.onAppear() }

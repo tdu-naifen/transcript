@@ -1,12 +1,86 @@
 import CryptoKit
 import Foundation
 import Network
+import TranscriptCore
 import Security
 import XCTest
 @testable import TranscriptMac
 
 @MainActor
 final class MacPairingIntegrationTests: XCTestCase {
+    func testAutomaticReplicationUsesAuthenticatedSocketAndSharesHeartbeatCounters() async throws {
+        let macDB = try AppDatabase.inMemory()
+        let phoneDB = try AppDatabase.inMemory()
+        let macRepository = AutomaticSyncRepository(macDB)
+        let phoneRepository = AutomaticSyncRepository(phoneDB)
+        let harness = try await PairingHarness()
+        defer { harness.stop() }
+        harness.server.installAutomaticSync(database: macDB)
+        let client = try await harness.client()
+        defer { client.close() }
+        let phonePeer = MacPairedDevice(
+            publicKey: client.identity.publicKey.rawRepresentation, name: "QA phone", pairedAt: Date()
+        )
+        let macPeer = MacPairedDevice(
+            publicKey: harness.store.key.publicKey.rawRepresentation, name: "QA Mac", pairedAt: Date()
+        )
+        try await macRepository.configure(peerID: AutomaticSyncChannel.peerID(phonePeer), enabled: true)
+        try await phoneRepository.configure(peerID: AutomaticSyncChannel.peerID(macPeer), enabled: true)
+        try await MeetingRepository(phoneDB).insert(Meeting(
+            id: "network-phone", title: "From phone", startedAt: Date(), state: .recorded, originDeviceId: "qa-phone"
+        ))
+        try await MeetingRepository(macDB).insert(Meeting(
+            id: "network-mac", title: "From Mac", startedAt: Date(), state: .recorded, originDeviceId: "qa-mac"
+        ))
+        try await pair(client, harness)
+        var channelFailure = false
+        var readFailure: (any Error)?
+        var receivedPong = false
+        let channel = AutomaticSyncChannel(
+            storage: .repository(phoneRepository, peer: macPeer, isTrusted: {
+                harness.server.isConnected && client.serverIdentity == macPeer.publicKey
+            }),
+            send: { try await client.send($0.type, value: $0.value) },
+            onFailure: { channelFailure = true }
+        )
+        let reader = Task {
+            do {
+                while !Task.isCancelled {
+                    let message = try await client.receive()
+                    if message.type == "pong" {
+                        receivedPong = true
+                    } else {
+                        try await channel.handle(message)
+                    }
+                }
+            } catch {
+                if !Task.isCancelled { readFailure = error }
+            }
+        }
+        defer {
+            channel.stop()
+            reader.cancel()
+        }
+        try await channel.negotiate()
+        try await client.send("ping")
+        for _ in 0..<500 {
+            let phone = try await MeetingRepository(phoneDB).fetch(id: "network-mac")
+            let mac = try await MeetingRepository(macDB).fetch(id: "network-phone")
+            if phone?.title == "From Mac", mac?.title == "From phone", receivedPong { break }
+            if readFailure != nil || channelFailure { break }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        let phoneCopy = try await MeetingRepository(phoneDB).fetch(id: "network-mac")
+        let macCopy = try await MeetingRepository(macDB).fetch(id: "network-phone")
+        XCTAssertEqual(phoneCopy?.title, "From Mac")
+        XCTAssertEqual(macCopy?.title, "From phone")
+        XCTAssertTrue(receivedPong)
+        XCTAssertNil(readFailure)
+        XCTAssertFalse(channelFailure)
+        XCTAssertTrue(harness.server.isConnected)
+        XCTAssertEqual(harness.store.savedPeers.count, 1)
+    }
+
     func testProductionHeartbeatDeadlineAllowsLegacyCadenceButBoundsStaleStatus() {
         XCTAssertGreaterThan(MacPairingServer.defaultIdleTimeout, .seconds(30))
         XCTAssertLessThanOrEqual(MacPairingServer.defaultIdleTimeout, .seconds(45))
@@ -368,7 +442,16 @@ final class MacPairingIntegrationTests: XCTestCase {
         try await reconnect.finish()
         try await waitUntil { harness.server.state == .connected }
         let peer = try XCTUnwrap(harness.server.peers.first)
-        harness.server.unpair(peer)
+        let database = try AppDatabase.inMemory()
+        let repository = AutomaticSyncRepository(database)
+        harness.server.installAutomaticSync(database: database)
+        try await repository.configure(
+            peerID: AutomaticSyncChannel.peerID(peer), enabled: true, voiceprints: .allowed
+        )
+        await harness.server.unpair(peer)
+        let syncStatus = try await repository.status(peerID: AutomaticSyncChannel.peerID(peer))
+        XCTAssertFalse(syncStatus.enabled)
+        XCTAssertEqual(syncStatus.voiceprints, .revoked)
         XCTAssertTrue(harness.store.savedPeers.isEmpty)
         XCTAssertNil(harness.server.connectedPeer)
         let revoked = try await harness.client(identity: identity)

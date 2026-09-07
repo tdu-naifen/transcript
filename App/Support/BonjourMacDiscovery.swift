@@ -128,7 +128,9 @@ final class BonjourMacDiscovery: MacDiscovering {
                 let device = MacConnectionModel.Device(
                     id: "\(name).\(type).\(domain)@\(interface?.name ?? "")",
                     name: name,
-                    meetingCopyProbeHint: Self.meetingCopyHint(result.metadata)
+                    meetingCopyProbeHint: Self.meetingCopyHint(result.metadata),
+                    automaticSyncProbeHint: Self.automaticSyncHint(result.metadata),
+                    automaticSyncResourcesProbeHint: Self.automaticSyncResourcesHint(result.metadata)
                 )
                 return (device, result.endpoint)
             }
@@ -160,5 +162,15 @@ final class BonjourMacDiscovery: MacDiscovering {
         guard case .bonjour(let record) = metadata else { return false }
         // A spoofable discovery hint, never capability acceptance or an identity.
         return record["meeting-copy"] == "2"
+    }
+
+    nonisolated static func automaticSyncHint(_ metadata: NWBrowser.Result.Metadata) -> Bool {
+        guard case .bonjour(let record) = metadata else { return false }
+        return record["automatic-sync"] == "1"
+    }
+
+    nonisolated static func automaticSyncResourcesHint(_ metadata: NWBrowser.Result.Metadata) -> Bool {
+        guard case .bonjour(let record) = metadata else { return false }
+        return record["automatic-sync-resources"] == "1"
     }
 }

@@ -10,16 +10,33 @@ struct ConnectionView: View {
         List {
             Section {
                 ConnectionStatusLabel(model: model)
+                AutomaticSyncProgressView(sending: model.automaticSyncSending, progress: model.automaticSyncProgress)
                 Text(model.explanation)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("macConnectionExplanation")
             }
 
+            if let context = model.automaticSyncSettingsContext, let peer = model.automaticSyncPeer {
+                Section {
+                    AutomaticSyncSettingsView(
+                        repository: context.repository, peerID: context.peerID,
+                        setEnabled: { try await model.setAutomaticSyncEnabled($0, for: peer) },
+                        setVoiceprintConsent: { try await model.setVoiceprintSyncConsent($0, for: peer) }
+                    )
+                }
+            }
+            if let problem = model.automaticSyncProblem {
+                Section {
+                    Label(problem, systemImage: "exclamationmark.triangle")
+                        .foregroundStyle(.orange).textSelection(.enabled)
+                }
+            }
+
             if !model.isConnected {
                 Section {
                     Label("Open Transcript on your Mac", systemImage: "desktopcomputer")
-                    Text("Transcript uses your local network to find and securely pair with your Mac. Meeting transfer is not available yet.", tableName: "MacPairing")
+                    Text("Transcript discovers your Mac on the local network. Confirm pairing on both devices, then authorize supported synchronization separately.", tableName: "AutomaticSync")
                         .font(.footnote)
                         .foregroundStyle(.secondary)
                     Button(action: { perform(.discover) }) {
