@@ -53,6 +53,17 @@ public struct MeetingReprocessingResult: Sendable, Equatable {
     public let speakerCount: Int
 }
 
+public struct MeetingReprocessingSnapshot: Sendable {
+    public let audioSHA256: String?
+    public let utterances: [Utterance]
+    public init(audioSHA256: String?, utterances: [Utterance]) {
+        self.audioSHA256 = audioSHA256
+        self.utterances = utterances
+    }
+}
+
+public enum MeetingReprocessingSnapshotError: Error { case changed }
+
 public struct MeetingReprocessingRepository: Sendable {
     private let database: AppDatabase
 
@@ -72,12 +83,20 @@ public struct MeetingReprocessingRepository: Sendable {
         deviceId: String,
         engine: TranscriptionEngine = .nemotron,
         now: Date = Date(),
+        expectedSnapshot: MeetingReprocessingSnapshot? = nil,
         cancellationCheck: @escaping @Sendable () throws -> Void = { try Task.checkCancellation() }
     ) async throws -> MeetingReprocessingResult {
         try await database.writer.write { db in
             try cancellationCheck()
             guard var meeting = try Meeting.fetchOne(db, key: meetingId) else {
                 throw RepositoryError.notFound(table: Meeting.databaseTableName, id: meetingId)
+            }
+            if let expectedSnapshot {
+                let existing = try Utterance.filter(Column("meetingId") == meetingId).fetchAll(db)
+                guard meeting.audioSHA256 == expectedSnapshot.audioSHA256,
+                      existing.sorted(by: { $0.id < $1.id }) == expectedSnapshot.utterances.sorted(by: { $0.id < $1.id }) else {
+                    throw MeetingReprocessingSnapshotError.changed
+                }
             }
 
             var draftsByIndex: [Int: ReprocessedSpeakerDraft] = [:]

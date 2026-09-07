@@ -38,12 +38,14 @@ public actor RecordingSession {
     public nonisolated let configuration: AudioCaptureConfiguration
 
     private let meetings: MeetingRepository
+    private let jobs: RecordingProcessingRepository
     private let store: AudioFileStore
     private let deviceId: String
     private let engine: any AudioCaptureControlling
     private var active: Active?
     private var pending: Pending?
     private var published: Set<PendingStop> = []
+    private var processing: Set<PendingStop> = []
     private var phase: Phase = .idle
     private var drainInProgress = false
 
@@ -55,6 +57,7 @@ public actor RecordingSession {
         captureEngine: (any AudioCaptureControlling)? = nil
     ) {
         self.meetings = MeetingRepository(database)
+        self.jobs = RecordingProcessingRepository(database)
         self.store = store
         self.deviceId = deviceId
         self.configuration = configuration
@@ -73,8 +76,22 @@ public actor RecordingSession {
 
     private var sealingMeetingId: String?
     public var activeMeetingId: String? { active?.meetingId ?? pending?.token.meetingId ?? sealingMeetingId }
+    public func isProcessing(meetingId: String) -> Bool {
+        processing.contains { $0.meetingId == meetingId }
+    }
+    public var processingMeetingIDs: Set<String> { Set(processing.map(\.meetingId)) }
 
-    public func start(title: String, now: Date = Date()) async throws -> Meeting {
+    /// A local non-capture worker reserves only its own meeting.
+    public func beginProcessing(meetingId: String) throws -> PendingStop {
+        guard activeMeetingId != meetingId, !isProcessing(meetingId: meetingId) else {
+            throw AudioCaptureError.alreadyRecording
+        }
+        let token = PendingStop(meetingId: meetingId)
+        processing.insert(token)
+        return token
+    }
+
+    public func start(title: String, now: Date = Date(), localeIdentifier: String? = nil) async throws -> Meeting {
         guard active == nil, pending == nil, !drainInProgress, sealingMeetingId == nil else {
             throw AudioCaptureError.alreadyRecording
         }
@@ -89,7 +106,7 @@ public actor RecordingSession {
         )
         sealingMeetingId = meeting.id
         defer { sealingMeetingId = nil }
-        try await meetings.insert(meeting)
+        try await jobs.insertRecording(meeting, localeIdentifier: localeIdentifier)
 
         let url = try store.url(for: meeting.id)
         let writer = try AudioFileWriter(
@@ -159,8 +176,7 @@ public actor RecordingSession {
     /// Closes capture and durably saves the archive before optional processing drains.
     /// On success the database contains its actual captured duration, filename, hash,
     /// byte count, and archive state. `.recorded` does not promise a final transcript.
-    /// `activeMeetingId` remains reserved until `publish`, preventing a new capture,
-    /// deletion, or reprocessing from racing the old downstream consumers.
+    /// Durable archival releases capture, but retains a per-meeting processing fence.
     /// A database failure retains the pending seal: calling again retries persistence,
     /// never the encoder. `publish` releases the downstream-processing fence.
     public func drainCapture(
@@ -176,6 +192,8 @@ public actor RecordingSession {
         defer { drainInProgress = false; sealingMeetingId = nil }
         if let pending {
             _ = try await persist(pending, now: now)
+            processing.insert(pending.token)
+            self.pending = nil
             return pending.token
         }
         guard let active else { throw AudioCaptureError.notRecording }
@@ -184,7 +202,8 @@ public actor RecordingSession {
         phase = .idle
 
         engine.stop()
-        let captureStopped = Task { await onCaptureStopped() }
+        // UI/activity teardown is meeting-scoped and cannot reserve the next capture.
+        Task { await onCaptureStopped() }
         let outcome = await active.task.value
         let durationMs = Self.durationMs(frames: outcome.frames, sampleRate: configuration.sampleRate)
 
@@ -222,7 +241,8 @@ public actor RecordingSession {
         let pending = Pending(token: token, durationMs: durationMs, audio: audio, state: archiveState)
         self.pending = pending
         _ = try await persist(pending, now: now)
-        await captureStopped.value
+        processing.insert(token)
+        self.pending = nil
         return token
     }
 
@@ -244,10 +264,14 @@ public actor RecordingSession {
             }
             return meeting
         }
-        guard let pending, pending.token == token else { throw AudioCaptureError.notRecording }
-        let meeting = try await persist(pending, now: now)
+        guard processing.contains(token) else { throw AudioCaptureError.notRecording }
+        // Processing is already drained. A failed metadata read must not leave an
+        // unowned reservation that permanently blocks deletion or explicit retry.
+        processing.remove(token)
         published.insert(token)
-        if self.pending?.token == token { self.pending = nil }
+        guard let meeting = try await meetings.fetch(id: token.meetingId) else {
+            throw RepositoryError.notFound(table: Meeting.databaseTableName, id: token.meetingId)
+        }
         return meeting
     }
 

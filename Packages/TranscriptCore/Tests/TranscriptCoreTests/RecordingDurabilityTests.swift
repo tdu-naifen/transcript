@@ -5,6 +5,130 @@ import GRDB
 @testable import TranscriptCore
 
 @Suite struct RecordingDurabilityTests {
+    @Test func publicationReadFailureReleasesOnlyCompletedMeetingAndAllowsRetryAndDeletion() async throws {
+        let directory = try durabilityDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try AppDatabase.onDisk(directory: directory)
+        defer { try? database.writer.close() }
+        let session = RecordingSession(
+            database: database, deviceId: "durability-test", store: AudioFileStore(directory: directory),
+            captureEngine: DurabilityCaptureEngine(seconds: 2)
+        )
+        let a = try await session.start(title: "A")
+        let token = try await session.drainCapture()
+        let b = try await session.start(title: "B")
+        try await database.writer.write { try $0.execute(sql: "ALTER TABLE meeting RENAME TO unavailableMeeting") }
+        await #expect(throws: (any Error).self) { try await session.publish(token, as: .recorded) }
+        #expect(!(await session.isProcessing(meetingId: a.id)))
+        #expect(await session.activeMeetingId == b.id)
+        try await database.writer.write { try $0.execute(sql: "ALTER TABLE unavailableMeeting RENAME TO meeting") }
+        #expect(try await session.publish(token, as: .recorded).id == a.id)
+        let retry = try await session.beginProcessing(meetingId: a.id)
+        _ = try await session.publish(token, as: .recorded)
+        #expect(await session.isProcessing(meetingId: a.id), "An old acknowledgment cannot clear a newer reservation")
+        _ = try await session.publish(retry, as: .recorded)
+        try await MeetingRepository(database).delete(id: a.id)
+        #expect(try await MeetingRepository(database).fetch(id: a.id) == nil)
+        #expect(await session.activeMeetingId == b.id)
+        _ = try await session.stop()
+    }
+
+    @Test func cancelledLanguageBoundaryCannotPersistAMixedLanguagePolicy() async throws {
+        let database = try AppDatabase.inMemory()
+        let meeting = Meeting(title: "Language boundary", startedAt: Date(), originDeviceId: "test")
+        let jobs = RecordingProcessingRepository(database)
+        try await jobs.insertRecording(meeting, localeIdentifier: "en-US")
+        let cancelled = RecordingLanguageBoundary()
+        cancelled.cancel()
+        await #expect(throws: CancellationError.self) {
+            try await jobs.commitLanguageBoundary(
+                meetingId: meeting.id, previousLocale: "en-US", newLocale: "zh-CN", boundary: cancelled
+            )
+        }
+        #expect(try await jobs.fetch(meetingId: meeting.id)?.requiresSegmentedRetry == false)
+        try await jobs.commitLanguageBoundary(
+            meetingId: meeting.id, previousLocale: nil, newLocale: "zh-CN", boundary: RecordingLanguageBoundary()
+        )
+        #expect(try await jobs.fetch(meetingId: meeting.id)?.requiresSegmentedRetry == false)
+        #expect(try await jobs.fetch(meetingId: meeting.id)?.localeIdentifier == "zh-CN")
+        try await jobs.commitLanguageBoundary(
+            meetingId: meeting.id, previousLocale: "zh-CN", newLocale: "en-US", boundary: RecordingLanguageBoundary()
+        )
+        #expect(try await jobs.fetch(meetingId: meeting.id)?.requiresSegmentedRetry == true)
+    }
+
+    @Test func durableArchiveReleasesCaptureButKeepsIndependentProcessingReservations() async throws {
+        let directory = try durabilityDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try AppDatabase.onDisk(directory: directory)
+        defer { try? database.writer.close() }
+        let session = RecordingSession(
+            database: database, deviceId: "durability-test", store: AudioFileStore(directory: directory),
+            captureEngine: DurabilityCaptureEngine(seconds: 2)
+        )
+        let first = try await session.start(title: "A", localeIdentifier: "en-US")
+        let tokenA = try await session.drainCapture()
+        #expect(await session.activeMeetingId == nil)
+        #expect(await session.isProcessing(meetingId: first.id))
+        let second = try await session.start(title: "B", localeIdentifier: "zh-CN")
+        let tokenB = try await session.drainCapture()
+        let third = try await session.start(title: "C")
+        #expect(await session.processingMeetingIDs == [first.id, second.id])
+        _ = try await session.publish(tokenA, as: .failed)
+        _ = try await session.publish(tokenA, as: .recorded)
+        #expect(await session.activeMeetingId == third.id)
+        #expect(await session.isProcessing(meetingId: second.id))
+        #expect(!(await session.isProcessing(meetingId: first.id)))
+        _ = try await session.publish(tokenB, as: .recorded)
+        _ = try await session.stop()
+        for id in [first.id, second.id, third.id] {
+            let saved = try #require(try await MeetingRepository(database).fetch(id: id))
+            #expect(saved.durationMs == 2_000)
+            #expect(saved.audioSHA256 != nil)
+        }
+    }
+
+    @Test func interruptedLocalJobsPreserveTextAudioAndLanguagePolicyWithoutResurrection() async throws {
+        let directory = try durabilityDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let database = try AppDatabase.onDisk(directory: directory)
+        let store = AudioFileStore(directory: directory)
+        let session = RecordingSession(
+            database: database, deviceId: "durability-test", store: store,
+            captureEngine: DurabilityCaptureEngine(seconds: 2)
+        )
+        let meeting = try await session.start(title: "Interrupted", localeIdentifier: "en-US")
+        let utterance = Utterance(
+            meetingId: meeting.id, startMs: 0, endMs: 900, text: "Edited partial text",
+            localeIdentifier: "en-US", revision: 4, originDeviceId: "durability-test"
+        )
+        try await UtteranceRepository(database).append(utterance)
+        _ = try await session.drainCapture()
+        let jobs = RecordingProcessingRepository(database)
+        try await jobs.markLanguageChange(meetingId: meeting.id)
+        try await jobs.update(meetingId: meeting.id, state: .processing)
+        let bytes = try Data(contentsOf: store.url(for: meeting.id))
+        let previous = try await MeetingRepository(database).fetch(id: meeting.id)
+        let text = try await UtteranceRepository(database).fetch(meetingId: meeting.id)
+        try database.writer.close()
+        let reopened = try AppDatabase.onDisk(directory: directory)
+        defer { try? reopened.writer.close() }
+        let recoveredJobs = RecordingProcessingRepository(reopened)
+        try await recoveredJobs.interruptUnfinished()
+        let job = try #require(try await recoveredJobs.fetch(meetingId: meeting.id))
+        #expect(job.state == .interrupted)
+        #expect(job.localeIdentifier == "en-US")
+        #expect(job.requiresSegmentedRetry)
+        #expect(job.audioSHA256 == previous?.audioSHA256)
+        #expect(try await MeetingRepository(reopened).fetch(id: meeting.id) == previous)
+        #expect(try await UtteranceRepository(reopened).fetch(meetingId: meeting.id) == text)
+        #expect(try Data(contentsOf: store.url(for: meeting.id)) == bytes)
+        try await MeetingRepository(reopened).delete(id: meeting.id)
+        try await recoveredJobs.update(meetingId: meeting.id, state: .complete)
+        #expect(try await recoveredJobs.fetch(meetingId: meeting.id) == nil)
+        #expect(try await MeetingRepository(reopened).fetch(id: meeting.id) == nil)
+    }
+
     @Test func recoveryLeavesSealedFailuresAndRemoteRecordingsUntouched() async throws {
         let directory = try durabilityDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }

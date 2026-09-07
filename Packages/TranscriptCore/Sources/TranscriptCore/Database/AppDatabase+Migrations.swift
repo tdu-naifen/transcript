@@ -344,6 +344,17 @@ extension AppDatabase {
                 END;
                 """)
         }
+        migrator.registerMigration("v8_local_recording_processing_jobs") { db in
+            try db.create(table: "recordingProcessingJob") { table in
+                table.primaryKey("meetingId", .text).references("meeting", onDelete: .cascade)
+                table.column("state", .text).notNull()
+                table.column("localeIdentifier", .text)
+                table.column("requiresSegmentedRetry", .boolean).notNull().defaults(to: false)
+                table.column("audioSHA256", .text)
+                table.column("error", .text)
+                table.column("updatedAt", .datetime).notNull()
+            }
+        }
         return migrator
     }
 }

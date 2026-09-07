@@ -4,6 +4,43 @@ import Testing
 @testable import TranscriptCore
 
 @Suite struct ReprocessingTests {
+    @Test func staleRetrySnapshotCannotReplaceConcurrentEditsOrChangedAudio() async throws {
+        let database = try AppDatabase.inMemory()
+        let meeting = Meeting(
+            title: "Edited retry", startedAt: Date(), audioSHA256: "original-hash",
+            state: .recorded, originDeviceId: "test"
+        )
+        try await MeetingRepository(database).insert(meeting)
+        let utterance = Utterance(
+            meetingId: meeting.id, startMs: 0, endMs: 1000, text: "Original",
+            localeIdentifier: "en-US", originDeviceId: "test"
+        )
+        let repository = UtteranceRepository(database)
+        try await repository.append(utterance)
+        let original = try await repository.fetch(meetingId: meeting.id)
+        let snapshot = MeetingReprocessingSnapshot(audioSHA256: meeting.audioSHA256, utterances: original)
+        let speaker = try await SpeakerRepository(database).createAnonymousSpeaker(deviceId: "test")
+        try await repository.assignSpeaker(utteranceId: utterance.id, speakerId: speaker.id, deviceId: "test")
+        let edited = try await repository.fetch(meetingId: meeting.id)
+        await #expect(throws: MeetingReprocessingSnapshotError.self) {
+            try await MeetingReprocessingRepository(database).replace(
+                meetingId: meeting.id,
+                utterances: [.init(startMs: 0, endMs: 1000, text: "Replacement")], speakers: [],
+                deviceId: "test", expectedSnapshot: snapshot
+            )
+        }
+        #expect(try await repository.fetch(meetingId: meeting.id) == edited)
+        await #expect(throws: MeetingReprocessingSnapshotError.self) {
+            try await MeetingReprocessingRepository(database).replace(
+                meetingId: meeting.id,
+                utterances: [.init(startMs: 0, endMs: 1000, text: "Replacement")], speakers: [],
+                deviceId: "test",
+                expectedSnapshot: .init(audioSHA256: "different-hash", utterances: edited)
+            )
+        }
+        #expect(try await repository.fetch(meetingId: meeting.id) == edited)
+    }
+
     private func segment(_ speakerIndex: Int, _ startFrame: Int, _ endFrame: Int) -> DiarizerSegment {
         DiarizerSegment(
             speakerIndex: speakerIndex, startFrame: startFrame, endFrame: endFrame,

@@ -24,7 +24,7 @@ import Testing
         let applied = try await db.reader.read { database in
             try AppDatabase.migrator.appliedIdentifiers(database)
         }
-        #expect(applied == ["v1", "v2_search_and_voiceprint_metadata", "v3_meeting_speaker_slot_revisions", "v4_real_slot_revision_triggers", "v5_meeting_emoji", "v6_speaker_analysis_jobs", "v7_meeting_deletion_slot_revision"])
+        #expect(applied == ["v1", "v2_search_and_voiceprint_metadata", "v3_meeting_speaker_slot_revisions", "v4_real_slot_revision_triggers", "v5_meeting_emoji", "v6_speaker_analysis_jobs", "v7_meeting_deletion_slot_revision", "v8_local_recording_processing_jobs"])
     }
 
     @Test func foreignKeysAreEnabled() async throws {
@@ -118,7 +118,7 @@ import Testing
         // Rows are only ever inserted, never updated: `record(_:)` is the sole write path.
         let appendOnly: Set<String> = ["analysisResult"]
         let infrastructure: Set<String> = [
-            "searchDocument", "voiceprintGeneration", "meetingSpeakerSlotRevision", "speakerAnalysisJob"
+            "searchDocument", "voiceprintGeneration", "meetingSpeakerSlotRevision", "speakerAnalysisJob", "recordingProcessingJob"
         ]
         let db = try AppDatabase.inMemory()
         let (tables, columnsByTable) = try await db.reader.read { database in
@@ -226,7 +226,7 @@ import Testing
                 """)
             return (applied, embeddingColumns, generation, Set(indexes))
         }
-        #expect(details.0 == ["v1", "v2_search_and_voiceprint_metadata", "v3_meeting_speaker_slot_revisions", "v4_real_slot_revision_triggers", "v5_meeting_emoji", "v6_speaker_analysis_jobs", "v7_meeting_deletion_slot_revision"])
+        #expect(details.0 == ["v1", "v2_search_and_voiceprint_metadata", "v3_meeting_speaker_slot_revisions", "v4_real_slot_revision_triggers", "v5_meeting_emoji", "v6_speaker_analysis_jobs", "v7_meeting_deletion_slot_revision", "v8_local_recording_processing_jobs"])
         #expect(details.1.contains("modelIdentifier"))
         #expect(details.2 == 0)
         #expect(details.3.isSuperset(of: [
@@ -253,7 +253,7 @@ import Testing
             #expect(rows.results.first?.hits.map(\.utteranceId) == ["u1"])
             #expect(try Self.domainRows(reopened) == original)
             try await reopened.write { db in
-                #expect(try AppDatabase.migrator.appliedIdentifiers(db) == ["v1", "v2_search_and_voiceprint_metadata", "v3_meeting_speaker_slot_revisions", "v4_real_slot_revision_triggers", "v5_meeting_emoji", "v6_speaker_analysis_jobs", "v7_meeting_deletion_slot_revision"])
+                #expect(try AppDatabase.migrator.appliedIdentifiers(db) == ["v1", "v2_search_and_voiceprint_metadata", "v3_meeting_speaker_slot_revisions", "v4_real_slot_revision_triggers", "v5_meeting_emoji", "v6_speaker_analysis_jobs", "v7_meeting_deletion_slot_revision", "v8_local_recording_processing_jobs"])
                 #expect(try Int.fetchOne(db, sql: "SELECT count(*) FROM searchDocument") == 2)
                 #expect(try Int.fetchOne(db, sql: "SELECT revision FROM voiceprintGeneration WHERE id = 1") == 0)
                 #expect(try Int.fetchOne(db, sql: "SELECT count(*) FROM speakerEmbedding WHERE modelIdentifier IS NULL") == 1)
