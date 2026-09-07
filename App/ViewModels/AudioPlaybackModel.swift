@@ -2,10 +2,9 @@ import AVFoundation
 import Foundation
 import Observation
 
-/// Local playback for a meeting recording (UI.md §3). The audio file may be missing
-/// from disk — PLAN §3.4 allows local audio to be purged once Mac has verified its
-/// copy — so this degrades to `.unavailable` instead of crashing or presenting a
-/// player that silently does nothing.
+/// Local playback for a meeting recording. If its audio file is missing from disk,
+/// this degrades to `.unavailable` instead of crashing or presenting a player that
+/// silently does nothing.
 @MainActor
 @Observable
 final class AudioPlaybackModel {
@@ -67,8 +66,8 @@ final class AudioPlaybackModel {
     private(set) var availability: Availability
     private(set) var isPlaying = false
     private(set) var currentTimeMs = 0
-    /// Authoritative duration (PLAN §3.3.2 — captured frame count, not container
-    /// duration), shown even when the file itself is unavailable.
+    /// Authoritative duration from captured frames, not container duration,
+    /// shown even when the file itself is unavailable.
     let durationMs: Int
     private(set) var speed: Speed = .normal
     private(set) var waveform: [Float] = []
@@ -152,8 +151,7 @@ final class AudioPlaybackModel {
         ticker?.cancel()
     }
 
-    /// Seeks and plays (UI.md §3b: "Tapping any line seeks the player to that line's
-    /// startMs and plays").
+    /// Tapping a transcript line seeks to its start time and plays.
     func seekAndPlay(toMs ms: Int) {
         guard !isInteractionBlockedByRecording else { return }
         seek(toMs: ms)

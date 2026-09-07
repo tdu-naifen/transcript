@@ -1,7 +1,7 @@
 import Foundation
 
-/// Share-of-talk percentages for the meeting-detail participants list (UI.md §3:
-/// "Alex 42%"). Pure function over already-fetched utterances so both the iPhone
+/// Share-of-talk percentages for the meeting-detail participants list.
+/// Pure function over already-fetched utterances so both the iPhone
 /// detail screen and any future Mac tooling can reuse it.
 public enum SpeakerTalkShare {
     /// Percentage of total spoken duration attributed to each speaker in `speakerIds`,

@@ -1,289 +1,116 @@
-# Automatic bidirectional sync acceptance
+# 当前验收与未关闭问题
 
-## Release decision
+更新：2026-09-07，依据 17:42 用户反馈。**本轮修复进行中，未最终验收、未宣告合并/推送完成。**
+本文取代旧计划中的完成/阻塞总论；[README](README.md) 是入口，[iOS](IOS_UI.md)/[Mac](MAC_UI.md) 是要求，协议文件保持独立规范职责。
 
-**NOT accepted as usable on physical devices.** No real iPhone installation,
-USB-disconnected reproduction, two-product UI transfer, or real-acoustic closed
-loop was performed. The USB-related failure stage remains unconfirmed.
+## 最新用户反馈：不是新测试日志
 
-Implementation, component tests and physical product acceptance are separate.
-Passing builds, synthetic vectors, localhost, Bonjour discovery or a worker's
-report do not close the physical gates below.
+| ID | 观察或要求 | 当前状态与关闭条件 |
+|---|---|---|
+| NOW-001 | 拔掉 USB 后无线同步可用 | **用户报告可用**，不是自动化日志；保留该正向反馈，不再笼统声称“无线完全不可用”。实际 build、endpoint/path、同网重连/重启证据仍未补齐。 |
+| NOW-002 | Mac 重处理结果没回到 iPhone | **活动修复，未通过**。真实 Mac 原音频处理→版本发布→传输→iPhone 原会议已挂载详情更新；覆盖断线、重连、重试、取消及过期输入，不能只验证 Core 仓库。 |
+| NOW-003 | Mac 没有本地声纹 | **活动修复，未通过**。在 Mac 产品任务中实际调用 diarization/CAM++、保存兼容模板、匹配/未知拒绝；授权后回到 iPhone。基线 ASR-only 与声纹库展示不是该能力。 |
+| NOW-004 | iPhone Identifying 太久 | **活动修复，未通过**。记录干净音频积累、加载/推理、绑定/提交/观察/显示各阶段；验证真实多声音及返回说话人，阈值/模型精度不降级。 |
+| NOW-005 | App 前台应保持唤醒 | **新需求，未通过**。前台浏览/录音等实际场景不自动锁屏，离开前台恢复正常系统行为；不等于后台持续推理授权。 |
+| NOW-006 | 底部录音控件与上滑动画 | **活动修复，未通过**。收起/展开、safe area、最后一行、整卡跟手、回弹/提交、无障碍和减少动态效果；不误触录音或阻塞浏览。 |
+| NOW-007 | Mac 整张会议卡可点 | **活动修复，未通过**。卡片留白/边缘与标题均可选中，子按钮独立，键盘/VoiceOver 回归。 |
 
-Starting HEAD: `8cf3a9477c8ebf10629c55c272778d0753b8349b`; starting worktree clean.
-There was no `SYNC_CONTRACT.md`. Historical entries in `agent_state.yaml` refer
-to earlier checkouts/builds and are not acceptance of this branch.
+这些条目不得继承之前测试的通过状态。物理双端**完整闭环仍未关闭**，也不能把用户的无线可用报告扩写成声纹或结果回传成功。
 
-Production integration commit:
-**`256ee83145d74ad39096381d868baf2b879b1365`**.
-Independent final review verified all 61 changed production files against the
-reviewed bytes and found no remaining high-confidence code blocker. This does
-not close physical-product acceptance.
+## 已有证据：固定到旧源版本
 
-## Implementation and wiring audit
+此前 main 已合并并推送 `3bfc72b`（协调者报告）；生产包来源 `7dac0e34883e2d4b940693c646289435f85d4881`，真模型测试 `dcf161e`，`3bfc72b` 为相应 QA 文档记录。
+本轮新增代码尚待最终复核，这些历史结果不是其验收凭据。
 
-| Requirement | Starting gap / change | Application integration | Acceptance |
-| --- | --- | --- | --- |
-| Wi-Fi without USB | TCP/Bonjour already existed; USB was not proven to carry application bytes. Added authenticated-stage/path diagnostics, retained fresh discovery and pinned recovery. | Both production pairing transports; local-network/firewall guidance remains available. | **BLOCKED:** physical failure stage and unplugged path not reproduced. |
-| Mac model Settings | Processing sidebar mixed model management with work. | Settings contains ASR/diarization/embedding model controls and language-model controls; meeting views contain Process, progress, cancel, error, retry, result and Reprocess. | Model/workflow unit checks; full native interaction matrix pending. |
-| Automatic processing | Manual immutable copy did not imply processing permission. | Authorized, verified automatic-audio adoption/replay enqueues persistent jobs; legacy-v2 receipts do not. Missing models wait for configuration. | Synthetic runner + real database/file tests; real-model end-to-end gate pending. |
-| Bidirectional edits | Existing UUID was a v2 conflict, not an edit. | Atomic local capture, authenticated replication, UUID-only alias resolution, database-backed library/detail refresh. | Repository/channel and iOS observation tests; physical offline/restart UI gate pending. |
-| Voiceprints | v2 excluded global identities and vectors. | Stable IDs, current/original names, associations, real artifact bytes, namespace-aware adoption/matching; Mac global bank and rename are wired. Unknown provenance is retained and excluded from matching. | Real CAM++ engine smoke tests now pass on macOS and iOS Simulator (follow-up below). Actual two-product voiceprint generation/transfer and physical acceptance remain open. |
-| Connection entry | Redundant sidebar routes. | Mac retains the top-right connection sheet, pairing/rejection, trusted-device settings and recovery. | Source/build/logic checks; native keyboard/VoiceOver gate pending. |
-| Automatic reconciliation | Explicit one-way Send/Retry only. | Independently negotiated metadata/resource protocols, committed-change observation, durable operation/byte recovery, explicit peer permissions and source-preserving relay. | Real SQLite/files and authenticated-loopback component tests; physical all-library gate pending. |
-| iPhone live identity | Expanded view owned observation; collapsed model relied on later ASR/publication. | Recording model owns observation; assignment/correction/name/color do not require new ASR or a view remount. | Same-mounted-view screenshot text and separate dot-color checks with a one-second capture deadline; real inference/foreground gate pending. |
+| 验证 | 已记录结果 | 范围 / 证据名 |
+|---|---|---|
+| macOS Core 声纹选择 | 75 passed：17 XCTest + 58 Swift Testing，无 skip | `voiceprint-core-mac-final.log`；包含真实 CAM++ 与确定性安全回归 |
+| iOS Simulator Core | 39 named tests / 42 参数化调用，无 skip | `voiceprint-core-ios-final.log`、对应 xcresult；真实 CAM++ |
+| Native iOS | 70 passed，无 skip | `voiceprint-ios-qa-tests.xcresult`、`voiceprint-ios-qa-receipt.json`；观察/生命周期/授权/重处理用注入引擎，不是自然身份识别 |
+| Native Mac | 最终 31 passed，无 skip | `voiceprint-mac-qa-rerun2.xcresult`、`voiceprint-mac-qa-report.txt`；11 声纹库、19 同步集成、1 双端授权，使用 synthetic vectors |
+| AAC 输入边界 | 生产 `7dac0e3` 修复；Core 21 / iOS 37 定向回归通过 | 采集 16,000 帧可解码 16,320 帧，按封存区间排除不足一包的 AAC padding；原音频哈希不变，真实越界继续拒绝。用户截图录音修复后重试未据此关闭。 |
+| 模型持久化与拒绝 | 两个平台引擎测试通过 | 正确绑定/改名/数据库重开、删会议保留全局模板、移除另一模板后该声音拒绝匹配 |
+| 自然识别、物理手机与双端声纹闭环 | 未完成 | 未由上述 QA 安装用户 iPhone、操作用户录音或批准权限/信任；后来的无线用户报告单列于 NOW-001 |
 
-The protocol and persistence owner is [TranscriptCore/Sync](Packages/TranscriptCore/Sources/TranscriptCore/Sync).
-See [ADR](SYNC_ADR.md) and [versioned contract](SYNC_CONTRACT.md).
-The two `Shared/Sync/AutomaticSync*Wire.swift` files are aliases, not independent
-DTO implementations. Pairing cryptography and `MeetingCopyWire.swift` are unchanged.
+公开语音来自 LibriSpeech test-clean：`1089-134686-0000`、`1089-134686-0002`、`1188-133604-0000`（Panayotov et al., OpenSLR 12，CC BY 4.0）。
+相同 CAM++ 模型指纹：`campplus:62ce4257968340816c1404499bf07e862d6a10a2c8dc74156ed525823d8459f8:16k:192`。
 
-The automatic Mac processing job is **ASR**, not an assertion that Mac diarization
-or forty-person acoustic recognition is implemented. LLM/RAG model Settings remain
-available, but their UI is not represented as part of the automatic ASR job.
-An analysis-resource library API/test is not a claim of automatic LLM publication.
+| 干净语音 | macOS 引擎 | iOS Simulator 引擎 |
+|---|---|---|
+| 1 秒 | 需更多音频 | 需更多音频 |
+| 2 秒 | 不匹配，cosine 0.689 | 不匹配，cosine 0.686 |
+| 3 秒 | 匹配 1089，0.761 | 不匹配，0.757，candidate margin < 0.1 |
+| 5 秒 | 匹配 1089，0.818 | 匹配 1089，0.811 |
 
-## Data-safety repairs included
+两个公开身份保持可区分；5 秒同人匹配使用独立 utterance。策略未变：cosine ≥ 0.7、candidate margin ≥ 0.1、干净音频 ≥ 2 秒。
+这只是小样本 smoke，不是准确率校准或 40 人声学验收；3 秒平台差异保留，不能用降低阈值抹平。
 
-- Persistent Lamport field registers and deterministic ordering, immutable
-  operation audit, per-peer acknowledgements and tombstones.
-- Membership-key updates and removal of all observed tags; UUID-case compatibility
-  with existing immutable copies, without display-name identity matching.
-- Legacy embedded-NUL text migration and incremental, changed-column projection.
-- Biometric eligibility before pagination, bilateral consent and pinned-peer-bound
-  Settings actions; pause/revoke do not claim remote erasure.
-- Sealed, hashed resources; durable prefix recovery, atomic final publication,
-  active-prefix-aware garbage collection and restart adoption.
-- Typed, version-fenced transcript publication, revision/time mappings and
-  idempotent publication receipts. Stale output is not silently substituted.
-- Original-audio deletion journals and removal of meeting-owned resource/processing
-  copies while preserving independent references and global identities/voiceprints.
+### 证据定位与失败记录
 
-## Evidence ledger
+历史证据根（本机 session 产物，不是 checkout 内保证存在的链接）：
+`~/.copilot/session-state/a4ab0df9-4371-44ee-be89-af180b56d832/files/`。
+上述文件名相对此目录；生产清单为 `voiceprint-qa-production.sha256`，包校验值见该 session 的 packaging receipt。
+这些 development-signed 包不是 App Store/TestFlight 或已公证发行，不代表已安装到用户设备。
 
-### 2026-09-07 voiceprint QA and reprocessing package
+- Mac 最初 26 passed / 5 fixture 访问失败，另一次目录设置在测试前中止；最终签名测试 host 使用自身 sandbox 中唯一根后 31/31。失败证据保留，未放松权限或生产实现。
+- 较早 `256ee83145d74ad39096381d868baf2b879b1365` 集成的 Core 222、Mac 209（1 opt-in skip）、iOS 152、postcommit Mac 30 等详见该目录 `core-integrated-migration-fixed.log`、`mac-final.log`、`ios-final.log`、`postcommit-mac.log`；不是新修复回归。
+- 独立发布/输入围栏回归 12 Swift Testing tests 见 `cleanup-review-regressions.log`。早期编译/cache/签名、fixture、render deadline 失败仍在 session 证据，不因删历史 Markdown 抹除。
+- `live-render-evidence/manifest.json` 的约 67 ms 是 synthetic 已挂载行更新捕获，不是自然推理延迟/物理屏幕扫描。
+- 旧 baseline `nemotronIsTheOnlyTranscriptionEngine` 与既有 Apple 引擎冲突曾单独复现并从选择中排除，不将其算作全套 green；opt-in skip 不算真实模型通过。
+- **历史隔离偏差仍需披露**：早期 worker 曾使用共享 Simulator `A565…`，安装/偏好受影响；结果排除，不宣称零访问/零影响，也未擅自重置。记录为 `live-shared-simulator-disclosure.json`。更早 fixture 回落污染另一专用测试库的报告在 `3bfc72b:IOS_UI.md` 的 IOS-COMPLETE-FIX-03；该库未擅自恢复。此次文档整理未操作任何设备、权限或录音。
 
-Production source: `7dac0e34883e2d4b940693c646289435f85d4881`, including the
-AAC reprocessing input-bound repair. Real-model test revision: `dcf161e`.
-Later QA documentation/test commits do not change the packaged production source.
-`voiceprint-qa-production.sha256` records the source manifest for merge verification.
+## 保留的回归问题
 
-The old optional real-model test only ran on iOS Simulator, used a placeholder
-model identifier without the required preprocessing namespace, and did not
-assert that identity matching succeeded. It now uses the actual artifact hash,
-the production preprocessing identifier and unchanged default matching policy
-(cosine >= 0.7, candidate margin >= 0.1, clean audio >= 2 seconds).
-Independent code review found no blocker in this test change.
+旧 BUG/REQ 编号保留以便追溯；以下是**需复核的验收要求，不断言当前代码仍有全部旧缺陷，也不标为已关闭**。
 
-| Verification | Result | Evidence / scope |
-| --- | --- | --- |
-| macOS Core voiceprint selection | 75 passed: 17 XCTest + 58 Swift Testing; no skips | `voiceprint-core-mac-final.log`; real inference plus deterministic safety regressions |
-| iOS Simulator Core selection | 39 named tests passed, 42 parameterized invocations; no skips | `voiceprint-core-ios-final.log`, `.xcresult`; real CAM++ executed, not just an enabled test declaration |
-| Native iOS app | 70 passed; no skips | `voiceprint-ios-qa-tests.xcresult`, `voiceprint-ios-qa-receipt.json`; speaker observation/lifecycle, consent and reprocessing use injected identity/speech engines, not natural identification |
-| Native Mac app | Final 31 passed; no skips | `voiceprint-mac-qa-rerun2.xcresult`, `voiceprint-mac-qa-report.txt`; 11 voiceprint library, 19 sync integration, 1 bilateral-consent test, with synthetic vectors |
-| Real artifact persistence | Passed on both engine platforms | Correct identity binding, rename, database close/reopen, meeting deletion preserves global template, removal of another speaker's template causes unknown rejection |
-| Physical iPhone, natural live recognition, unplugged two-product voiceprint exchange | **Not run** | No physical install, user recordings, permission prompts or trust dialogs were operated |
-| Mac user-facing local voiceprint inference | **Not implemented by the current ASR job** | `MacCoreProcessingRunner` remains ASR-only. Installed CAM++ and a passing shared-engine test do not mean the Mac product invokes it. Voiceprints displays/renames/synchronizes stored profiles. |
+| ID | 必须保留的验证 |
+|---|---|
+| BUG-001 · P0 | 停止→命名→返回/重开→终止重启后，文字/标签/时间戳/音频保留；短录音、准备中停止、尾段未定稿、恢复失败均覆盖，不能只凭空页面断言 DB 丢失。 |
+| BUG-002 · P1 | 未归属保留 Unknown，允许保存，不暴露 `incompleteSpeakerAssignments` 原始枚举；真实存储失败仍报错。 |
+| BUG-003 · P1 | 人工标注双人轮流样本核对 finalized 历史、换人区间、重采样/暂停时基和跨人长 ASR 段；无可靠依据不强分，不承诺重叠语音分别完整转写。 |
+| BUG-004 · P1 | 参与者、实时/历史文本使用同一稳定 ID；Insights 改名跨会议/重启保留，零身份也解释状态，不伪造可改名实体。 |
+| BUG-005 · P1 | diarization 发言占比核对区间合并、分母、舍入、未知/重叠/静音/缺失分析；未分析不显示假 0%。 |
+| BUG-006 · P1 | 冷/热加载、首 partial/final、积压/内存、ASR/Sortformer/CAM++ 耗时分别测；准备中采集/停止可用，回填无丢帧/重复；与 NOW-004 相关。 |
+| BUG-007 · P1 | 采集停止立即结束计时/Activity，覆盖 App/锁屏停止、暂停、失败、重启与晚到更新；不支持的 Simulator 交互标未验证。 |
+| BUG-008 · P2 | 列表/设置/详情/录音/命名/身份弹窗在浅深色可读，状态栏对比正确；正常系统蒙层不是故障。 |
+| BUG-009 · P2 | 收起、切 tab、重新展开仍是同场录音；最后一行和播放器不遮挡；与 NOW-006 共同回归。 |
+| REQ-001 | 日期时间预填非空命名、之后可改；音频保存不依赖弹窗，不做 LLM 命名。 |
+| REQ-002 | 空转写可重处理；成功原子发布，取消/失败/新编辑保留旧结果、原音频、ID、标题和名字。 |
+| REQ-003 | 仅系统/简中/English 的紧凑语言菜单，系统标签不跟 App 手选语言变，立即生效且重启保持，与 ASR 语言独立。 |
+| REQ-004 | Apple API/语言资源、离线中英转写/混说/时间戳分别实际验证；缺支持不能换平台/云/旧引擎冒充通过。 |
+| REQ-005 | Apple 语言资源与 Sortformer/CAM++ 就绪、下载、取消、失败、重试分别可见；安装不代表已调用。 |
+| REQ-006 | 后续代码清理仅删确认无调用的代码，保留模型/重处理/widget/回归依赖及用户数据库、录音、签名和其他 WIP。 |
 
-The isolated acoustic corpus is three existing LibriSpeech test-clean recordings
-(`1089-134686-0000`, `1089-134686-0002`, `1188-133604-0000`; Panayotov et al.,
-OpenSLR 12, CC BY 4.0), not user meetings or random vectors.
-Both platforms used the same copied CAM++ files:
-`campplus:62ce4257968340816c1404499bf07e862d6a10a2c8dc74156ed525823d8459f8:16k:192`.
-Only scores and artifact hashes are logged, not waveform data or complete vectors.
+旧计划还记录过分析 revision 单调性、`syncedToMacAt` 重写审计、speaker merge 模板聚合、公开 DB writer 绕过仓储、DEBUG 迁移清库和孤儿音频生命周期风险。
+它们**不是经本轮复现的活动缺陷**，也不能因删除旧计划就视为已修复；相关代码再次改动时先核对现有迁移/契约与测试。
+LLM/CloudKit/RAG、merge/split 新设计、自动音频缓存清理、routerless/Bluetooth-only、40 人声学质量及分发更新留待另行定范围，不作为本轮已完成能力。
 
-| Clean speech | macOS engine | iOS Simulator engine |
-| --- | --- | --- |
-| 1 second | Needs more audio | Needs more audio |
-| 2 seconds | No match, same-speaker cosine 0.689 | No match, same-speaker cosine 0.686 |
-| 3 seconds | Matched 1089, cosine 0.761 | No match: cosine 0.757 but candidate margin < 0.1 |
-| 5 seconds | Matched 1089, cosine 0.818 | Matched 1089, cosine 0.811 |
+## 必须关闭的产品门禁
 
-Five-second recognition is asserted against an independent utterance; the
-other enrolled speaker stays distinct, and that speaker is rejected after
-unenrollment. This small smoke corpus is **not accuracy calibration** and does
-not justify lowering thresholds for shorter audio. Runtime differences at three
-seconds are retained and reported, not hidden by changing the expected policy.
+1. 在选定最终 build 上复核 NOW-001 用户无线可用报告：USB 不连、同网、发现/真实路径、固定身份重连与重启。未经授权不操作真实设备。
+2. 真实短/长音频双向传输、哈希/文字/播放相等、prefix 中断/终止恢复与丢回执，经两端产品入口验证。
+3. iPhone 保存→无线同步→真实 Mac 模型→版本发布→iPhone 可见结果；取消、重试、过期结果与重新分段保护不丢编辑。
+4. 本地与远端身份/改名/模板、真实来源与兼容模型、授权暂停/撤销、离线修改/重启/删除后保留；与真实声音匹配分开核实。
+5. 自然识别→绑定→提交→已挂载行显示的分阶段延迟，前后台生命周期、持续采集、录音后立即开下一场与资源上限。
+6. NOW-005/006/007 及语言/外观/大字体/键盘/VoiceOver 的原生交互，不以 build 或静态截图替代实际操作。
+7. 最终代码审查、改动后针对性测试、实际包来源/哈希与最终提交/合并/推送记录由协调者补入。未执行项明确保持未验证。
 
-Reproduction uses the existing `swift test` / `TranscriptCore` Xcode scheme.
-Provision `models/` and `audio/` under a unique fixture directory. Host command:
+### 旧 immutable-copy v2 回归入口
 
-```sh
-BACKEND_REAL_CAMPLUS=1 BACKEND_REAL_FIXTURE_DIR="$FIXTURES" \
-swift test --package-path Packages/TranscriptCore --skip-update \
-  --filter 'Voiceprint|ReprocessingVoiceprintTests|SpeakerAnalysisProvenanceTests|LiveSpeakerRepositoryTests'
-```
+冻结来源 `5d61b80f84052897e476b5ff8c1c15f0648e410a`；契约 [MAC_SYNC_PROTOCOL.md](MAC_SYNC_PROTOCOL.md)，codec [MeetingCopyWire.swift](Shared/Sync/MeetingCopyWire.swift)。
+这是明确授权后的新会议副本，不含自动处理/结果回传/身份/声纹/删除传播。不要把新自动同步的能力写入 v2。
 
-For the dedicated iOS Simulator, copy the same fixtures into its own `data/tmp`,
-set `TEST_RUNNER_BACKEND_REAL_CAMPLUS=1` and
-`TEST_RUNNER_BACKEND_REAL_FIXTURE_DIR` to that directory, and run `xcodebuild test`
-with scheme `TranscriptCore`. The exact invocation and selected six suites are
-in `voiceprint-core-ios-final.log`. Native app commands/build hashes are in the
-platform QA receipts. Each runner uses isolated database/build directories.
+- 原生 Mac 右上角 Connection 明确启用副本接收，iPhone 重新连接并显式 Send/Retry；首次 SAS 两端确认，固定身份重连无需重新比较。**不能再使用旧文档的 Command-3 Connection 导航。**
+- 验证完整 hash/可播放 M4A/稳定 ID 后 durable receipt，重试幂等；prefix 中断与重启、丢回执、重复 chunk、changed manifest、错误 hash、disk/SQLite failure 均 fail closed。
+- 现有 meeting/删除 tombstone 冲突不覆盖/复活；撤销接收/取消配对使会话失效；旧 v1/无 TXT hint 不主动 probe；超限在 status 前 `failed/storage`。
+- 现有 XCTest suites：`MacMeetingCopyInboxTests`、`MacMeetingCopySessionTests`、`MacMeetingCopyConnectionTests`、`MacBonjourServiceTests`、`MacPairingIntegrationTests`；UI：`MacMeetingCopyUITests`。按 [README 隔离入口](README.md#严格隔离) 组合 `-only-testing`，使用 `TranscriptMacTests` / `TranscriptMacUITests` target。
+- 日志 subsystem `com.transcript.mac` 的 BonjourPublishing/PairingSession/MeetingCopy 不得记录音频/文本载荷、完整向量或私钥。TCP reference-client 测试不是实际 iPhone sender→Mac 产品验收。
 
-All attempted failures remain in the evidence: the Mac initial run was 26 passed
-and 5 fixture-access failures (Cocoa 513 / POSIX 1), followed by an aborted
-directory-setup attempt before tests. The final signed test host created its
-unique test root within its sandbox and passed 31/31 without production edits
-or permission changes. Preflight process lookup also exited 1 before any tests.
-These are not counted as skipped or erased from the record. Native iOS and both
-final real-model runs had no test failures or skips.
+真 CAM++ 复测沿用已有 runner：在独占 fixture 根准备 `models/`、`audio/`，显式设置 `BACKEND_REAL_CAMPLUS=1`、`BACKEND_REAL_FIXTURE_DIR`，执行 `swift test --package-path Packages/TranscriptCore` 的 `Voiceprint|ReprocessingVoiceprintTests|SpeakerAnalysisProvenanceTests|LiveSpeakerRepositoryTests` 选择。
+iOS 用专用 Simulator 的 `TranscriptCore` scheme 与对应 `TEST_RUNNER_BACKEND_REAL_*` 环境，fixture 须在该测试 host 可访问的隔离目录；准确 selectors/命令见既有 `voiceprint-core-ios-final.log`。
+所有新产物目录按 README 隔离，不复用用户库或旧 session 的临时路径。
 
-The iPhone package is a development-signed `Payload/Transcript.app` IPA, not an
-App Store/TestFlight release. The normal Mac development package is distinct
-from the retained signed XCTest host used for QA; neither claims notarization.
-Package filenames retain production revision `7dac0e3`; later test/docs commits
-have byte-identical production inputs. The package checksums and final main
-integration revision are recorded in the session's packaging receipt after merge.
-No packaged application was installed on the user's iPhone or replaced on Mac.
+## 本轮最终记录
 
-### Post-merge cleanup
-
-The sole Mac target remains `TranscriptMac`, built from `MacApp/` by the root
-`project.yml`. The untracked alternate `mac/` project and superseded untracked
-sync drafts were archived outside the repository in the evidence directory's
-`cleanup-archive/`. Existing localization, package-lock and prototype-runtime WIP
-was preserved in stash `ea328bdb42e678782405c9771c43d75cdacb0bc6`, not mixed into
-the implementation. The earlier overlapping document WIP remains in stash
-`e19ecbaa1e6fda5119b04d55fcc1ae89d6ac88c6`.
-
-All eight retained review comments were checked against their committed fixes,
-replied to with evidence and resolved. The publication/input-fence selection was
-rerun with:
-
-```sh
-swift test --package-path Packages/TranscriptCore --skip-update \
-  --filter 'AutomaticSyncPublicationReviewTests|AutomaticSyncProcessingInputTests'
-```
-
-Result: 12 Swift Testing tests in two suites passed, including parameterized
-delivery-order, branch-arbitration, explicit-clear, coverage, alternate-supplier
-and input-change cases. Evidence: `cleanup-review-regressions.log`. Existing
-`postcommit-mac.log` additionally records production advertisement/retry and
-worker audio-purge regressions. Physical acceptance remains blocked.
-
-Evidence directory:
-`/Users/tingzhen/.copilot/session-state/a4ab0df9-4371-44ee-be89-af180b56d832/files/`.
-Final commit/build receipts are recorded below after integration; earlier passes
-do not automatically certify later edits.
-
-| Evidence | Result | Meaning / limit |
-| --- | --- | --- |
-| `core-integrated-migration-fixed.log` | 18 XCTest + 204 Swift Testing tests passed | Final Core CRDT, migration, provenance, recording and deletion selection. |
-| `mac-final.log` / `mac-final.xcresult` | 209 tests, one explicit opt-in skip, zero failures | Signed Mac integration, model/workflow, voiceprints, legacy copy, Bonjour and pairing. |
-| `ios-final.log` / `ios-final.xcresult` | 152 tests, zero failures | iOS recording, playback, search, deletion, synchronization and existing-row identity rendering. |
-| `postcommit-mac.log` / `postcommit-mac.xcresult` | 30 tests, zero failures | Exact integration commit: 19 independent QA, channel, real startup/retry and input-purge fence checks. |
-| `postcommit-device-build.log` | BUILD SUCCEEDED | Actual generic iOS device target, unsigned and not physically installed. |
-| `build-receipts.txt` | Exact executable hashes/version receipts | Mac signed XCTest host 0.1.0 (1); iOS device build 1.0 (1). These are not installed-phone receipts. |
-| `integration-production.sha256`, `integration-production-check.log` | All production hashes match | Post-commit production bytes unchanged. Reviewer digest below. |
-| `ios-integrated-current.log` | 93 tests passed | Intermediate iOS library/identity/network integration; not final physical evidence. |
-| `ios-frozen.log` / `ios-frozen.xcresult` | 152 tests, one failure | Playback fixture called a never-persisted meeting “Saved”; corrected to a persisted saved meeting. `ios-final` passed. |
-| `mac-repaired-targets.log` / `.xcresult` | 82 tests passed | Includes 14 independent sync QA, 26 pairing, 23 processing and 11 voiceprint tests. |
-| `mac-keychain-signed.log` | One real Keychain test passed | The earlier unsigned `-34018` failure is not hidden or treated as a product regression. |
-| `mac-candidate.log` / `.xcresult` | 199 tests, one skip, four assertions failed | Consent/opaque-artifact counts and persisted-date fixture assumptions corrected; final Mac run passed. |
-| `wireless-environment.txt` | Read-only observations | Reachable `en0`; firewall remained enabled, block-all off. Not an application's physical network path. |
-| `source-freeze.sha256`, `freeze-check.log` | Source snapshot | Records review/test source; documented test-fixture changes are not silently described as identical bytes. |
-
-The isolated existing-row capture recorded assignment **66.95 ms**, correction
-**66.74 ms** and rename **66.59 ms**, each under its asserted one-second deadline.
-Off-main OCR completed later and is not counted as UI propagation. Evidence:
-`live-render-evidence/manifest.json`, its `render-bound-*` text attachments and
-the corresponding synthetic screenshots. These are not natural inference
-latencies or physical display scan-out measurements.
-
-Failed evidence is retained: dependency-resolution/cache errors, intermediate
-compiler failures, the initial one-second rendering failures, unsigned Keychain
-failure, and signed-test attempts that used non-sandbox fixture directories.
-Fixtures now use application-accessible temporary directories; no firewall,
-sandbox entitlement or trust check was disabled to make them pass.
-
-The unchanged baseline `nemotronIsTheOnlyTranscriptionEngine` assertion conflicts
-with the already-present Apple Speech engine. It was separately reproduced and
-excluded from selected validation, not “fixed” as part of this work. Actual model
-tests remain opt-in; their skips do not prove model inference.
-
-Final-review failures were not waived: discovery had omitted the automatic
-capability advertisement; transcript installation could overwrite early target
-edits; competing publications diverged; Unknown/uncovered intervals inherited
-known identities; full processing-input fences and alternate-source receipts were
-not fully wired. These were repaired and covered by independent regression tests.
-The first new QA fixtures also lacked actual audio resources; they were replaced
-with transferred/adopted synthetic AAC rather than weakening input fences.
-
-### Reproduction commands
-
-Use the existing generated project (`xcodegen generate`) and runners only.
-Common Xcode flags used:
-
-```sh
--project Transcript.xcodeproj
--clonedSourcePackagesDirPath /tmp/transcript-bidir-a4ab-packages
--disableAutomaticPackageResolution -skipPackageUpdates
--parallel-testing-enabled NO
-```
-
-Core command and exact test output are in `core-parent-final.log`. Mac commands
-are recorded at the start of each Mac log; signed tests use the configured
-development identity and an explicit `TRANSCRIPT_MAC_TEST_RUN_ID`. iOS commands
-use scheme `TranscriptTests`, simulator
-`5ABE51F3-3920-4AC6-9300-32AFBB8ED918`, and a unique `TRANSCRIPT_TEST_RUN_ID`.
-No package versions or global Git configuration were changed to restore caches.
-After evidence capture, the dedicated simulator and parent-owned temporary
-DerivedData/package caches were removed. Reproduction therefore needs ordinary
-dependency resolution or a fresh private cache. Exact app bundles are preserved
-under the evidence directory's `builds/`; their executable hashes match
-`build-receipts.txt`.
-
-## Isolation deviation
-
-The live-identity worker initially used pre-existing simulator
-`A565D0B8-502B-4BA0-9704-E6D4845065BA` before processing the explicit prohibition.
-Its database/keychain test namespace was isolated, but app bundles were installed
-and standard preferences were read/temporarily changed. **Zero impact or zero
-user-data access cannot be asserted.** Those results do not count toward final
-acceptance. The disclosure is in
-`.build/ios-live-observation/shared-simulator-disclosure.json`.
-An enduring copy is also in `files/live-shared-simulator-disclosure.json`.
-
-Subsequent parent execution used the dedicated simulator. The shared simulator
-was not reset, cleaned or “restored” speculatively. No physical-phone installation,
-trust confirmation or system-permission change was performed.
-
-## Mandatory gates still open
-
-| Gate | Status |
-| --- | --- |
-| Installed final iPhone/Mac builds, USB removed, same Wi-Fi, actual endpoint/path, discovery and trusted reconnect | **BLOCKED: requires coordinated physical-device access and permissions.** |
-| Real short and large audio in both directions, playback/text equality, interrupted/terminated transfers and lost receipts through both product UIs | **NOT RUN on physical products.** Unit fixtures are not substitutes. |
-| Offline identity/name/artifact changes on both devices, actual model provenance and matching, restart and deletion retention | **NOT RUN with real voices.** Synthetic-vector properties are explicitly separate. |
-| iPhone save → wireless sync → real Mac model processing → published result → visible iPhone result, including reconnect/cancel/retry/stale work | **NOT RUN as a physical end-to-end loop.** |
-| Natural recognition event → binding → commit → observed/rendered existing row, with inference latency separated | **NOT RUN with real audio/device lifecycle.** |
-| English/Chinese, dark/light, long names, keyboard, VoiceOver and all native Settings actions | **PARTIAL:** resources/build/component rendering checked; full native interaction matrix pending. |
-| Independent final integrated code review and exact build receipts | **PASS for the code commit above.** Not physical acceptance. |
-
-Bluetooth-only and routerless peer-to-peer operation are evaluation items, not
-this release gate. Existing `includePeerToPeer` use is not a Bluetooth-only
-implementation or proof of routerless connectivity.
-
-## Integration receipts
-
-| Logical change | Local commit | Verification |
-| --- | --- | --- |
-| Live identity observation | `b380cf7081c29eaa59e83e2c55c4124527af0a20` | Independent live review; `ios-live-postcommit.log` passed. |
-| Shared protocol/persistence | `b1b8e0b939f19960fdecc8bc7b928a703a1d28ff` | Core selection: 222 tests; CRDT, schema, resources, identity provenance and publication. |
-| Authenticated transport/consent | `2151930fb1f64c6d9b8c7e0297bc988af340cb7e` | `AutomaticSync*Tests`, `MacPairingIntegrationTests`, `IOSMacPairingClientTests`, recovery tests. |
-| iOS replicated-library UI/deletion | `d3470b6ad420e04391d0a818888905f755b554be` | `LibraryObservationTests`, `HomeSearchTests`, playback/deletion tests. |
-| Mac Settings/automatic processing/integration | `256ee83145d74ad39096381d868baf2b879b1365` | `MacProcessingTests`, `MacLibraryTests`, model, voiceprint, pairing and copy tests. |
-
-Requirement mapping: wireless/connection/automatic exchange use the transport and
-Mac commits; model Settings and processing use the Mac commit; edits use Core,
-transport and iOS-library commits; voiceprints use Core, transport and Mac commits;
-live identity uses the live-observation commit. Exact test invocations are retained
-at the start of the corresponding logs, including all selectors and isolation IDs.
-
-Independent reviewer production digest:
-`6f612556946f13ba51f250d09b0a0c92219a6bd6190ae8419ae80f9e8d81ea75`.
-
-No push was performed. **The overall physical-device release gate remains blocked,
-not passed.** A future coordinated run must install the chosen integration build
-on both products and record those actual installation receipts.
+**待协调者在修复与 QA 结束后填写**：修复提交、真实执行测试/失败与重跑、未覆盖条件、设备/权限边界、最终 build 来源、merge/push 回执。
+本次文档合并只整理范围与证据，不关闭任何 NOW/BUG/REQ 项。

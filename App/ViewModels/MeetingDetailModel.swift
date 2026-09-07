@@ -7,7 +7,7 @@ struct SpeakerRenameAction: Equatable, Sendable {
     let name: String
 }
 
-/// Backs `MeetingDetailView` (UI.md §3): transcript + speaker data for one meeting,
+/// Backs `MeetingDetailView`: transcript + speaker data for one meeting,
 /// plus the audio player driving tap-to-seek and the current-line highlight.
 @MainActor
 @Observable
@@ -282,7 +282,7 @@ final class MeetingDetailModel {
         loadFailure = nil
     }
 
-    /// Core interaction (UI.md §3b): tapping a transcript line jumps playback there.
+    /// Tapping a transcript line jumps playback there.
     func seek(to utterance: Utterance) {
         playback.seekAndPlay(toMs: utterance.startMs)
     }
@@ -393,9 +393,9 @@ final class MeetingDetailModel {
         }
     }
 
-    /// Renaming is iPhone-only and always allowed post-recording (UI.md §4.2); this
-    /// screen is only ever reached post-recording. An empty name reverts to the
-    /// anonymous animal name rather than storing a blank display name.
+    /// Renames the global speaker by stable ID; authorized sync propagates the
+    /// change to paired devices. An empty name reverts to the anonymous animal name
+    /// rather than storing a blank display name.
     func renameSpeaker(id speakerId: String, newName: String) async {
         await renameSpeaker(action: SpeakerRenameAction(speakerId: speakerId, name: newName))
     }

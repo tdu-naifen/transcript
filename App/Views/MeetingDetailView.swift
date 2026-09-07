@@ -1,7 +1,7 @@
 import SwiftUI
 import TranscriptCore
 
-/// Meeting detail screen (UI.md §3): transcript in forward order with tap-to-seek
+/// Meeting detail screen: transcript in forward order with tap-to-seek
 /// playback, participants folded into the header, engineering info behind `⋯`.
 struct MeetingDetailView: View {
     @Environment(\.dismiss) private var dismiss
@@ -642,7 +642,7 @@ private struct MeetingReprocessingSheet: View {
     }
 }
 
-/// One row inside the expanded participants list (UI.md §3c): color dot, `resolvedName`,
+/// One row inside the expanded participants list: color dot, `resolvedName`,
 /// share-of-talk percentage, and a rename affordance — the whole row is tappable so
 /// already-named speakers can still be renamed.
 private struct ParticipantRow: View {
@@ -673,7 +673,7 @@ private struct ParticipantRow: View {
     }
 }
 
-/// One transcript line (UI.md §3b). Tapping the line seeks + plays; tapping the
+/// One transcript line. Tapping the line seeks + plays; tapping the
 /// speaker name specifically opens rename instead (an equivalent entry point to the
 /// participants list).
 private struct TranscriptRow: View {
@@ -943,7 +943,7 @@ private struct SpeakerTimeline: View {
     }
 }
 
-/// Engineering info moved off the main screen (UI.md §3d): SHA-256, file size, on-disk
+/// Engineering info moved off the main screen: SHA-256, file size, on-disk
 /// status, sync timestamps, state/`failedFromState`.
 private struct EngineeringDetailSheet: View {
     let meeting: Meeting

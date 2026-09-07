@@ -1,7 +1,6 @@
 import Foundation
 
-/// Maps a playback position to the transcript line that should be highlighted
-/// (UI.md §3: "the line currently being played is visually highlighted").
+/// Maps a playback position to the transcript line that should be highlighted.
 public enum TranscriptPlaybackPosition {
     /// Index of the last line whose `startMs` is at or before `positionMs`. `utterances`
     /// is assumed sorted ascending by `startMs` (the detail screen's forward render
