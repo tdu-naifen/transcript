@@ -15,8 +15,84 @@ packages:
     path: Packages/TranscriptCore
   FluidAudio:
     path: Packages/FluidAudioEvidence
+  MLXSwiftLM:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    exactVersion: 2.29.3
+  MLXSwift:
+    url: https://github.com/ml-explore/mlx-swift
+    exactVersion: 0.29.1
+  Transformers:
+    url: https://github.com/huggingface/swift-transformers
+    exactVersion: 1.1.6
+  Textual:
+    url: https://github.com/gonzalezreal/textual
+    exactVersion: 0.3.1
 
 targets:
+  TranscriptMac:
+    type: application
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: MacApp
+      - path: Shared/Pairing
+      - path: Shared/Sync/MeetingCopyWire.swift
+    dependencies:
+      - package: TranscriptCore
+        product: TranscriptCore
+      - package: FluidAudio
+        product: FluidAudio
+      - package: MLXSwiftLM
+        products: [MLXLLM, MLXLMCommon, MLXEmbedders]
+      - package: MLXSwift
+        product: MLX
+      - package: Transformers
+        product: Transformers
+      - package: Textual
+        product: Textual
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.transcript.TranscriptMac
+        PRODUCT_NAME: TranscriptMac
+        INFOPLIST_FILE: MacApp/Info.plist
+        CODE_SIGN_ENTITLEMENTS: MacApp/TranscriptMac.entitlements
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: YUU54K6BSS
+        GENERATE_INFOPLIST_FILE: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        SWIFT_UPCOMING_FEATURE_EXISTENTIAL_ANY: YES
+
+  TranscriptMacTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: MacAppTests
+      - path: Packages/TranscriptCore/Tests/TranscriptCoreTests/MigrationTests.swift
+    dependencies:
+      - target: TranscriptMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.transcript.TranscriptMacTests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: YUU54K6BSS
+
+  TranscriptMacUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    deploymentTarget: "26.0"
+    sources:
+      - path: MacAppUITests
+    dependencies:
+      - target: TranscriptMac
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.transcript.TranscriptMacUITests
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: YUU54K6BSS
+
   Transcript:
     type: application
     platform: iOS
@@ -108,6 +184,22 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
 
 schemes:
+  TranscriptMac:
+    build:
+      targets:
+        TranscriptMac: all
+        TranscriptMacTests: [test]
+        TranscriptMacUITests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - TranscriptMacTests
+        - TranscriptMacUITests
+    archive:
+      config: Release
+
   TranscriptTests:
     build:
       targets:

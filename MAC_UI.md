@@ -1,8 +1,108 @@
 # Mac UI — 本地会议处理与知识库
 
-> 更新：2026-09-05
-> 状态：基于本轮讨论与用户认可的交互 demo 整理的设计规格。连接、任务、编辑同步已讨论；具体模型、RAG 交互和冲突实现仍有待决策项。
+> 更新：2026-09-06
+> 状态：设计规格 + 原生 Mac 实现。已接入固定协议的认证会议副本接收；包含备份目录、模型目录、本地转写及 LLM / embedding。真实 iPhone 双端验收由 iOS owner 统筹；双向同步、结果回传及 Mac 40 人处理不包含在本次接收协议中。入口见 [Mac copy QA](MAC_COPY_QA.md)。
 > 配套：[iOS UI](IOS_UI.md)、[工程计划](PLAN.md)、[问题清单](BUGS.md)。
+
+## 2026-09-06 原生 Mac 首版
+
+本次只修改 Mac App、Mac 测试与必要工程配置，不改变 iPhone App 或共享 `TranscriptCore` 的生产实现。
+
+### Mac 本地处理扩展
+
+- **转写到 RAG 的接线**：此前候选稿仅存在 Processing，RAG 读取不到。现在对本机导入、尚无转写的会议，提供显式“将转写用于资料库和 RAG”；核对原始音频和会议快照后，在同一数据库事务中检查空转写并插入，重复操作幂等。已有文字、编辑或 iPhone 来源会议不覆盖，不创建同步回执。RAG 无转写时显示具体步骤并提供 Processing 入口，模型设置独占一行，不挤在标题栏里。
+- **集成门禁**：iOS owner 已报告 main 的 P0 音频持久化修复 `cca48e8` + App `199081f`（基于 `34878b4`）提交并验证；后续集成必须纳入，不代表当前 Mac 分支已集成。当前不 cherry-pick 或移动进行中的 iOS WIP。并行录音 / 本地处理任务迁移由 iOS 单 writer 独占。
+- **固定副本协议**：使用 iOS owner 交接的 `5d61b80f84052897e476b5ff8c1c15f0648e410a` 文档和 codec，原样接入，不混用历史草案。认证握手保持 v1，双端 ready 后在同一加密通道内协商 `immutableMeetingCopy.v2`，使用 768 字节块及持久回执。默认不接收，必须在 Mac 明确启用，再由 iPhone 主动 Send/Retry；不自动发送、覆盖、处理或回传。
+- **备份**：Settings → Backups 选择本地、外置盘或 iCloud Drive 目录；用 security-scoped bookmark 保留授权。SQLite backup API 生成一致快照，按快照中的音频引用复制并校验哈希，完成后才发布备份包。v2 备份同时保存已完成的本地 ASR 候选稿及文本 / 时间戳 / 模型来源信息，排除未完成任务、临时输入、模型路径与授权 bookmark；仍支持校验 v1 备份。工作数据库始终保留在 Mac 本地。
+- **备份边界**：备份可能包含录音、转写、身份和声纹向量，不额外加密；不导出配对密钥和模型权重。历史备份不会随当前资料删除自动清理。本地完成不等于 iCloud 已上传。“Verify Snapshot”只校验，不恢复、不改当前资料库。
+- **模型目录与处理**：模型卡、模型选择与实际 runtime 兼容性分开；Hugging Face 仓库并不都能直接运行。Mac 的 ASR 候选版本与 iOS 录音任务隔离，不新增共享任务迁移、同步 outbox 或协议消息。
+- **人数限制**：现有 Sortformer 只有 4 个模型槽位；全局身份库可以保存更多人，不代表单场 40 人识别已支持。动态聚类路线待 iOS 研究与单 writer 协调，不能通过去掉 UI 过滤伪装支持。
+- **分析复用**：复用 MLX Swift LM 的语言模型和文本 embedding 推理、Textual 的原生 Markdown 显示；会议证据、时间定位与索引失效由 Mac 适配。默认仍为 Apple 语言模型 + 关键词检索，可独立选择 Apple English 句向量或兼容 MLX embedding。选择不等于模型已安装或可以运行。
+- **模型文件**：MLX 使用 Apple 芯片和本地兼容权重目录，或由用户明确下载受支持仓库的固定 40 位 commit。应用不会自动下载权重或执行任意模型卡代码。
+- **检索边界**：语义索引仅驻留内存，最多 512 个转写片段；模型版本、向量维度、资料内容变化后重建。摘要使用有预算的时间顺序片段，不冒充整场总结。引用校验保证来源存在，不证明模型结论正确；Markdown 外部图片与任意链接默认不加载。
+- **验证状态**：本次 Mac XCTest 目标运行 197 项（1 项真实模型测试按 opt-in 跳过，0 失败），另有 16 项 Swift Testing 迁移测试通过；索引修复后的 45 项接收测试再次通过。原生接收权限开关、重启保留测试通过。此前公开 AMI 音频已实际跑通 Nemotron、入库、Apple embedding 和引用生成；这不等于 RAG 全 UI 或真实 iPhone 互通已验收。未操作用户 iPhone。
+
+### 新确认：删除会议与声纹保留
+
+- iPhone 发起“删除会议”代表删除整个会议；Mac 下次成功同步该删除操作后，也必须删除对应会议副本。不是仅清理 iPhone 本地缓存。
+- 删除范围包括会议记录、原始音频副本、转写、会议内说话人关联及会议派生分析 / 索引。不得删除全局 `Speaker` 身份、最初动物名或 `SpeakerEmbedding`；没有任何存活会议引用的身份仍须出现在声纹资料页。
+- embedding 不是音频，不能用它还原或播放原始声音。删除会议后不得暗中保留其音频来支撑“声音样本”按钮。未来如果增加独立样本收藏，需要用户明确保存，并单独定义其删除行为。
+- **同步删除尚未实现**：现有配对工作不代表已有数据同步或删除回执。跨端契约需要持久 tombstone，至少绑定稳定 meeting ID、删除 operation ID、来源设备和可排序版本；认证的同步层收到后幂等处理，持久化成功才回执。接收端必须拒绝恢复同 ID 的过期会议更新，并取消 / 丢弃该会议的进行中任务结果。
+- tombstone 的保留与回收、已配对设备的确认进度、恢复 / 重新导入是否生成新 ID，需要在同步协议中定案。本次不单方面增加 delete 网络消息，也不把本地删除显示成“所有设备已删除”。
+
+### 新增页面：声纹资料
+
+- Mac 侧栏独立入口，不从当前会议列表反推身份集合。
+- 展示当前显示名、最初分配的动物身份名，以及实际保存的 embedding 的模型版本、维度、样本数和更新时间。
+- 声音特征使用实际向量的维度条形图；正负值围绕零轴显示。缩放只服务可视化，不改写原向量；不将其标为波形、音高或音色的可解释测量。
+- 缺少 embedding、旧记录缺少模型版本、向量损坏或非有限数分别提示；不生成看似真实的随机声纹填补空白。
+- 声纹属于敏感生物特征，本页本地只读，不新增导出、跨设备发送或后台上传权限。
+- 已实现 [MacVoiceprintsView](MacApp/Voiceprints/MacVoiceprintsView.swift)，侧栏入口“声纹资料”与 `⌘4`；从全局仓库独立加载，不读取只读示例会议作为真实身份。
+- 验证：8 个声纹数据 / 向量 / 搜索 / 错误恢复测试与 1 个原生导航测试通过。已集成本地 main 的 `7616500` / v7 修复与 `9b1aea3` 直接删除回归，移除旧分支测试的临时预删关联步骤。正式契约是只调用一次 `MeetingRepository.delete`，由数据库事务级联会议子记录；成功后才能清理音频，失败不得删音频。
+- Mac 单元测试目标直接复用 Core 的 `MigrationTests.swift`，包含 `directMeetingDeletionPreservesOtherMeetingAndGlobalVoiceprints()`，不复制或改写共享测试。该契约不包含尚未定义的跨端 tombstone / ack。
+
+### 新增页面：LLM Analysis
+
+- 独立侧栏入口与 `⌘5`，提供 Chat / RAG / Summary；使用 macOS 26 Foundation Models 在设备本地运行，不请求云端、不启动 Python 服务。Apple Intelligence 的不支持 / 未启用 / 资源未准备好分别提示。
+- Chat 是不读取会议资料的普通聊天，明确不提供会议引用。RAG 与 Summary 仅使用真实已保存的转写；示例资料库绝不作为实际会议证据。
+- 默认 RAG 使用关键词匹配转写片段；本地处理扩展新增可选语义 embedding 检索，不是混合检索。标题命中不能单独充当事实证据。Summary 必须选择会议；受上下文预算限制时标明“仅分析所提供片段”，不冒充整场总结。
+- 所有基于会议的回答段落必须携带合法 evidence ID。使用 `@Generable` 约束输出结构，App 再校验引用，拒绝不存在或缺失的引用；来源卡的会议、说话人、时间戳与原文全部由真实记录解析，不采用模型自报数据。
+- 引用可打开会议并定位到原文 / 音频时间，默认不自动播放。资料库内容、版本或身份显示名变化会取消进行中的生成并清空旧回答；已删除来源不可打开。引用校验只能保证来源真实存在，不能替代人对推理结论的核对。
+- 会话只保存在内存，离开页面或清空会话即移除；历史与 prompt 有明确预算，不无限累加上下文。转写内容作为不可信证据，模型不获得工具、文件修改、声纹编辑或同步能力。
+- 已验证 13 个分析测试（含真实本机模型的带引用生成，非 mock-only）、来源定位测试，以及原生分析模式 / 空资料库 UI 测试。
+
+### 已实现
+
+- 独立 macOS 26+ SwiftUI target / scheme：`TranscriptMac`，入口 [TranscriptMacApp.swift](MacApp/TranscriptMacApp.swift)。不是 WKWebView 或 Catalyst。
+- 原生侧栏、可调整宽度的会议列表 / 阅读区、固定播放器、说话人洞察、处理队列状态页、设备发现页、独立 Settings 窗口。
+- 浅色 / 深色 / 跟随系统与增强对比度，品牌 RGB 对齐 iPhone；英语和简体中文随系统语言。列表用显式品牌选中底色，避免 AppKit 默认强调色覆盖；保留上下键选择、原生搜索与 `⌘1 / ⌘2 / ⌘3` 导航。
+- 本地 M4A 导入：原文件不变；在后台复制、校验容器、解码验证、计算时长和 SHA-256，再写入现有 `TranscriptCore` 仓库。副本、SQLite 数据库与本机数据来源 ID 保存在沙盒 Application Support 的 `TranscriptMac` 子目录中。
+- 原始音频播放 / 暂停 / 定位，本地标题重命名，按标题或已保存转写搜索，重启后读取资料库。失败显示原因；失败导入清理自身副本。
+- 明确标识的只读示例资料库，不写数据库、不传输、不带假音频。切换会议、示例或页面时卸载上一次音频，避免串播。
+- Mac 侧 `NWListener` 发布 `_vtscribe._tcp`；用户主动开启，显示真实发布状态、服务重命名、权限 / 网络失败与重试。关闭窗口不退出 App，发现可继续；退出会撤销服务。
+- Mac 认证配对服务及真实六位码确认 UI：双方先提交密钥承诺再揭示，X25519 / Ed25519 认证交换、HKDF-SHA256、ChaChaPoly 加密帧；两端均确认才保存信任。Keychain 持久身份、固定公钥重连、拒绝、超时、断开与取消配对。协议与 iOS 接入契约见 [MAC_PAIRING_PROTOCOL.md](MAC_PAIRING_PROTOCOL.md)。
+- 已集成 iOS 固定提交 `33b30b5`，Mac 与 iOS target 共同编译 [Shared/Pairing](Shared/Pairing) 的 Crypto / Transport / IdentityStore 三份源文件；Mac 原同名副本已移除，密码协议没有重写。`MacPairingServer` 仍为 Mac 专有，iOS 使用独立生产客户端状态机。单端测试通过不代表 Simulator 与原生 Mac 服务的互通或双端 UI 已验收。
+- 新配对需明确开启（两分钟 / 最多五次尝试）；握手十秒、人工确认六十秒、已认证连接空闲一百二十秒超时。发现名称不是身份；断开保留信任，取消配对删除信任但不删除会议。
+- App Sandbox、网络 server / client entitlement、用户选择文件读写与持久 bookmark 权限（用于备份目录）、本地网络隐私声明。无需麦克风权限，也不会启动录音。
+
+### 明确未实现
+
+- **可发现不等于已配对。** 已验证 Mac 与独立参考客户端的认证配对，不代表尚未接入该协议的 iPhone 版本已经可用。
+- iPhone 文件接收、结果回传与冲突合并仍需两端协议协作。当前网络接口仅接受配对与加密 ping / pong，不接触音频、转写、会议元数据或声纹；即使已配对也不能同步会议。
+- 当前使用应用层承诺式 SAS 加密协议，不是 TLS，不跳过证书验证。短码需要用户逐位比较；该自定义组合在用于生产私密数据传输前仍需独立密码学审查。
+- Mac 声纹提取、40 人 diarization、混合 RAG、转写候选自动应用与跨设备任务调度尚未接入；ASR 本地候选版本、可选语义 RAG 见本地处理扩展。模型不可用时不使用假结果或模拟进度。
+- 本轮不修改 iOS `AppColors`。Mac 品牌值有测试约束；未来共享设计模块的抽取应作为单独的跨端改动进行。
+
+### 构建与测试
+
+在仓库根目录执行：
+
+```sh
+xcodegen generate
+xcodebuild -project Transcript.xcodeproj -scheme TranscriptMac \
+  -destination 'platform=macOS' build
+xcodebuild -project Transcript.xcodeproj -scheme TranscriptMac \
+  -destination 'platform=macOS' test
+```
+
+MLX 构建需要 Xcode Metal Toolchain。若编译明确提示缺少该组件，执行 `xcodebuild -downloadComponent MetalToolchain` 后重试。新增依赖仅链接 Mac target：MLX Swift LM 2.29.3、MLX Swift 0.29.1、Transformers 1.1.6、Textual 0.3.1。
+
+也可以在 Xcode 选择 `TranscriptMac` → My Mac → Run。**真实 Keychain 配对需要开发签名、Mac App provisioning profile 与 application-identifier / keychain-access-groups entitlement。** 首次命令行构建可加 `-allowProvisioningUpdates` 使用已配置的开发团队创建 / 获取 profile。关闭签名或 ad-hoc 签名只能检查部分编译，不能据此宣布配对可用；Data Protection Keychain 会拒绝缺少身份 entitlement 的 App（`-34018`）。这不等于已完成公证或分发签名。
+
+**网络权限有两层：**「隐私与安全性 → 本地网络」允许局域网发现；macOS 防火墙另外控制 App 的传入连接。如果系统出现“是否允许 Transcript 接受传入网络连接”的 Allow / Deny 弹窗，Bonjour 可能已能发现 Mac，但配对握手仍被阻止。需要配对时，由用户在该弹窗或「网络 → 防火墙 → 选项」允许此 App；不应关闭整个防火墙，也不自动点击权限弹窗。Connection 页面明确说明两项权限。
+
+真实 Bonjour 测试区分发现、TCP 建立、服务端接入与协议超时。连接尚未建立时，失败日志提示检查独立的 Firewall / Local Network 权限，不将其误报为密码学回归；测试仍失败，不静默跳过。核心认证协议另有真实本机回环 TCP 测试覆盖，不依赖自动放行系统防火墙。
+
+测试包括：
+
+- `TranscriptMacTests`：12 个 Bonjour 生命周期 / 真实发现与撤销测试、14 个音频 / 资料库持久化与错误恢复测试、5 个配色 / 样例 / 键盘选择 / SF Symbol 测试。
+- `MacPairingIntegrationTests`：真实 TCP 参考客户端验证匹配握手、双方确认、加密 ping、错误码、双方拒绝、承诺篡改、错误签名、握手 / 确认超时、固定身份重连、身份变化、取消配对、重放、密文篡改、提前数据 / 乱序消息、超大 / 残帧、未开启配对与存储失败；另有真实 Keychain 跨实例身份 / 信任持久化测试。测试不以模拟 Connected 代替网络握手。
+- `TranscriptMacUITests`：2 个原生 UI 测试，覆盖会议与键盘选择、页面导航、Settings、中文深色与示例不播放旧音频。使用独立临时资料库；不替用户开启网络发现。
+- macOS XCTest 静态文本通常通过 accessibility `value` 而非 `label` 暴露。UI 截图限定为 App 窗口，不截取整个桌面。
+
+首次打开真实资料库为空。可点“导入音频…”（`⌘O`），或点“查看示例资料库”检查设计；Connection 中手动开启发现和配对后，只有实现 [配对契约](MAC_PAIRING_PROTOCOL.md) 的客户端才能完成双方确认。未改动的旧 iPhone 客户端仍只能发现 Mac。会议传输尚不可用。
+
+macOS 本地网络隐私与防火墙是两项独立授权。系统询问是否允许 `TranscriptMac` 接收传入连接时，需要用户选择允许；否则 Bonjour 可见仍不代表 TCP 能连通。只允许本 App，不关闭全局防火墙。自动化的真实 Bonjour/TCP 测试也受此权限影响，不能用调大超时或跳过测试掩盖未授权状态。
 
 ## 1. 产品定位与本轮范围变化
 
@@ -34,6 +134,58 @@ iPhone 负责随手采集、实时转写与浏览；Mac 利用更充足的计算
 
 ## 3. 窗口结构
 
+### 2026-09-06：Mac / iPhone 统一视觉稿
+
+本次要求：**两端使用同一套颜色，不另立 Mac 配色。**
+
+交互设计稿：[打开 Mac App 预览](design/mac-app.html)。可直接用浏览器打开，无外部资源或依赖。它包含会议阅读、处理队列、连接场景、设置结构，以及同一套颜色变量驱动的 iPhone 对照。示例会议为虚构；不是可运行的原生 Mac App，不实现 Bonjour、身份验证、模型推理或音频播放。
+
+#### 颜色基线
+
+以当前 iOS **实际代码**而不是旧 demo 的近似描述为准：
+
+| 语义 | 浅色 | 深色 | 增强对比度 |
+|---|---|---|---|
+| 品牌 / 实心操作底色 | `#06229E` | `#06229E` | 不变，白色图标 / 文字 |
+| 链接、选中标签、线框等交互前景 | `#06229E` | `#90AEFF` | 深色改为 `#C3D4FF`；浅色不变 |
+| 设置分组背景 | RGB `(0.975, 0.97, 0.96)` | 系统 grouped background | 跟随系统 |
+| 正文 / 次要文字 / 分隔线 | 中性系统语义色 | 中性系统语义色 | 增强对比度，不能只提高透明度 |
+| 参与者颜色 | 复用 iOS `Speaker.colorIndex` 与 palette 顺序 | 对应深色变体 | 始终同时显示名字 |
+| 连接状态 | 绿 + 已连接；红 + 未连接 / 错误 | 对应可读变体 | 始终带文字 |
+
+来源：[AppColors.swift](App/Support/AppColors.swift)、[FloatingRecordButton.swift](App/Views/Components/FloatingRecordButton.swift)、[Format.swift](App/Views/Format.swift)。深蓝填充和可读前景是两个不同 token，不能在深色模式把所有蓝色统一替换为深蓝。
+
+预览中的 Mac 与 iPhone 不各自定义主题；共同继承根级 CSS token。中性色与系统参与者颜色的网页值是视觉近似，不能当作 UIKit / AppKit 动态颜色的精确截图。暖色用于设置与辅助区域，不将所有 iOS 内容背景改为米色。
+
+原生落地时应先将品牌常量、动态 tint 与参与者 palette 收敛到两端共同引用的 SwiftUI 设计模块 / 资源，再让 iOS `AppColors` 和 Mac 主题消费它；不要复制两份十六进制常量。相同外观与对比度下，品牌 RGB 必须相等。系统 material 可随平台不同，品牌色不能随 macOS 用户强调色漂移。本轮未修改 iOS 生产配色。
+
+#### 布局与视觉层级
+
+- 默认窗口建议约 `1280 × 800`；原生最小宽度建议 `900pt`，窄于默认时折叠列表 / 侧栏，不压缩阅读字号。网页小屏纵向排列只是方便查看设计稿，不是 Mac 导航实现。
+- 顶部统一 toolbar；侧栏约 `184pt`，会议列表约 `264pt`，正文弹性布局。Mac 不照搬底部 tab bar 或悬浮录音按钮。
+- 侧栏只放会议、处理队列、设备连接；底部持续显示设备状态。设置使用独立 Settings scene。Ask / Knowledge 仍是后续阶段，不新增伪可用入口。
+- 白 / 深中性内容面板，暖灰辅助侧栏，浅蓝选中底色。品牌蓝集中在主操作、选中态、时间戳与播放器，避免大面积蓝色仪表盘。
+- 正文优先：标题约 `27pt`、分区标题 `20pt`、正文 `13–14pt`、元数据 `11–12pt`。字体使用系统 SF / 中文系统字体，正文行高约 `1.8`。正式 App 随文本尺寸设置适配，不能固定容器高度截字。
+- 会议详情采用标题 → 日期 / 来源 → 参与者 → 转写 / 洞察 / 摘要 → 底部播放器。参与者只有色点染色；点击时间戳定位音频。摘要页在稿中标明“未来能力 / 示例内容”。
+- 连接页用 iPhone 与 Mac 的线框插图解释协作，两端短码并列确认，不把技术协议参数放在主视觉里。Bonjour 类型留在工程层，UI 使用可读设备名称。
+
+#### 关键状态与交互验收
+
+- 首次未配对、收到请求、等待另一端确认、已连接、离线、本地网络权限关闭、身份不匹配均有独立文案。配对码仅是静态场景素材，不能用于生产认证。
+- 单端确认不能进入成功状态；拒绝返回未配对。忘记设备先确认，不删除会议。iPhone 对照同步呈现连接状态，但不冒充真实设备反馈。
+- 已连接仍可显示“分析模型未配置 / 尚未同步”，不把网络、模型与数据送达合并为一个绿点。
+- 处理队列展示可靠接收、重新转写、排队和资源缺失；不使用伪装真实进度的自动计时动画。
+- 原生使用 `NavigationSplitView`、`List(selection:)`、`.searchable`、系统 toolbar / Settings scene；搜索与 sidebar 保持 macOS 键盘行为。网页红黄绿窗口点只是装饰。
+- 两端同外观联动验收浅色、深色和增强对比度；原生测试校验共同 token 的 RGB 与文字对比度，同时回归 VoiceOver、键盘焦点、长标题和中英混排。
+
+#### 本次预览验证
+
+- 浏览器检查了会议标题 / 正文搜索、空结果、详情切换、三个内容标签、键盘激活时间戳、播放器外观、处理队列、设置与 Escape 关闭。
+- 配对场景检查了两种确认顺序、单端确认不成功、拒绝、忘记设备的取消 / 确认，以及离线、权限关闭、身份不匹配。均为内存中的模拟状态。
+- 浅 / 深色 × 普通 / 增强对比度四种组合，实测 Mac / iPhone 的品牌填充、交互 tint 与同身份色点一致。品牌白字对比度约 `12.14:1`；交互蓝对内容底色分别约 `12.14:1`、`7.85:1`（深色）、`11.49:1`（深色增强）。播放器播放态也保持品牌蓝，进度轨迹使用自适应 tint。
+- 检查了实际 CSS 视口宽度 `312 / 720 / 1024 / 1280px`，页面无横向溢出；桌面正文独立滚动，播放器留在窗口底部。截图检查覆盖浅 / 深色会议页及配对页。
+- 未构建或验收原生 Mac App；未以网页色值测试代替 iOS / macOS 系统动态色和无障碍回归。
+
 ### 3.1 侧栏
 
 第一阶段：
@@ -48,7 +200,7 @@ LLM / RAG 阶段建议增加 **Ask / Knowledge** 入口；名称与具体布局�
 
 ### 3.2 视觉
 
-- 与 iOS 共用深蓝主色，demo 近似值 `#06229E`。
+- 与 iOS 共用深蓝主色 `#06229E`，以本节新增的实际代码颜色基线为准；暗色交互前景使用自适应浅蓝。
 - 白色 / 中性色内容面板，清晰侧栏，不把手机屏幕按比例放大。
 - speaker 的色点跨设备一致，名字与正文保持中性色。
 - 红 / 绿连接状态点同时带文字。
@@ -86,7 +238,35 @@ Mac 可显示自身的可发现名称，但名称不是可信设备身份。
 
 ### 4.4 官方平台边界
 
-建议沿用 Network framework + Bonjour + TLS 的方向，并在 Keychain 保存可信设备身份。
+已实现 Network framework + Bonjour + CryptoKit 应用层加密配对，并在 Data Protection Keychain 保存可信设备身份。当前不是 TLS；具体角色、承诺、字节序、帧与超时约束以 [MAC_PAIRING_PROTOCOL.md](MAC_PAIRING_PROTOCOL.md) 为准。
+
+Mac 会记住用户启用或停止发现的选择；没有保存过选择时，已配对设备可在 App 启动时自动恢复发现，不依赖主窗口显示。临时发布失败按 2–32 秒退避重试，App 激活或 Mac 唤醒会立即尝试恢复失败/等待中的监听器。自动恢复不会重新开放陌生设备配对，不重建正常工作的监听器，也不会因发现服务故障断开已认证的连接；权限拒绝仍须用户处理，手动停止不会自动重启。36 项 Bonjour/配对测试覆盖这些行为、真实发现/TCP/撤销，以及监听器恢复后原连接仍可交换加密心跳。
+
+**连接状态不是副本回执。** 接收存储准备好且用户启用后，Bonjour 发布 `meeting-copy=2` 提示；提示不代表认证或授权。单一认证 reader 分发心跳及固定 copy RPC。只有完整校验、音频落盘和资料库事务完成后才确认副本；绿点或 100% 字节进度不等于提交完成。
+
+### iOS/Mac 固定接收交接
+
+- **iOS owner**：唯一维护 App/Core 的发送队列、源快照、发送按钮、前台/解锁重连和 Shared 传输协议。Mac 不修改这些目录。
+- **Mac owner**：维护 Mac 发现/认证服务生命周期、接收授权 UI、持久化接收、资料库展示和 Mac 处理。`MacMeetingCopySession` 复用正式 codec，将验证后的数据交给本地 inbox，不复制 wire schema。
+- 固定来源为 `5d61b80f84052897e476b5ff8c1c15f0648e410a`，正式文档及 codec 的 Git blob 校验值见 QA 文档。不消费另一 worktree 的浮动源文件。
+- 接收开关变化后断开旧会话，重新认证与协商，不能沿用之前的能力授权。没有接收 handler 的服务继续保持 v1 仅配对/心跳行为。
+- 首个交付若仅支持 immutable meeting copy，按钮和状态必须明确“不含处理或结果回传”，不能把 copy 完成标成 processing 完成或自动双向同步。
+- 固定原始 manifest bytes、ID/大小写规则、音频/转写哈希、peer+receiver+operation 作用域、offset/prefix hash、错误及 durable receipt 映射。相同 operation 的不同内容、现存会议和 tombstone 冲突均不得静默覆盖。
+- 联合验收必须使用真实 iOS sender 和 Mac receiver：首次收齐入库、断线续传、重启恢复、丢失回执重放、错误哈希、现存会议/删除冲突、旧端及身份变化。只有音频与资料库持久化后才回执；Mac 可查阅后才算传输交付。
+
+跨会话发送受工具额度限制；通过对方会话及用户转交，已确认文件分工和固定协议。iOS owner 负责实际 sender-to-Mac 联合验收，Mac loopback 测试不替代该验收。
+
+### Mac 持久化接收边界
+
+`MacApp/Transfer/MacMeetingCopyInbox.swift` 提供独立于 wire 的 `reserve` / `append` / `status` / `finalize` / `cancel`；已通过认证后的 `MacMeetingCopySession` 接线，由 controller 更新进度和资料库。
+
+- 绑定完整双方身份、operation、原始 manifest bytes 和解析后的不可变字段；不接受现存会议、大小写变体或已知删除记录的静默覆盖。
+- 分块持久化到 Mac 专属 SQLite 表，返回已提交 prefix 的 offset/SHA-256；增量缓存仅在提交成功后推进，重启后从实际保存的分块重建。`status` 和 `finalize` 独立重验持久化字节。
+- 完整音频通过哈希、M4A 解码和时长验证后持久化到音频目录；会议、转写和回执在同一个数据库事务提交。重试使用原回执，已删除的会议不会因回执重放复活。
+- 本地上限为音频 128 MiB、转写 16 MiB、同时 4 个接收任务、预留总量 256 MiB；协议只协商能力名，不私加上限字段。超过本地上限在 status 前返回 `failed/storage`。未完成接收按 7 天无活动过期，保留取消绑定和已提交回执；删除记录覆盖模块初始化后的删除。
+- 45 项接收测试通过，覆盖真实加密 TCP、Bonjour TXT、认证前/协商前禁止数据、768 字节块、重启、回滚、损坏、回执重放及可播放入库。冲突查询使用 Mac 本地 `lower(id)` 索引，防止大转写逐条全表扫描导致 RPC 超时。
+
+Mac 保留断开、心跳超时及不支持请求的区别，并记录不含会议内容的生命周期日志；不会把断线当作需要删除配对。发现发布状态不使用连接绿点；副本接收时设备图标显示活动圈，Connection 显示进度、校验、错误及提交结果。
 
 Apple 提供网络与权限 API，不提供本产品完整的六位码配对 UI。macOS 本地网络隐私也要处理；“无 App Sandbox”不等于没有本地网络权限要求。
 
@@ -96,6 +276,8 @@ Apple 提供网络与权限 API，不提供本产品完整的六位码配对 UI�
 - [NWParameters.includePeerToPeer](https://developer.apple.com/documentation/network/nwparameters/includepeertopeer)
 
 ## 5. 接收与异步任务
+
+以下为未来处理/双向同步设计，不是本次 immutable-copy wire。正式副本协议明确排除 speaker 身份、声纹、模型和修改操作，详见 [固定协议](MAC_SYNC_PROTOCOL.md)。
 
 ### 5.1 任务输入
 
