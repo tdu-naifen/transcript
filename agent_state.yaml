@@ -1,3 +1,33 @@
+ios_recovery_20260907_live_verified:
+  authority: "Current entry supersedes historical running/ownership claims below."
+  work_root: "/Users/tingzhen/Desktop/transcript"
+  main_head: "1a9f9a72de4434e2e93a9c0bc1024f28db0dab3e"
+  orchestrator: "Parent coordinates/reviews/state/commits only; production edits delegated."
+  status: running
+  active_ownership:
+    ios_network: "ios-connection-recovery: iOS pairing client, discovery/model, Root lifecycle, dedicated localization and tests. No Core/live/Mac/Shared edits."
+    joint_harness: "joint-copy-harness-resume: artifact-only harness R1 fixes; frozen production inputs from 5ea59e2. Independent reviewer joint-harness-review holds run grant until fixes verified."
+    live_diagnosis: "live-coverage-diagnosis: read-only Core/live investigation of sparse coverage; unique session report only, no source edits or builds."
+    shared_state: "Parent is sole writer of this entry; workers use separate reports."
+  resources: "A565 Simulator and main QA build directories released after postcommit. No new Simulator grant. Network worker may build in isolated DD and owns shared project generation. Joint worker uses artifact-only DD. No physical phone or user Mac app operations."
+  verification:
+    live_component: "Main 1a9f9a7: independent live baseline 163 tests and six EN/ZH renders; CPU safety repair independently reviewed, 30 tests and strict build passed."
+    postcommit: "Seven tests, zero failures/skips, strict generic-device build passed; all 25 owned files match HEAD and reviewed SHA receipts. Existing unrelated Package.resolved drift preserved; no pristine dependency-resolution claim."
+    bonjour_txt: "Main 5ea59e2: production .bonjourWithTXTRecord; independent eight tests passed, postcommit two tests and strict build passed. Real NWListener/TXT regression, not phone deployment."
+    joint_transfer: "Actual iOS/Mac production-class harness compiled with 423 frozen Git blobs verified; not executed. Review identified opt-in/timeout/probe/immutability assertion defects; R1 repair in progress."
+  mac_coordination: "External Mac owner merged receiver, recovery and model components through 238c133. Latest checked Mac session idle. Cross-session message cap prevents new outgoing handoff; no delivery falsely claimed."
+  limits:
+    - "Five public voices plus returning first: 68/180 one-second rows assigned, first labels 10-30 seconds. Capacity40 is synthetic, not forty-person acoustic acceptance."
+    - "Actual physical background/thermal/memory and user latency acceptance remain open; no phone automation while user tests."
+    - "Joint native-class interoperability does not replace full two-product UI/LAN/device acceptance."
+    - "Current v2 is immutable meeting copy only. Published result return, edit conflict policy, tombstone propagation and automatic send policy remain unimplemented/unfrozen."
+  fixed_contract: "5d61b80; Shared/Sync/MeetingCopyWire.swift sha256 a886cef8ca8c0bae2c5719024705a0a9eaa3f5a3d5614f2bbbe0253a86be8b59; no changes to Pairing crypto or old draft DTOs."
+  protected_wip: "Four unrelated App catalogs, Core Package.resolved drift, old untracked Core Sync/draft DTOs/mac directory, brainstorm files and nested worktrees. Do not stage, revert or delete."
+  evidence_root: "/Users/tingzhen/.copilot/session-state/6751623e-5db4-4ec4-a0df-a2ce62737d71/files"
+  reports: ["live-cam-cpu-independent-qa.txt", "live-postcommit-1a9f9a7.txt", "ios-bonjour-postcommit.txt", "ios-connection-recovery-handoff.txt"]
+  harness_artifacts: "/Users/tingzhen/Desktop/transcript.worktrees/local-agent-functionality/sessionfiles/joint-copy-native-qa-recovered"
+  next_gate: "Repair/re-review then grant isolated joint run; independently review/test iOS recovery; diagnose evidence-safe live coverage improvement. Commit only accepted owned components on main, no push."
+
 ios_recovery_20260906_2108:
   authority: "Current recovery entry supersedes historical running/ownership claims below."
   work_root: "/Users/tingzhen/Desktop/transcript"
