@@ -6,29 +6,32 @@ ios_recovery_20260907_live_verified:
   status: running
   active_ownership:
     ios_network: "Committed main d09a7a2; independent66 tests and strict build passed, postcommit5 tests and strict build passed. All seven files match HEAD and reviewed bytes. Workers idle; component accepted, physical-device gate separate."
-    joint_harness: "joint-copy-harness-resume refreshes isolated current-main artifact to immutable d09a7a2. R2 AAC/DB cleanup independently reviewed; full matrix awaits refreshed provenance/signatures/review and explicit QA grant."
+    joint_harness: "Complete: independent24 scenarios/25 invocations passed on immutable d09a7a2, zero failures/skips. All431 frozen paths equal current main; all24 final namespaces cleaned. Workers idle; full product UI/LAN/phone gate remains separate."
+    xcode_package_loading: "ios-package-load-repair finished safe diagnosis, no source repair. Exact native GUI error persists after successful manifest/list and one native Resolve Package Versions. Blocked on preserving all unsaved buffers before workspace-only close/reopen."
     live_diagnosis: "live-coverage-diagnosis completed artifact-only CPU baseline/instrumentation: all90 hop snapshots identical, 68/180 artificial rows. No validated faster-first-identity fix. No production changes authorized from this measurement."
     shared_state: "Parent is sole writer of this entry; workers use separate reports."
-  resources: "A565 Simulator intentionally BOOTED but idle for next joint handoff; owned app/widget terminated, no QA/build process remains after postcommit. Main DD released. Joint writer owns artifact DD only, no Simulator grant. No physical phone or user Mac app operations."
+  resources: "A565 shutdown after complete joint matrix; all QA/native/build processes absent and build directories released. User Xcode window remains open with unsaved-document status unknown; do not close, save, discard, reset caches or update versions without a safe handoff."
   verification:
     live_component: "Main 1a9f9a7: independent live baseline 163 tests and six EN/ZH renders; CPU safety repair independently reviewed, 30 tests and strict build passed."
     postcommit: "Seven tests, zero failures/skips, strict generic-device build passed; all 25 owned files match HEAD and reviewed SHA receipts. Existing unrelated Package.resolved drift preserved; no pristine dependency-resolution claim."
     connection: "d09a7a2: final independent66/0fail/0skip, strict build; postcommit5/0fail/0skip, strict build. Independent review passed. Original fullScreenCover disappearance HIGH withdrawn as unsupported static inference; test callback misclassification fixed, all failed evidence retained."
     bonjour_txt: "Main 5ea59e2: production .bonjourWithTXTRecord; independent eight tests passed, postcommit two tests and strict build passed. Real NWListener/TXT regression, not phone deployment."
-    joint_transfer: "First invocation: zero pass/one fixture failure/zero skip, remaining24 unrun. R2 supported32kbit AAC decoded on iOS/Mac, explicit DB close and exact old namespace absence verified; independent review PASS. No transfer acceptance yet."
+    joint_transfer: "Finald09a7a2:24 scenarios/25 invocations, zero fail/skip; actual iOSsender/Macreceiver, durable prefix/resume/reopenedDB/receipt/content/error cases passed, all24 namespace cleanups verified. Originalold5ea AAC fixture failure remains preserved."
+    xcode_loading: "Exact native FluidAudioEvidence loading error persists. Manifest dump/list and native Resolve Package Versions succeed; no source/project/pin/version/diff change. No corrupt cache or code defect established. CLI success is not GUI acceptance."
   mac_coordination: "External Mac owner merged receiver, recovery and model components through 238c133. Latest checked Mac session idle. Cross-session message cap prevents new outgoing handoff; no delivery falsely claimed."
   limits:
     - "Five public voices plus returning first: 68/180 artificial one-second rows assigned, not speech-time coverage or DER. First labels 10-30 seconds on captured-audio clock, not wall latency. Capacity40 is synthetic, not forty-person acoustic acceptance."
     - "Instrumented CPU run confirms unqualified transition anchors cause delay; CAM discarded0 frames. Strict independent-binding counterfactual recovers seven later rows only, no earlier first/return identity. No unsafe anchor merge or threshold relaxation."
     - "Actual physical background/thermal/memory and user latency acceptance remain open; no phone automation while user tests."
     - "Joint native-class interoperability does not replace full two-product UI/LAN/device acceptance."
+    - "Joint QA pre-run bookkeeping probe failed before runs directory creation; frozen source/binary checks and all25 xcresults valid, but no full main-working-tree before/after claim. Successful raw receipts/DBs not exported after scoped cleanup; executed assertions and logs retained."
     - "Current v2 is immutable meeting copy only. Published result return, edit conflict policy, tombstone propagation and automatic send policy remain unimplemented/unfrozen."
   fixed_contract: "5d61b80; Shared/Sync/MeetingCopyWire.swift sha256 a886cef8ca8c0bae2c5719024705a0a9eaa3f5a3d5614f2bbbe0253a86be8b59; no changes to Pairing crypto or old draft DTOs."
   protected_wip: "Four unrelated App catalogs, Core Package.resolved drift, old untracked Core Sync/draft DTOs/mac directory, brainstorm files and nested worktrees. Do not stage, revert or delete."
   evidence_root: "/Users/tingzhen/.copilot/session-state/6751623e-5db4-4ec4-a0df-a2ce62737d71/files"
-  reports: ["live-postcommit-1a9f9a7.txt", "ios-bonjour-postcommit.txt", "ios-connection-recovery-final-independent-qa.txt", "ios-connection-postcommit-d09a7a2.txt", "ios-connection-recovery-callback-review.txt", "live-coverage-measurement.txt", "joint-copy-independent-native-qa.txt", "joint-harness-review-r2.txt"]
+  reports: ["live-postcommit-1a9f9a7.txt", "ios-connection-recovery-final-independent-qa.txt", "ios-connection-postcommit-d09a7a2.txt", "live-coverage-measurement.txt", "joint-copy-final-main-independent-qa.txt", "ios-package-load-diagnosis.txt", "ios-package-load-safe-reload.txt", "ios-package-load-native-resolve.txt"]
   harness_artifacts: "/Users/tingzhen/Desktop/transcript.worktrees/local-agent-functionality/sessionfiles/joint-copy-native-qa-recovered"
-  next_gate: "Refresh/review joint harness at committed d09a7a2, then independently run actual24 scenarios/25 invocations. Acoustic latency/40-person and full device/product acceptance stay open; no push."
+  next_gate: "User preserves unsaved Xcode buffers, then workspace-only reopen and verify exact native error. Coordinate authorized full product UI/physical-network acceptance. Faster identity/40-person acoustic quality lacks a validated solution; do not infer it from capacity or late-coverage counterfactual. No push."
 
 ios_recovery_20260906_2108:
   authority: "Current recovery entry supersedes historical running/ownership claims below."
