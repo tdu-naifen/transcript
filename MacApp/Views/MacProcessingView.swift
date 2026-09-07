@@ -8,7 +8,8 @@ struct MacProcessingView: View {
     @State private var importCategory: MacModelCategory = .asr
     @State private var importingCard = false
     @State private var selectedCard: MacModelCard?
-    @State private var confirmingDownload = false
+    @State private var downloadCategories = MacModelCategory.allCases
+    @State private var showingInstallation = false
 
     private var model: MacProcessingModel { workspace.processing }
 
@@ -59,12 +60,6 @@ struct MacProcessingView: View {
         }
         .onChange(of: model.activeJobID) { previous, current in
             if previous != nil, current == nil { Task { await workspace.library.load() } }
-        }
-        .confirmationDialog(processingText("Download compatible Nemotron ASR model?"),
-                            isPresented: $confirmingDownload, titleVisibility: .visible) {
-            Button(processingText("Download ASR model")) { model.installCompatibleModels() }
-        } message: {
-            Text(processingText("This downloads only the pinned Nemotron ASR model from Hugging Face. Internet access and several GB of free space may be needed. No diarization or embedding model is downloaded. Your recordings are not uploaded."))
         }
         .sheet(item: $selectedCard) { card in
             VStack(alignment: .leading, spacing: 16) {
@@ -146,13 +141,50 @@ struct MacProcessingView: View {
                 }
                 }
             }
-            if model.isDownloading {
-                ProgressView(value: model.downloadProgress)
-                Button(processingText("Cancel download")) { model.cancelDownload() }
-            } else {
-                Button(processingText("Install compatible ASR model…")) { confirmingDownload = true }
+            VStack(alignment: .leading, spacing: 12) {
+                Button(processingText("Install built-in models…")) {
+                    downloadCategories = MacModelCategory.allCases
+                    showingInstallation = true
+                }
+                    .accessibilityIdentifier("macInstallModels")
                     .disabled(!model.isConfigured || model.isBusy)
+                if !model.isConfigured {
+                    Text(processingText("Model installation is unavailable until the library is ready."))
+                        .foregroundStyle(.orange)
+                }
+                if !model.downloads.isEmpty {
+                    ForEach(model.downloads) { download in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("\(processingText(download.category.title)): \(processingText(download.stage.rawValue))")
+                                .accessibilityIdentifier("macDownloadStatus-\(download.id)")
+                            if [.downloading, .verifying, .queued].contains(download.stage) {
+                                if download.totalBytes > 0, download.stage == .downloading {
+                                    ProgressView(value: download.fraction)
+                                    Text("\(ByteCountFormatter.string(fromByteCount: download.completedBytes, countStyle: .file)) / \(ByteCountFormatter.string(fromByteCount: download.totalBytes, countStyle: .file))")
+                                        .font(.caption.monospacedDigit())
+                                } else {
+                                    ProgressView().controlSize(.small)
+                                }
+                            }
+                            if let error = download.error {
+                                Text(verbatim: error).foregroundStyle(.orange).textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+                if model.isDownloading {
+                    Button(processingText(model.isCancellingDownload ? "Cancelling download…" : "Cancel download")) {
+                        model.cancelDownload()
+                    }
+                    .accessibilityIdentifier("macCancelModelDownload")
+                    .disabled(model.isCancellingDownload)
+                } else if model.downloads.contains(where: { [.failed, .cancelled].contains($0.stage) }) {
+                    Button(processingText("Retry unfinished downloads")) { model.retryDownloads() }
+                        .accessibilityIdentifier("macRetryModelDownload")
+                        .disabled(model.isBusy || !model.isConfigured)
+                }
             }
+            .sheet(isPresented: $showingInstallation) { installationConsent }
             Text(processingText("Local folders must contain the exact compatible compiled Core ML layout. A repository name or matching file extension alone does not make a model runnable. Local content hashes are recorded separately from expected repository revisions."))
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -161,12 +193,17 @@ struct MacProcessingView: View {
     private func modelDetails(_ card: MacModelCard) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Label(processingText(card.adapter == .cardOnly ? "Requires adapter · card only"
-                                     : card.isInstalled() ? "Installed · compatible runtime" : "Not installed"),
+                Label(processingText(card.installationDescription),
                       systemImage: card.isInstalled() ? "checkmark.circle" : "info.circle")
                     .foregroundStyle(card.isInstalled() ? .green : .secondary)
                 Spacer()
                 if card.adapter != .cardOnly {
+                    Button(processingText("Install…")) {
+                        downloadCategories = [card.category]
+                        showingInstallation = true
+                    }
+                    .accessibilityIdentifier("macInstallModel-\(card.category.rawValue)")
+                    .disabled(model.isBusy || !model.isConfigured)
                     Button(processingText("Locate model folder…")) { locateModel(card) }
                         .disabled(model.isBusy)
                 }
@@ -183,6 +220,41 @@ struct MacProcessingView: View {
                 Text(verbatim: path).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
             }
         }
+    }
+
+    private var installationConsent: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            Text(processingText("Download built-in model files?"))
+                .font(.title2.bold()).accessibilityIdentifier("macModelInstallConsent")
+            Text(processingText("Only these pinned Core ML artifacts are downloaded from Hugging Face. Existing compatible files are reused. Internet access and several GB of free disk space may be needed. Your recordings are never uploaded."))
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(MacModelCard.builtins.filter { downloadCategories.contains($0.category) }) { card in
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(processingText(card.name)).font(.headline)
+                    Text(verbatim: "\(card.repository)\n\(card.revision)")
+                        .font(.caption.monospaced()).textSelection(.enabled)
+                }
+            }
+            Text(processingText("Downloading Sortformer and CAMPPlus does not enable diarization on this Mac. Sortformer has 4 speaker slots; CAMPPlus embeddings do not increase that limit. This workflow still runs ASR only."))
+                .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
+                .accessibilityIdentifier("macModelRuntimeWarning")
+            Text(processingText("Selected models, located folders, language, and recordings remain unchanged."))
+                .font(.callout).foregroundStyle(.secondary)
+            HStack {
+                Spacer()
+                Button(processingText("Cancel"), role: .cancel) { showingInstallation = false }
+                    .keyboardShortcut(.cancelAction)
+                    .accessibilityIdentifier("macCancelModelInstallConsent")
+                Button(processingText("Download selected models")) {
+                    showingInstallation = false
+                    model.installCompatibleModels(categories: downloadCategories)
+                }
+                .keyboardShortcut(.defaultAction)
+                .accessibilityIdentifier("macConfirmModelInstall")
+                .disabled(model.isBusy || !model.isConfigured)
+            }
+        }
+        .padding(24).frame(width: 620)
     }
 
     private var importCard: some View {

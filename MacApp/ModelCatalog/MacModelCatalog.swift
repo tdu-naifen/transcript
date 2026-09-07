@@ -14,6 +14,66 @@ enum MacModelCategory: String, Codable, CaseIterable, Identifiable, Sendable {
     }
 }
 
+enum MacManagedModelStore {
+    struct Validation: Codable {
+        let revision: String
+        let rejected: Bool
+    }
+
+    static var root: URL {
+        ASRModelStore.applicationSupportRoot.deletingLastPathComponent().deletingLastPathComponent()
+            .appendingPathComponent("TranscriptMacModelInstallations", isDirectory: true)
+    }
+
+    static func legacyURL(_ category: MacModelCategory) -> URL {
+        switch category {
+        case .asr: ASRModelStore.installDestination().directory
+        case .diarization: DiarizationModelStore.sortformerMainModelPath(searchRoots: [])
+        case .speakerEmbedding: DiarizationModelStore.campPlusApplicationSupportRoot
+        }
+    }
+
+    static func publishedURL(_ category: MacModelCategory, root: URL = root) -> URL {
+        let card = MacModelCard.builtins.first { $0.category == category }!
+        return root.appendingPathComponent("verified/\(category.rawValue)/\(card.revision)", isDirectory: true)
+    }
+
+    static func isManaged(_ url: URL) -> Bool {
+        let path = url.standardizedFileURL.path
+        return path.hasPrefix(root.standardizedFileURL.path + "/")
+            || MacModelCategory.allCases.contains { legacyURL($0).standardizedFileURL.path == path }
+            || FileManager.default.fileExists(atPath: validationURL(url).path)
+    }
+
+    static func validationURL(_ url: URL) -> URL {
+        url.deletingLastPathComponent()
+            .appendingPathComponent(".\(url.lastPathComponent).transcript-mac-validation.json")
+    }
+
+    static func isRejected(_ url: URL) -> Bool {
+        guard let data = try? Data(contentsOf: validationURL(url)) else { return false }
+        return (try? JSONDecoder().decode(Validation.self, from: data))?.rejected != false
+    }
+
+    static func allowsUse(_ url: URL, adapter: MacModelCard.Adapter) -> Bool {
+        let receipt = validationURL(url)
+        if FileManager.default.fileExists(atPath: receipt.path) {
+            guard let data = try? Data(contentsOf: receipt),
+                  let validation = try? JSONDecoder().decode(Validation.self, from: data),
+                  let card = MacModelCard.builtins.first(where: { $0.adapter == adapter }) else { return false }
+            return !validation.rejected && validation.revision == card.revision
+        }
+        // Managed destinations require verification even when Core's layout-only check passes.
+        return !isManaged(url)
+    }
+
+    static func record(category: MacModelCategory, at url: URL, rejected: Bool) throws {
+        let revision = MacModelCard.builtins.first { $0.category == category }!.revision
+        try JSONEncoder().encode(Validation(revision: revision, rejected: rejected))
+            .write(to: validationURL(url), options: .atomic)
+    }
+}
+
 struct MacModelCard: Codable, Equatable, Identifiable, Sendable {
     enum Adapter: String, Codable, Sendable {
         case nemotronMultilingual, sortformer, campPlus, cardOnly
@@ -47,6 +107,16 @@ struct MacModelCard: Codable, Equatable, Identifiable, Sendable {
     ]
 
     var maximumSpeakerSlots: Int? { adapter == .sortformer ? 4 : nil }
+    var installationDescription: String {
+        if adapter == .cardOnly { return "Requires adapter · card only" }
+        if let url = try? resolvedURL(), MacManagedModelStore.isRejected(url) {
+            return "Integrity check failed · unavailable"
+        }
+        guard isInstalled() else { return "Not installed" }
+        return adapter == .nemotronMultilingual
+            ? "Downloaded · ASR runtime available"
+            : "Downloaded · not used by Mac ASR"
+    }
 
     var runtimeDescription: String {
         switch adapter {
@@ -66,6 +136,8 @@ struct MacModelCard: Codable, Equatable, Identifiable, Sendable {
             return url
         }
         if let localPath { return URL(fileURLWithPath: localPath) }
+        let published = MacManagedModelStore.publishedURL(category)
+        if Self.isInstalled(adapter: adapter, at: published) { return published }
         switch adapter {
         case .nemotronMultilingual: return ASRModelStore.bundle().directory
         case .sortformer: return DiarizationModelStore.sortformerMainModelPath()
@@ -82,6 +154,10 @@ struct MacModelCard: Codable, Equatable, Identifiable, Sendable {
     }
 
     static func isInstalled(adapter: Adapter, at url: URL) -> Bool {
+        MacManagedModelStore.allowsUse(url, adapter: adapter) && hasCompatibleLayout(adapter: adapter, at: url)
+    }
+
+    static func hasCompatibleLayout(adapter: Adapter, at url: URL) -> Bool {
         switch adapter {
         case .nemotronMultilingual:
             ASRModelBundle(variant: .multilingual2240ms, directory: url).isInstalled
@@ -197,10 +273,25 @@ final class MacModelCatalog {
     }
 
     func useManagedASR(_ bundle: ASRModelBundle) throws {
-        guard let index = cards.firstIndex(where: { $0.adapter == .nemotronMultilingual }),
-              bundle.isInstalled else { throw MacProcessingError.missingModels }
+        guard bundle.variant == .multilingual2240ms else { throw MacProcessingError.unsupportedModel }
+        try useManagedModel(category: .asr, at: bundle.directory)
+    }
+
+    func useManagedModel(category: MacModelCategory, at url: URL) throws {
+        guard let builtin = MacModelCard.builtins.first(where: { $0.category == category }),
+              let index = cards.firstIndex(where: { $0.id == builtin.id }),
+              url.isFileURL,
+              MacModelCard.isInstalled(adapter: builtin.adapter, at: url) else {
+            throw MacProcessingError.missingModels
+        }
+        // Installing weights does not change the user's selected card or located folder.
+        if cards[index].bookmark != nil
+            || cards[index].localPath.map({ !MacManagedModelStore.isManaged(URL(fileURLWithPath: $0)) }) == true {
+            try save()
+            return
+        }
         let old = cards[index]
-        cards[index].localPath = bundle.directory.path
+        cards[index].localPath = url.path
         cards[index].bookmark = nil
         do { try save() } catch { cards[index] = old; throw error }
     }
