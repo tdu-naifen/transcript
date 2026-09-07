@@ -30,7 +30,7 @@ final class BonjourMacDiscovery: MacDiscovering {
         let parameters = NWParameters.tcp
         parameters.includePeerToPeer = true
         let browser = NWBrowser(
-            for: .bonjour(type: "_vtscribe._tcp", domain: nil),
+            for: .bonjourWithTXTRecord(type: "_vtscribe._tcp", domain: nil),
             using: parameters
         )
         self.browser = browser
