@@ -4,6 +4,50 @@ import XCTest
 
 @MainActor
 final class MacBonjourServiceTests: XCTestCase {
+    func testSleepStopsAdvertisingAndWakeRestoresOnlyEnabledDiscovery() {
+        var creations = 0
+        let listener = BonjourListenerProbe()
+        let service = MacBonjourService(serviceName: "Office Mac") { _ in
+            creations += 1
+            return listener
+        }
+        service.start()
+        listener.emit(.ready)
+        listener.emit(.registered("Office Mac"))
+        service.suspendForSleep()
+        XCTAssertTrue(service.isEnabled)
+        XCTAssertTrue(service.isSuspended)
+        XCTAssertNil(service.advertisedName)
+        XCTAssertFalse(service.pairing.isConnected)
+        service.recoverIfNeeded()
+        XCTAssertEqual(creations, 1)
+        service.resumeAfterWake()
+        XCTAssertFalse(service.isSuspended)
+        XCTAssertEqual(creations, 2)
+        XCTAssertFalse(service.pairing.allowsNewPairing)
+        service.suspendForSleep()
+        service.stop()
+        service.resumeAfterWake()
+        XCTAssertEqual(creations, 2)
+        XCTAssertFalse(service.isEnabled)
+    }
+
+    func testSleepWakeDoesNotRetryDeniedNetworkPermission() {
+        var creations = 0
+        let listener = BonjourListenerProbe()
+        let service = MacBonjourService(serviceName: "Office Mac") { _ in
+            creations += 1
+            return listener
+        }
+        service.start()
+        defer { service.stop() }
+        listener.emit(.failed(.network(.dns(-65570))))
+        service.suspendForSleep()
+        service.resumeAfterWake()
+        XCTAssertTrue(service.localNetworkDenied)
+        XCTAssertEqual(creations, 1)
+    }
+
     func testQABundleIdentifiesFixedTransferCodec() {
         XCTAssertEqual(
             Bundle.main.object(forInfoDictionaryKey: "TranscriptMeetingCopyProtocolRevision") as? String,

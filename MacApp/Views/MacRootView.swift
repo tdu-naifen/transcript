@@ -40,11 +40,11 @@ struct MacRootView: View {
                 } label: {
                     HStack(spacing: 6) {
                         MacPhoneConnectionIcon(
-                            isConnected: workspace.bonjour.pairing.connectedPeer != nil,
+                            isConnected: workspace.bonjour.pairing.isConnected,
                             isWorking: workspace.meetingCopy.progress != nil || workspace.bonjour.pairing.state == .negotiating,
                             size: 16
                         )
-                        Text(workspace.bonjour.pairing.connectedPeer == nil ? String(localized: "Not connected") : String(localized: "Connected"))
+                        Text(workspace.bonjour.pairing.isConnected ? String(localized: "Connected") : String(localized: "Not connected"))
                     }
                 }
                 .help("Discovery is separate from a trusted connection.")
@@ -148,7 +148,7 @@ struct MacRootView: View {
                 } label: {
                     HStack(spacing: 8) {
                         MacPhoneConnectionIcon(
-                            isConnected: workspace.bonjour.pairing.connectedPeer != nil,
+                            isConnected: workspace.bonjour.pairing.isConnected,
                             isWorking: workspace.meetingCopy.progress != nil || workspace.bonjour.pairing.state == .negotiating,
                             size: 22
                         )
