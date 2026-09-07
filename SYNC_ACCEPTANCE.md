@@ -1,6 +1,6 @@
 # 当前验收与未关闭问题
 
-更新：2026-09-07，依据 17:42 用户反馈。**本轮修复进行中，未最终验收、未宣告合并/推送完成。**
+更新：2026-09-07，依据 17:42 用户反馈。**软件修复集成提交 `8a81aef` 已通过下列验证；用户两端更新后的物理闭环仍待复验。**
 本文取代旧计划中的完成/阻塞总论；[README](README.md) 是入口，[iOS](IOS_UI.md)/[Mac](MAC_UI.md) 是要求，协议文件保持独立规范职责。
 
 ## 最新用户反馈：不是新测试日志
@@ -8,19 +8,63 @@
 | ID | 观察或要求 | 当前状态与关闭条件 |
 |---|---|---|
 | NOW-001 | 拔掉 USB 后无线同步可用 | **用户报告可用**，不是自动化日志；保留该正向反馈，不再笼统声称“无线完全不可用”。实际 build、endpoint/path、同网重连/重启证据仍未补齐。 |
-| NOW-002 | Mac 重处理结果没回到 iPhone | **活动修复，未通过**。真实 Mac 原音频处理→版本发布→传输→iPhone 原会议已挂载详情更新；覆盖断线、重连、重试、取消及过期输入，不能只验证 Core 仓库。 |
-| NOW-003 | Mac 没有本地声纹 | **活动修复，未通过**。在 Mac 产品任务中实际调用 diarization/CAM++、保存兼容模板、匹配/未知拒绝；授权后回到 iPhone。基线 ASR-only 与声纹库展示不是该能力。 |
-| NOW-004 | iPhone Identifying 太久 | **活动修复，未通过**。记录干净音频积累、加载/推理、绑定/提交/观察/显示各阶段；验证真实多声音及返回说话人，阈值/模型精度不降级。 |
-| NOW-005 | App 前台应保持唤醒 | **新需求，未通过**。前台浏览/录音等实际场景不自动锁屏，离开前台恢复正常系统行为；不等于后台持续推理授权。 |
-| NOW-006 | 底部录音控件与上滑动画 | **活动修复，未通过**。收起/展开、safe area、最后一行、整卡跟手、回弹/提交、无障碍和减少动态效果；不误触录音或阻塞浏览。 |
-| NOW-007 | Mac 整张会议卡可点 | **活动修复，未通过**。卡片留白/边缘与标题均可选中，子按钮独立，键盘/VoiceOver 回归。 |
+| NOW-002 | Mac 重处理结果没回到 iPhone | **实现与软件回归通过，物理复验待进行**。`a35501e` 在发布端和接收端识别身份-only revision 漂移；内容哈希必须仍匹配。保留最新归属/明确清除，真正文字、音频、时长、语言修改仍受围栏保护。结果在原 meeting ID 发布，不重新导入。 |
+| NOW-003 | Mac 没有本地声纹 | **产品接入与真实模型回归通过，双端物理声纹回传待复验**。`9153b54` 三模型真实任务、发布/重处理/恢复和 192 维模板持久化；`a35501e` 同一事务提交文字、稳定身份、资源及同步意图，保持每设备声纹授权。 |
+| NOW-004 | iPhone Identifying 太久 | **证据积累根因已修复，但不承诺即时识别**。`b865c96` 将不确定干净证据从反复 2 秒改为积累至 4/5 秒；返回说话人不再被未绑定过渡锚永久否决。真实模型仍有 10 秒窗口下限，更多延迟与覆盖数字见下文。 |
+| NOW-005 | App 前台应保持唤醒 | **实现与生命周期回归通过**。`8a81aef` 的场景级 idle-timer lease 覆盖前台浏览/录音，inactive/background/移除释放，其他活跃场景不被误释放；未在用户 iPhone 上等待自动锁屏复验。 |
+| NOW-006 | 底部录音控件与上滑动画 | **实现、原生 UI 和无障碍回归通过**。`8a81aef` 底部原生导航旁固定 mic，录音控制在其上方；拖动时直接跟手，松手按速度收敛，阈值/取消/重复提交受同步 action gate 保护。设备帧率与主观手感仍需用户试用。 |
+| NOW-007 | Mac 整张会议卡可点 | **实现/review 完成，窗口自动化阻塞**。`9153b54` 完整选择行矩形命中区域，保留键盘/焦点；新增窗口测试未执行成功，不计作通过，需在新构建点留白/边缘复验。 |
 
 这些条目不得继承之前测试的通过状态。物理双端**完整闭环仍未关闭**，也不能把用户的无线可用报告扩写成声纹或结果回传成功。
 
-## 已有证据：固定到旧源版本
+## 本轮实现、独立审查与 QA
+
+生产集成提交：`8a81aefcc492a70842c2c98af507f461c6295023`。
+逻辑提交依次为文档 `807f65a`、实时声纹 `b865c96`、原子发布/并发合并 `a35501e`、
+Mac 产品接入 `9153b54`、iPhone 交互 `8a81aef`。之后的验收文档提交不改变生产字节。
+
+| 验证 | 实际结果与范围 | 证据位置 |
+|---|---|---|
+| 独立 Core/UI/Mac review | 发现并修复一个推断身份默认值导致并发 publication 不收敛的问题；最终复核无剩余高置信 blocker。保留原 v1 inferred-ID 格式，不改旧端解析或冻结协议。 | session review 记录、`acceptance-core-review-repaired.log`、`acceptance-final-publication.log` |
+| 发布与冲突 | 身份赋值/清除可回传并双向收敛；publisher 身份/名字修改可合并，文字/时长/语言修改仍拒绝旧结果；4 种身份元数据/资源顺序、重复交付、原子回滚与授权过滤通过。 | `acceptance-final-publication.log`；初始 `.staleRevision` 复现见 `acceptance-result-return-before.log` |
+| Core 集成回归 | 初次 45 XCTest 中 8 个模型 opt-in 跳过，131 Swift Testing 通过，无失败；随后独立加载真实模型的 27 XCTest 全部通过、无 skip，覆盖该 opt-in 路径。最后发布围栏补充选择另行通过。 | `acceptance-core-integrated.log`、`acceptance-live-real-independent-verified.log` |
+| 独立 iOS 原生 | 112 passed，0 failed/skip，11 个 suite；生产/test/project 清单前后稳定，478 个生产文件逐一核对一致。 | `acceptance-ios-receipt.json`、`acceptance-ios-*` 日志/xcresult/清单 |
+| 独立 Mac 原生 | 83 passed、1 范围外 LLM opt-in skipped、0 failed；实际三模型处理/发布/重处理运行，真实 192 维声纹持久化、来源指纹与原始音频完整性通过。普通签名包不含 XCTest 或公共测试模型。 | `mac-acceptance-final-receipt.txt`、对应日志/xcresult/生产清单 |
+| iPhone UI 目标 | 29 unit + 4 UI tests passed：底部布局、展开/收起、旋转、详情导航、最大 Dynamic Type 下的录音控制、减少动态效果、中英文 accessibility 和重复隐藏 dock 修复。不是整个 App 的无障碍全量认证。 | `acceptance-recording-ui.log`、`.xcresult`、`acceptance-recording-ui-evidence/` |
+| Mac 产品真实路径 | 签名三模型实际运行生成 5 个 ASR 片段、2 个声纹/9 个时间段；发布/重处理、原始字节不变、模板和身份持久化回归通过。共享模型来源重建选择为 28 passed、0 skip。 | `.build/mac-final-handoff/shared-provenance.xcresult`；最终独立矩阵见 Mac acceptance receipt |
+
+iPhone 模型延迟证据来自既有公开 LibriSpeech 拼接样本，不是用户的自然会议。
+修复前后内部目标行覆盖由 **4/9 增至 6/9**，返回说话人恢复；保守的过渡区仍 Unknown。
+首个/第二个身份出现在 **10 秒/22 秒累计音频**，不是毫秒级识别承诺，也不是物理 iPhone wall-clock 测量。
+阶段中位示例：模型加载 38 ms、窗口提取 80 ms、聚类 0.56 ms、CAM 74 ms；
+已有行在证据确认后的数据库/观察约 22–33 ms，捕获渲染约 49–58 ms。推理、干净证据等待和 UI 延迟分别记录。
+没有降低 0.7 相似度、0.1 margin 或 2 秒干净音频门槛，也没有用前一个人或强制刷新填 Unknown。
+
+动画参考 Robinhood 的直接操控、松手确认和取消回位原则；使用本地 SwiftUI 手势与弹簧，
+不引入 Lottie 依赖，也不声称得到其私有参数。公开参考：[Robinhood motion case study](https://lottiefiles.com/case-studies/robinhood)。
+
+**Mac 扩展窗口门禁未关闭**：实现者的一次窗口测试为 1 passed / 1 failed：真实处理/播放生成了公开 fixture 截图，
+整卡实验 harness 在取得 `NSAccessibility` 对象前 `XCTUnwrap` 失败，尚未验证点击动作。该实验被替换为独立 QA bundle 的 opt-in XCUITest，
+不能把失败当作通过。后续独立窗口/播放复验三次在 XCTest IDE-session 建立阶段停滞，尚未执行 test methods。
+另一个隔离 bundle-ID 方案缺少开发 provisioning profile；未修改账号、profile 或系统权限，也未终止用户进程 PID 8293。
+这些中止不是新的 pass/skip，之前的 83 passed 仍有效，但不包含后加的窗口断言。`c0a5e49` 的最终窗口测试与 LLM UI 范围 gate
+已通过签名 `build-for-testing`，编译不等于运行通过。详见 `acceptance-mac-owner-native-view.xcresult`、`mac-acceptance-window-*`、
+`mac-acceptance-playback*`、`acceptance-final-mac-test-build.log` 和最终 receipt。
+
+失败/重跑保留：发布 baseline 因身份 revision 漂移失败；编译期间并发 API/测试 fixture 签名和 macro 修正；
+Mac 最初模型说明缺少中英文 key 的测试失败，补齐资源后重跑；独立真实模型首次缺少 checkout 的公开音频路径，
+只临时链接已有公开 corpus 后 27/27 通过并移除链接。iOS 第一次测试期间发现两个 Core 文件变化，
+已以稳定的最终生产清单重新构建并重跑 112 项，不使用最初那次 green 作为最终凭据。
+
+证据根为本机 session `~/.copilot/session-state/a4ab0df9-4371-44ee-be89-af180b56d832/files/`；
+需要保留的 checkout QA 日志/截图在清理前复制到该目录。开发签名包未自动安装到用户设备，
+Mac 当前用户进程未被替换/终止。合并、远端 SHA、包签名/校验值在最终 `acceptance-release-receipt.json` 记录。
+**必须两端都更新后，才能复验本轮结果回传和声纹闭环。** 无线可用反馈不被扩写成全部通过。
+
+## 历史基线证据：不覆盖本轮验收
 
 此前 main 已合并并推送 `3bfc72b`（协调者报告）；生产包来源 `7dac0e34883e2d4b940693c646289435f85d4881`，真模型测试 `dcf161e`，`3bfc72b` 为相应 QA 文档记录。
-本轮新增代码尚待最终复核，这些历史结果不是其验收凭据。
+这些历史结果不是本轮新增代码的验收凭据；本轮证据在上节。
 
 | 验证 | 已记录结果 | 范围 / 证据名 |
 |---|---|---|

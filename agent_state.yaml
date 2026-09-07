@@ -9,18 +9,21 @@ baseline:
   production_source: "7dac0e34883e2d4b940693c646289435f85d4881"
   real_model_tests: "dcf161e"
 current_round:
-  status: "fixes_in_progress_not_accepted"
+  status: "software_verified_physical_retest_pending"
   sequence: ["consolidate_documents", "fix", "review_and_qa", "merge_and_push"]
-  final_integration: "Pending coordinator verification; no completion claim for this round."
-  documentation: "Consolidated; freeze root documents until coordinator records final QA."
+  final_integration: "8a81aefcc492a70842c2c98af507f461c6295023; source-equivalent signed builds, final merge/push receipt recorded outside Git."
+  documentation: "Consolidated; current results and remaining physical gates are in SYNC_ACCEPTANCE.md."
   wireless: "User reports unplugged sync works; not an instrumented test receipt."
-  active_acceptance_ids:
-    - "NOW-002: Mac reprocessing result not visible on iPhone"
-    - "NOW-003: Mac local voiceprint generation and recognition absent at baseline"
-    - "NOW-004: iPhone Identifying latency"
-    - "NOW-005: Keep app awake while foreground"
-    - "NOW-006: Bottom recorder and swipe animation"
-    - "NOW-007: Mac whole-card hit area"
+  implementation:
+    result_and_speaker_publication: "a35501e: atomic artifacts/identities and content-proven identity-only conflict merge"
+    mac_product: "9153b54: three-model runtime, library publication default, row hit area, LLM entries removed"
+    live_evidence: "b865c96: retain clean evidence and recover confirmed returning identity; 10s model horizon remains"
+    iphone_interaction: "8a81aef: foreground wake leases, bottom dock, interactive submit, accessibility"
+  remaining_retest:
+    - "NOW-002/NOW-003: new builds on both physical devices, reprocess result and authorized voiceprint return"
+    - "NOW-004: natural meeting/phone inference delay; not all speech intervals identified"
+    - "NOW-005/NOW-006/NOW-007: physical idle behavior, motion feel and user click-area confirmation"
+  qa_blocker: "Expanded Mac card/playback window tests stalled before test execution; alternate QA bundle lacked provisioning profile. No user app termination or permission/profile changes."
   full_physical_closure: "Not completed; wireless user report alone does not close it."
 documents:
   ios_scope: "IOS_UI.md"
