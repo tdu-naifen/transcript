@@ -62,7 +62,6 @@ struct LiveTranscriptView: View {
         .padding(.top, 20)
         .padding(.bottom, scrollsInternally ? 108 : 20)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .task(id: model.displayedMeetingID) { await model.observeSpeakerProjection() }
     }
 
     private var headerLayout: AnyLayout {
@@ -76,7 +75,8 @@ struct LiveTranscriptView: View {
             ForEach(model.lines) { line in
                 TranscriptLineView(
                     line: line, speaker: model.speaker(for: line),
-                    unresolvedSpeakerText: model.speakerIdentificationProgress.text
+                    unresolvedSpeakerText: model.speakerIdentificationProgress.text,
+                    projectionObservedAt: model.speakerProjectionObservedAt
                 )
             }
         }
@@ -88,6 +88,7 @@ private struct TranscriptLineView: View {
     let line: ASRSegment
     let speaker: Speaker?
     let unresolvedSpeakerText: String
+    let projectionObservedAt: TimeInterval
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
@@ -116,6 +117,12 @@ private struct TranscriptLineView: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityIdentifier("liveTranscriptLine")
+        .onChange(of: projectionObservedAt, initial: true) {
+            // SwiftUI update timing, not a claim of display scan-out or inference latency.
+            if projectionObservedAt > 0 {
+                LiveIdentityTiming.record(.rowUpdate, since: projectionObservedAt)
+            }
+        }
     }
 
     private var dotColor: Color {

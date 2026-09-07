@@ -92,9 +92,8 @@ final class SpeakerProjectionTests: XCTestCase {
         try await UtteranceRepository(services.database).append([unknown, row])
         let live = liveModel(services, meeting)
         let detail = MeetingDetailModel(meeting: meeting, audioURL: nil, services: services)
-        let liveTask = Task { await live.observeSpeakerProjection() }
         let detailTask = Task { await detail.observe() }
-        defer { liveTask.cancel(); detailTask.cancel() }
+        defer { detailTask.cancel() }
         try await eventually {
             live.speaker(for: self.segment(row))?.id == raven.id && detail.speaker(for: row)?.id == raven.id
         }

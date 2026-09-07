@@ -1,7 +1,22 @@
 import Foundation
 import GRDB
+import OSLog
 import struct FluidAudio.DiarizerSegment
 import TranscriptCore
+
+/// Only stage names and monotonic timings leave this process's identity pipeline.
+enum LiveIdentityTiming {
+    enum Stage: String {
+        case asrEvent, publicationEvent, projectionRead, observationDelivery, rowUpdate
+    }
+    private static let logger = Logger(subsystem: "com.transcript", category: "LiveIdentityTiming")
+
+    static func record(_ stage: Stage, since start: TimeInterval? = nil) {
+        let now = ProcessInfo.processInfo.systemUptime
+        let elapsedMs = start.map { max(0, now - $0) * 1_000 } ?? 0
+        logger.debug("stage=\(stage.rawValue, privacy: .public) uptime_s=\(now, privacy: .public) elapsed_ms=\(elapsedMs, privacy: .public)")
+    }
+}
 
 /// Both screens resolve the persisted utterance identity, never a remembered animal
 /// name or a neighboring sentence. One database snapshot also makes renames atomic.
@@ -27,6 +42,7 @@ struct SpeakerProjection: Sendable {
     let slots: [MeetingSpeaker]
     let analysisState: String?
     let speakersByID: [String: Speaker]
+    var readStartedAt = ProcessInfo.processInfo.systemUptime
     private let identitiesByUtteranceID: [String: String]
 
     static let empty = SpeakerProjection(meeting: nil, utterances: [], speakers: [], slots: [])
@@ -159,11 +175,13 @@ struct SpeakerProjection: Sendable {
         let observation = ValueObservation.tracking { db in try read(db, meetingID: meetingID) }
         for try await snapshot in observation.values(in: database.reader) {
             try Task.checkCancellation()
+            LiveIdentityTiming.record(.observationDelivery, since: snapshot.readStartedAt)
             onChange(snapshot)
         }
     }
 
     private static func read(_ db: Database, meetingID: String) throws -> Self {
+        let startedAt = ProcessInfo.processInfo.systemUptime
         let meeting = try Meeting.fetchOne(db, key: meetingID)
         let utterances = try Utterance
             .filter(Utterance.Columns.meetingId == meetingID)
@@ -179,13 +197,16 @@ struct SpeakerProjection: Sendable {
             ORDER BY id
             """, arguments: [meetingID, meetingID])
         let positions = Dictionary(uniqueKeysWithValues: slots.map { ($0.speakerId, $0.displayIndex) })
-        return Self(
+        var snapshot = Self(
             meeting: meeting, utterances: utterances,
             speakers: speakers.sorted {
                 (positions[$0.id] ?? Int.max, $0.id) < (positions[$1.id] ?? Int.max, $1.id)
             },
             slots: slots, analysisState: try analysisState(db, meetingID: meetingID)
         )
+        snapshot.readStartedAt = startedAt
+        LiveIdentityTiming.record(.projectionRead, since: startedAt)
+        return snapshot
     }
 
     private static func analysisState(_ db: Database, meetingID: String) throws -> String? {

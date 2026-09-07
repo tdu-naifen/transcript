@@ -38,6 +38,7 @@ final class TranscriptionModel {
     private(set) var speakersByIndex: [Int: Speaker] = [:]
     private(set) var displayedMeetingID: String?
     private(set) var speakerProjection = SpeakerProjection.empty
+    private(set) var speakerProjectionObservedAt: TimeInterval = 0
     private var diarizationIsRunning = false
     private(set) var effectiveLocale: Locale?
     private(set) var pendingLocale: Locale?
@@ -58,6 +59,7 @@ final class TranscriptionModel {
     private var liveSpeakers: LiveDynamicSpeakers?
     private let makeLiveSpeakers: (String) -> LiveDynamicSpeakers?
     private var liveSpeakerEvents: Task<Void, Never>?
+    @ObservationIgnored private var speakerObservationTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
     private var diarizationTask: Task<Void, Never>?
     private var currentMeetingId: String?
@@ -115,7 +117,10 @@ final class TranscriptionModel {
         self.currentMeetingId = meetingId
         self.displayedMeetingID = meetingId
         status = .idle
+        startSpeakerObservation(meetingID: meetingId)
     }
+
+    deinit { speakerObservationTask?.cancel() }
 
     var isAvailable: Bool { status != .modelMissing }
     var needsForegroundFinalization: Bool {
@@ -200,6 +205,7 @@ final class TranscriptionModel {
         processingFailure = nil
         detectedLanguage = nil
         currentMeetingId = meetingId
+        startSpeakerObservation(meetingID: meetingId)
         routedLocale = nil
         acceptsSwitches = true
         if let transcriber, let effectiveLocale, let slot = preparedSlot {
@@ -456,6 +462,8 @@ final class TranscriptionModel {
     }
 
     func discard() async {
+        speakerObservationTask?.cancel()
+        speakerObservationTask = nil
         incomplete = true
         setLanguageSwitchingAllowed(false)
         liveSpeakers?.close()
@@ -508,16 +516,22 @@ final class TranscriptionModel {
         return diarizationIsRunning && speakerWarning == nil ? .identifying : .unassigned
     }
 
-    func observeSpeakerProjection() async {
-        guard let id = displayedMeetingID else { return }
-        do {
-            try await SpeakerProjection.observe(database: services.database, meetingID: id) { [weak self] snapshot in
-                guard let self, displayedMeetingID == id else { return }
-                speakerProjection = snapshot
+    private func startSpeakerObservation(meetingID: String) {
+        speakerObservationTask?.cancel()
+        let database = services.database
+        // Capture the model weakly for each delivery, not across the endless stream.
+        // Observation belongs to the displayed recording, not an expanded panel.
+        speakerObservationTask = Task { [weak self] in
+            do {
+                try await SpeakerProjection.observe(database: database, meetingID: meetingID) { [weak self] snapshot in
+                    guard let self, displayedMeetingID == meetingID else { return }
+                    speakerProjection = snapshot
+                    speakerProjectionObservedAt = ProcessInfo.processInfo.systemUptime
+                }
+            } catch is CancellationError {
+            } catch {
+                RecordingDiagnostics.log(error)
             }
-        } catch is CancellationError {
-        } catch {
-            RecordingDiagnostics.log(error)
         }
     }
 
@@ -537,6 +551,7 @@ final class TranscriptionModel {
             detectedLanguage = info.language.fixedLocaleIdentifier
             effectiveLocale = info.language.fixedLocaleIdentifier.map(Locale.init(identifier:))
         case .segment(let segment):
+            LiveIdentityTiming.record(.asrEvent)
             if let existing = lines.firstIndex(where: { $0.id == segment.id }) {
                 lines[existing] = segment
             } else if !segment.text.isEmpty {
@@ -607,16 +622,14 @@ final class TranscriptionModel {
 
     private func reconcileSpeakerAssignments() async throws {
         await liveSpeakers?.reconcile()
-        try await refreshSpeakerProjection()
     }
 
     func apply(_ event: LiveSpeakerStatus, meetingId: String) async {
         guard currentMeetingId == meetingId else { return }
-        diarizationIsRunning = [.waitingForContext, .preparingModels, .identifying, .published].contains(event)
+        diarizationIsRunning = event == .identifying
         speakerWarning = LiveSpeakerText.warning(event)
         if event == .published {
-            do { try await refreshSpeakerProjection() }
-            catch { speakerWarning = LiveSpeakerText.warning(.storageFailed); RecordingDiagnostics.log(error) }
+            LiveIdentityTiming.record(.publicationEvent)
         }
         if [.modelsUnavailable, .processingFailed, .storageFailed].contains(event) {
             RecordingDiagnostics.log("Optional live speakers: \(event)")
