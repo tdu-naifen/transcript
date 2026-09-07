@@ -1,2 +1,2 @@
 "CFBundleDisplayName" = "Transcript";
-"NSLocalNetworkUsageDescription" = "允许 iPhone 在局域网内发现这台 Mac。会议传输需要后续实现的安全身份认证连接。";
+"NSLocalNetworkUsageDescription" = "在局域网内发现并连接已配对的 iPhone。启用会议接收后，接收你从 iPhone 主动发送的音频和转写副本。";

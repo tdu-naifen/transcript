@@ -1,3 +1,5 @@
+import AppKit
+import Combine
 import Foundation
 import Network
 import Observation
@@ -48,10 +50,12 @@ final class MacBonjourService {
     let pairing: MacPairingServer
     private(set) var state: State = .idle
     private(set) var advertisedName: String?
+    private(set) var isEnabled = false
+    private(set) var advertisesMeetingCopy = false
 
     let connectionExplanation = String(
         localized: "bonjour.connectionExplanation",
-        defaultValue: "Compare the six-digit code on both devices and approve on both. Pairing uses encrypted identity verification. Meeting transfer is not available."
+        defaultValue: "Compare the six-digit code on both devices and approve on both. Pairing uses encrypted identity verification. Enable meeting receiving on this Mac before sending a copy from your iPhone."
     )
 
     var localNetworkDenied: Bool {
@@ -61,55 +65,109 @@ final class MacBonjourService {
         }
     }
 
-    @ObservationIgnored private let makeListener: @MainActor (String) throws -> any MacBonjourListening
+    @ObservationIgnored private let makeListener: @MainActor (String, Bool) throws -> any MacBonjourListening
     @ObservationIgnored private var listener: (any MacBonjourListening)?
     @ObservationIgnored private var generation = UUID()
     @ObservationIgnored private var listenerReady = false
     @ObservationIgnored private var registeredName: String?
+    @ObservationIgnored private let preferences: UserDefaults?
+    @ObservationIgnored private let recoveryDelay: Duration
+    @ObservationIgnored private var recoveryTask: Task<Void, Never>?
+    @ObservationIgnored private var recoveryAttempt = 0
+    @ObservationIgnored private var restored = false
+    @ObservationIgnored private var lifecycleObservers: [AnyCancellable] = []
+    private static let enabledKey = "mac.connection.discoveryEnabled"
     @ObservationIgnored private let logger = Logger(
         subsystem: "com.transcript.mac", category: "BonjourPublishing"
     )
 
     init(
         serviceName: String = Host.current().localizedName ?? "Transcript Mac",
-        pairingStore: (any MacPairingIdentityStoring)? = nil
+        pairingStore: (any MacPairingIdentityStoring)? = nil,
+        preferences: UserDefaults? = .standard
     ) {
+        self.preferences = preferences
+        recoveryDelay = .seconds(2)
         self.serviceName = Self.normalizedName(serviceName)
         let pairing = MacPairingServer(
             name: Self.normalizedName(serviceName), store: pairingStore ?? MacPairingKeychainStore()
         )
         self.pairing = pairing
-        self.makeListener = { try NetworkMacBonjourListener(name: $0, pairing: pairing) }
+        self.makeListener = { try NetworkMacBonjourListener(name: $0, pairing: pairing, meetingCopy: $1) }
     }
 
     init(
         serviceName: String,
+        preferences: UserDefaults? = nil,
+        recoveryDelay: Duration = .seconds(2),
+        pairing: MacPairingServer? = nil,
         makeListener: @escaping @MainActor (String) throws -> any MacBonjourListening
     ) {
+        self.preferences = preferences
+        self.recoveryDelay = recoveryDelay
         self.serviceName = Self.normalizedName(serviceName)
-        self.pairing = MacPairingServer(name: Self.normalizedName(serviceName))
-        self.makeListener = makeListener
+        self.pairing = pairing ?? MacPairingServer(name: Self.normalizedName(serviceName))
+        self.makeListener = { name, _ in try makeListener(name) }
     }
 
     isolated deinit {
+        recoveryTask?.cancel()
         listener?.cancel()
         pairing.stop()
     }
 
-    /// Call only in response to explicit user enablement. Repeated starts are idempotent.
+    func restoreDiscovery() {
+        guard !restored else { return }
+        restored = true
+        lifecycleObservers = [
+            NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification),
+            NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
+        ].map { publisher in
+            publisher.sink { [weak self] _ in
+                Task { @MainActor [weak self] in self?.recoverIfNeeded() }
+            }
+        }
+        let shouldRestore = preferences?.object(forKey: Self.enabledKey) as? Bool
+            ?? !pairing.peers.isEmpty
+        logger.info("Restoring discovery: enabled=\(shouldRestore), trusted device count=\(self.pairing.peers.count)")
+        if case .failed(let message) = pairing.state {
+            logger.error("Could not restore pairing state: \(message, privacy: .public)")
+        }
+        guard shouldRestore else { return }
+        isEnabled = true
+        startListener()
+    }
+
+    /// Explicit enablement permits new pairing; automatic recovery only accepts trusted peers.
     func start() {
+        isEnabled = true
+        preferences?.set(true, forKey: Self.enabledKey)
+        startListener(allowNewPairing: true)
+    }
+
+    func advertiseMeetingCopy(_ enabled: Bool) {
+        guard advertisesMeetingCopy != enabled else { return }
+        advertisesMeetingCopy = enabled
+        guard isEnabled, listener != nil else { return }
+        invalidateListener(stopPairing: false)
+        startListener()
+    }
+
+    private func startListener(allowNewPairing: Bool = false) {
         guard listener == nil else { return }
+        recoveryTask?.cancel()
+        recoveryTask = nil
         generation = UUID()
         let currentGeneration = generation
         listenerReady = false
         registeredName = nil
         advertisedName = nil
         state = .starting
-        pairing.enablePairing()
+        if allowNewPairing { pairing.enablePairing() }
         logger.info("Starting Bonjour advertisement with authenticated pairing.")
 
         do {
-            let listener = try makeListener(serviceName)
+            let listener = try makeListener(serviceName, advertisesMeetingCopy)
             self.listener = listener
             listener.start { [weak self] event in
                 guard let self, self.generation == currentGeneration else { return }
@@ -136,6 +194,11 @@ final class MacBonjourService {
     }
 
     func stop() {
+        isEnabled = false
+        preferences?.set(false, forKey: Self.enabledKey)
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        recoveryAttempt = 0
         invalidateListener()
         state = .idle
         logger.info("Bonjour advertisement stopped.")
@@ -145,6 +208,21 @@ final class MacBonjourService {
     func retry() {
         stop()
         start()
+    }
+
+    func recoverIfNeeded() {
+        guard isEnabled, !localNetworkDenied else { return }
+        switch state {
+        case .failed, .waiting:
+            recoveryTask?.cancel()
+            recoveryTask = nil
+            invalidateListener(stopPairing: false)
+            startListener()
+        case .idle:
+            startListener()
+        case .starting, .advertising:
+            break
+        }
     }
 
     private func handle(_ event: MacBonjourListenerEvent) {
@@ -190,16 +268,27 @@ final class MacBonjourService {
         }
         advertisedName = registeredName
         state = .advertising
+        recoveryAttempt = 0
         logger.info("Bonjour service registered. Discovery does not indicate an authenticated connection.")
     }
 
     private func fail(_ failure: Failure) {
-        invalidateListener()
+        invalidateListener(stopPairing: false)
         state = .failed(failure)
         logger.error("Bonjour publishing failed: \(failure.message, privacy: .public)")
+        guard isEnabled, !failure.localNetworkDenied else { return }
+        let delay = recoveryDelay * (1 << min(recoveryAttempt, 4))
+        recoveryAttempt += recoveryAttempt < 4 ? 1 : 0
+        recoveryTask?.cancel()
+        recoveryTask = Task { [weak self] in
+            do { try await Task.sleep(for: delay) }
+            catch { return }
+            guard !Task.isCancelled else { return }
+            self?.recoverIfNeeded()
+        }
     }
 
-    private func invalidateListener() {
+    private func invalidateListener(stopPairing: Bool = true) {
         generation = UUID()
         let oldListener = listener
         listener = nil
@@ -207,7 +296,8 @@ final class MacBonjourService {
         registeredName = nil
         advertisedName = nil
         oldListener?.cancel()
-        pairing.stop()
+        if stopPairing { pairing.stop() }
+        else { pairing.disableNewPairing() }
     }
 
     private static func normalizedName(_ name: String) -> String {
@@ -240,11 +330,14 @@ private final class NetworkMacBonjourListener: MacBonjourListening {
     private let queue = DispatchQueue(label: "com.transcript.mac-bonjour-publisher")
     private var active = false
 
-    init(name: String, pairing: MacPairingServer) throws {
+    init(name: String, pairing: MacPairingServer, meetingCopy: Bool) throws {
         let parameters = NWParameters.tcp
         parameters.includePeerToPeer = true
         listener = try NWListener(using: parameters)
-        listener.service = NWListener.Service(name: name, type: MacBonjourService.serviceType)
+        listener.service = NWListener.Service(
+            name: name, type: MacBonjourService.serviceType,
+            txtRecord: meetingCopy ? NetService.data(fromTXTRecord: ["meeting-copy": Data("2".utf8)]) : nil
+        )
         listener.newConnectionHandler = { [weak self, weak pairing] connection in
             Task { @MainActor in
                 guard self?.active == true, let pairing else { connection.cancel(); return }

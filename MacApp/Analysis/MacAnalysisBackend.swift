@@ -6,8 +6,8 @@ enum MacAnalysisAvailability: Equatable, Sendable {
 
     var message: String {
         switch self {
-        case .checking: String(localized: "Checking on-device model…")
-        case .available: String(localized: "Apple on-device model ready")
+        case .checking: analysisText("Checking on-device model…")
+        case .available: analysisText("Selected on-device model ready")
         case .unavailable(let reason): reason
         }
     }
@@ -21,19 +21,19 @@ protocol MacAnalysisGenerating: Sendable {
 actor MacFoundationModelsBackend: MacAnalysisGenerating {
     func availability() async -> MacAnalysisAvailability {
         guard #available(macOS 26.0, *) else {
-            return .unavailable(String(localized: "On-device analysis requires macOS 26 or later."))
+            return .unavailable(analysisText("On-device analysis requires macOS 26 or later."))
         }
         switch SystemLanguageModel.default.availability {
         case .available:
             return .available
         case .unavailable(.deviceNotEligible):
-            return .unavailable(String(localized: "This Mac does not support Apple Intelligence."))
+            return .unavailable(analysisText("This Mac does not support Apple Intelligence."))
         case .unavailable(.appleIntelligenceNotEnabled):
-            return .unavailable(String(localized: "Enable Apple Intelligence in System Settings to use on-device analysis."))
+            return .unavailable(analysisText("Enable Apple Intelligence in System Settings to use on-device analysis."))
         case .unavailable(.modelNotReady):
-            return .unavailable(String(localized: "The Apple on-device model is not ready. Check Apple Intelligence in System Settings, then retry."))
+            return .unavailable(analysisText("The Apple on-device model is not ready. Check Apple Intelligence in System Settings, then retry."))
         case .unavailable:
-            return .unavailable(String(localized: "The Apple on-device model is unavailable on this Mac."))
+            return .unavailable(analysisText("The Apple on-device model is unavailable on this Mac."))
         }
     }
 

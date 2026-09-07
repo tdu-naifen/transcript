@@ -73,6 +73,10 @@ final class MacLibraryModel {
         errorMessage = nil
     }
 
+    func processingContext() async throws -> MacLibraryContext {
+        try await readyStore().context
+    }
+
     func voiceprints() async throws -> [MacVoiceprintProfile] {
         let store = try await readyStore()
         return try await store.voiceprints()

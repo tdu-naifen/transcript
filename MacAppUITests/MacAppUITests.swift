@@ -23,7 +23,8 @@ final class MacAppUITests: XCTestCase {
         XCTAssertEqual(app.staticTexts["macMeetingTitle"].value as? String, "Product design weekly")
 
         app.typeKey("2", modifierFlags: .command)
-        XCTAssertTrue(app.staticTexts["No processing jobs"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["macProcessingTitle"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["macCreateASRVersion"].isEnabled)
         app.typeKey("3", modifierFlags: .command)
         XCTAssertTrue(app.buttons["macStartDiscovery"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["macBonjourStatus"].value as? String, "Connect your iPhone")
@@ -31,6 +32,9 @@ final class MacAppUITests: XCTestCase {
         app.buttons["macSettingsButton"].click()
         let settingsWindow = app.windows["Settings"]
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5))
+        settingsWindow.radioButtons["Backups"].click()
+        XCTAssertTrue(settingsWindow.buttons["macBackUpNow"].waitForExistence(timeout: 5))
+        XCTAssertTrue(settingsWindow.staticTexts["macBackupRestoreUnavailable"].exists)
         settingsWindow.buttons[XCUIIdentifierCloseWindow].click()
         app.typeKey("1", modifierFlags: .command)
         XCTAssertTrue(app.buttons["macSampleToggle"].waitForExistence(timeout: 5))

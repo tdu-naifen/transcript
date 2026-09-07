@@ -16,6 +16,18 @@ packages:
   FluidAudio:
     url: https://github.com/FluidInference/FluidAudio.git
     from: 0.12.4
+  MLXSwiftLM:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    exactVersion: 2.29.3
+  MLXSwift:
+    url: https://github.com/ml-explore/mlx-swift
+    exactVersion: 0.29.1
+  Transformers:
+    url: https://github.com/huggingface/swift-transformers
+    exactVersion: 1.1.6
+  Textual:
+    url: https://github.com/gonzalezreal/textual
+    exactVersion: 0.3.1
 
 targets:
   TranscriptMac:
@@ -25,9 +37,20 @@ targets:
     sources:
       - path: MacApp
       - path: Shared/Pairing
+      - path: Shared/Sync/MeetingCopyWire.swift
     dependencies:
       - package: TranscriptCore
         product: TranscriptCore
+      - package: FluidAudio
+        product: FluidAudio
+      - package: MLXSwiftLM
+        products: [MLXLLM, MLXLMCommon, MLXEmbedders]
+      - package: MLXSwift
+        product: MLX
+      - package: Transformers
+        product: Transformers
+      - package: Textual
+        product: Textual
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.transcript.TranscriptMac

@@ -38,7 +38,14 @@ struct MacRootView: View {
                 Button {
                     workspace.section = .connection
                 } label: {
-                    Label(workspace.bonjour.pairing.connectedPeer == nil ? "Not connected" : "Connected", systemImage: "iphone")
+                    HStack(spacing: 6) {
+                        MacPhoneConnectionIcon(
+                            isConnected: workspace.bonjour.pairing.connectedPeer != nil,
+                            isWorking: workspace.meetingCopy.progress != nil || workspace.bonjour.pairing.state == .negotiating,
+                            size: 16
+                        )
+                        Text(workspace.bonjour.pairing.connectedPeer == nil ? String(localized: "Not connected") : String(localized: "Connected"))
+                    }
                 }
                 .help("Discovery is separate from a trusted connection.")
                 .accessibilityIdentifier("macConnectionToolbar")
@@ -75,6 +82,7 @@ struct MacRootView: View {
             Text(workspace.importError ?? "")
         }
         .task {
+            await workspace.startServices()
             await workspace.library.load()
             workspace.selectFirstIfNeeded()
         }
@@ -138,17 +146,25 @@ struct MacRootView: View {
                 Button {
                     workspace.section = .connection
                 } label: {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Label("Your iPhone", systemImage: "iphone")
-                            .fontWeight(.medium)
-                        Text(workspace.bonjour.pairing.connectedPeer?.name ?? String(localized: "Not connected"))
-                            .font(.caption).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        MacPhoneConnectionIcon(
+                            isConnected: workspace.bonjour.pairing.connectedPeer != nil,
+                            isWorking: workspace.meetingCopy.progress != nil || workspace.bonjour.pairing.state == .negotiating,
+                            size: 22
+                        )
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Your iPhone")
+                                .fontWeight(.medium)
+                            Text(workspace.bonjour.pairing.connectedPeer?.name ?? String(localized: "Not connected"))
+                                .font(.caption).foregroundStyle(.secondary)
+                        }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
                     .background(.background, in: RoundedRectangle(cornerRadius: 10))
                 }
                 .buttonStyle(.plain)
+                .accessibilityIdentifier("macSidebarIPhoneButton")
                 Label("Saved meetings work offline", systemImage: "checkmark")
                     .font(.caption)
                     .foregroundStyle(.secondary)

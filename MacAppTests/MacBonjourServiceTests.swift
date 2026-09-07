@@ -4,6 +4,125 @@ import XCTest
 
 @MainActor
 final class MacBonjourServiceTests: XCTestCase {
+    func testQABundleIdentifiesFixedTransferCodec() {
+        XCTAssertEqual(
+            Bundle.main.object(forInfoDictionaryKey: "TranscriptMeetingCopyProtocolRevision") as? String,
+            "5d61b80f84052897e476b5ff8c1c15f0648e410a"
+        )
+        XCTAssertEqual(
+            Bundle.main.object(forInfoDictionaryKey: "TranscriptMeetingCopyChunkBytes") as? Int,
+            MeetingCopyWire.chunkLimit
+        )
+    }
+
+    func testEnabledDiscoveryRestoresWithoutOpeningNewPairingAndStopPersists() throws {
+        let suite = "MacBonjourRestore-\(UUID().uuidString)"
+        let preferences = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { preferences.removePersistentDomain(forName: suite) }
+        let first = BonjourListenerProbe()
+        var original: MacBonjourService? = MacBonjourService(
+            serviceName: "Office Mac", preferences: preferences
+        ) { _ in first }
+        original?.start()
+        XCTAssertTrue(original?.pairing.allowsNewPairing == true)
+        original = nil
+        XCTAssertEqual(first.cancels, 1)
+
+        let second = BonjourListenerProbe()
+        let restored = MacBonjourService(serviceName: "Office Mac", preferences: preferences) { _ in second }
+        restored.restoreDiscovery()
+        restored.restoreDiscovery()
+        XCTAssertEqual(second.starts, 1)
+        XCTAssertTrue(restored.isEnabled)
+        XCTAssertFalse(restored.pairing.allowsNewPairing)
+        restored.stop()
+
+        let third = BonjourListenerProbe()
+        let stopped = MacBonjourService(serviceName: "Office Mac", preferences: preferences) { _ in third }
+        stopped.restoreDiscovery()
+        stopped.recoverIfNeeded()
+        XCTAssertEqual(third.starts, 0)
+        XCTAssertFalse(stopped.isEnabled)
+    }
+
+    func testTransientFailureAutomaticallyReplacesListenerWithoutNewPairing() async throws {
+        let old = BonjourListenerProbe()
+        let replacement = BonjourListenerProbe()
+        var attempts = 0
+        let service = MacBonjourService(serviceName: "Office Mac", recoveryDelay: .milliseconds(10)) { _ in
+            attempts += 1
+            return attempts == 1 ? old : replacement
+        }
+        service.start()
+        defer { service.stop() }
+        old.emit(.failed(.network(.posix(.ENETDOWN))))
+        for _ in 0..<100 where replacement.starts == 0 {
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTAssertEqual(replacement.starts, 1)
+        XCTAssertFalse(service.pairing.allowsNewPairing)
+        old.emit(.cancelled)
+        XCTAssertEqual(service.state, .starting)
+        replacement.emit(.ready)
+        replacement.emit(.registered("Recovered Mac"))
+        XCTAssertEqual(service.state, .advertising)
+        XCTAssertNil(service.pairing.connectedPeer, "Discovery must not claim an authenticated connection")
+    }
+
+    func testStopCancelsPendingAutomaticRecovery() async throws {
+        var attempts = 0
+        let listener = BonjourListenerProbe()
+        let service = MacBonjourService(serviceName: "Office Mac", recoveryDelay: .milliseconds(10)) { _ in
+            attempts += 1
+            return listener
+        }
+        service.start()
+        listener.emit(.failed(.network(.posix(.ENETDOWN))))
+        service.stop()
+        try await Task.sleep(for: .milliseconds(80))
+        service.recoverIfNeeded()
+        XCTAssertEqual(attempts, 1)
+        XCTAssertEqual(service.state, .idle)
+    }
+
+    func testPermissionDenialDoesNotAutomaticallyRetry() async throws {
+        var attempts = 0
+        let listener = BonjourListenerProbe()
+        let service = MacBonjourService(serviceName: "Office Mac", recoveryDelay: .milliseconds(10)) { _ in
+            attempts += 1
+            return listener
+        }
+        service.start()
+        defer { service.stop() }
+        listener.emit(.failed(.network(.dns(-65570))))
+        service.recoverIfNeeded()
+        try await Task.sleep(for: .milliseconds(80))
+        XCTAssertEqual(attempts, 1)
+        XCTAssertTrue(service.localNetworkDenied)
+    }
+
+    func testWakeRecoveryPreservesHealthyListenerAndReplacesWaitingListener() {
+        let old = BonjourListenerProbe()
+        let replacement = BonjourListenerProbe()
+        var attempts = 0
+        let service = MacBonjourService(serviceName: "Office Mac") { _ in
+            attempts += 1
+            return attempts == 1 ? old : replacement
+        }
+        service.start()
+        defer { service.stop() }
+        old.emit(.ready)
+        old.emit(.registered("Office Mac"))
+        service.recoverIfNeeded()
+        XCTAssertEqual(attempts, 1)
+        XCTAssertEqual(old.cancels, 0)
+        old.emit(.waiting(.network(.posix(.ENETDOWN))))
+        service.recoverIfNeeded()
+        XCTAssertEqual(attempts, 2)
+        XCTAssertEqual(old.cancels, 1)
+        XCTAssertFalse(service.pairing.allowsNewPairing)
+    }
+
     func testInitializationDoesNotPublishAndStartIsIdempotent() {
         let listener = BonjourListenerProbe()
         var requestedNames: [String] = []
@@ -208,7 +327,7 @@ final class MacBonjourServiceTests: XCTestCase {
 
     func testRealBrowserDiscoversServiceTimesOutUnauthenticatedConnectionsAndObservesWithdrawal() async throws {
         let name = "TranscriptMac-test-\(UUID().uuidString)"
-        let service = MacBonjourService(serviceName: name)
+        let service = MacBonjourService(serviceName: name, preferences: nil)
         let parameters = NWParameters.tcp
         parameters.includePeerToPeer = true
         let browser = NWBrowser(

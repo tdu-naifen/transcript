@@ -32,7 +32,10 @@ enum MacSection: String, CaseIterable, Identifiable {
 final class MacWorkspace {
     let library: MacLibraryModel
     let player = MacAudioPlayer()
-    let bonjour = MacBonjourService()
+    let bonjour: MacBonjourService
+    let processing = MacProcessingModel()
+    let meetingCopy: MacMeetingCopyController
+    @ObservationIgnored private var startupTask: Task<Void, Never>?
     var section: MacSection? = .meetings
     var selectedMeetingID: String?
     var search = ""
@@ -44,6 +47,24 @@ final class MacWorkspace {
     var analysisMeetingID: String?
 
     init(library: MacLibraryModel? = nil) {
+        #if DEBUG
+        if let run = ProcessInfo.processInfo.environment["TRANSCRIPT_MAC_TEST_RUN_ID"],
+           let id = UUID(uuidString: run) {
+            let preferences = UserDefaults(suiteName: "TranscriptMacUITests-\(id.uuidString)")
+            bonjour = MacBonjourService(
+                serviceName: "Transcript Mac QA \(id.uuidString.prefix(8))",
+                pairingStore: MacPairingKeychainStore(service: "com.transcript.mac.qa.\(id.uuidString)"),
+                preferences: preferences
+            )
+            meetingCopy = MacMeetingCopyController(preferences: preferences)
+        } else {
+            bonjour = MacBonjourService()
+            meetingCopy = MacMeetingCopyController()
+        }
+        #else
+        bonjour = MacBonjourService()
+        meetingCopy = MacMeetingCopyController()
+        #endif
         if let library {
             self.library = library
             return
@@ -51,7 +72,7 @@ final class MacWorkspace {
         #if DEBUG
         if let runID = ProcessInfo.processInfo.environment["TRANSCRIPT_MAC_TEST_RUN_ID"],
            let id = UUID(uuidString: runID) {
-            self.library = MacLibraryModel(directory: FileManager.default.temporaryDirectory
+            self.library = MacLibraryModel(directory: FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
                 .appendingPathComponent("TranscriptMacUITests-\(id.uuidString)", isDirectory: true))
         } else {
             self.library = MacLibraryModel()
@@ -63,6 +84,50 @@ final class MacWorkspace {
 
     var items: [MacLibraryItem] {
         showingSamples ? MacSampleLibrary.items : library.items
+    }
+
+    func startServices() async {
+        #if DEBUG
+        if ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] != nil,
+           ProcessInfo.processInfo.environment["TRANSCRIPT_MAC_TEST_RUN_ID"] == nil { return }
+        #endif
+        if let startupTask {
+            await startupTask.value
+            return
+        }
+        let task = Task { [self] in
+            await meetingCopy.prepare(library: library)
+            let pairing = bonjour.pairing
+            pairing.makeMeetingCopySession = { [weak pairing, weak meetingCopy] peer, identity in
+                meetingCopy?.makeSession(peer: peer, receiverIdentity: identity) {
+                    guard let pairing else { return false }
+                    return try pairing.isConnectedAndTrusted(peer)
+                }
+            }
+            bonjour.advertiseMeetingCopy(meetingCopy.canReceive)
+            if ProcessInfo.processInfo.environment["TRANSCRIPT_MAC_TEST_RUN_ID"] == nil,
+               ProcessInfo.processInfo.environment["XCTestConfigurationFilePath"] == nil {
+                bonjour.restoreDiscovery()
+            }
+        }
+        startupTask = task
+        await task.value
+    }
+
+    func setMeetingCopyEnabled(_ enabled: Bool) {
+        guard meetingCopy.isEnabled != enabled else { return }
+        meetingCopy.setEnabled(enabled)
+        // Capability acceptance belongs to a session; reconnect after permission changes.
+        bonjour.pairing.disconnect()
+        bonjour.advertiseMeetingCopy(meetingCopy.canReceive)
+    }
+
+    func retryMeetingCopyStorage() async {
+        await meetingCopy.prepare(library: library)
+        if bonjour.advertisesMeetingCopy != meetingCopy.canReceive {
+            bonjour.pairing.disconnect()
+        }
+        bonjour.advertiseMeetingCopy(meetingCopy.canReceive)
     }
 
     var filteredItems: [MacLibraryItem] {

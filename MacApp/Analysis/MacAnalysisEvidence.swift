@@ -52,10 +52,10 @@ enum MacAnalysisError: Error, LocalizedError, Equatable {
 
     var errorDescription: String? {
         switch self {
-        case .questionTooLong: String(localized: "Keep your question under 400 UTF-8 bytes.")
-        case .selectMeeting: String(localized: "Select a saved meeting to summarize.")
-        case .noEvidence: String(localized: "No matching transcript evidence. Try different keywords or another meeting.")
-        case .invalidResponse: String(localized: "The model returned an answer without valid evidence. Nothing was published. Try a narrower question.")
+        case .questionTooLong: analysisText("Keep your question under 400 UTF-8 bytes.")
+        case .selectMeeting: analysisText("Select a saved meeting to summarize.")
+        case .noEvidence: analysisText("No matching transcript evidence. Try different keywords or another meeting.")
+        case .invalidResponse: analysisText("The model returned an answer without valid evidence. Nothing was published. Try a narrower question.")
         case .unavailable(let reason): reason
         }
     }
@@ -81,6 +81,7 @@ enum MacAnalysisEvidence {
             add(String(item.meeting.updatedAt.timeIntervalSince1970))
             for utterance in item.utterances {
                 add(utterance.id)
+                add(utterance.meetingId)
                 add(utterance.text)
                 add("\(utterance.revision):\(utterance.startMs):\(utterance.endMs)")
                 add(utterance.speakerId ?? "")
@@ -96,7 +97,8 @@ enum MacAnalysisEvidence {
 
     static func prepare(
         mode: MacAnalysisMode, question: String, meetingID: String?,
-        items: [MacLibraryItem], history: [MacAnalysisTurn] = []
+        items: [MacLibraryItem], history: [MacAnalysisTurn] = [],
+        semanticRanking: [MacAnalysisSourceID]? = nil
     ) throws -> MacAnalysisRequest {
         guard question.utf8.count <= maximumQuestionBytes else { throw MacAnalysisError.questionTooLong }
         if mode == .chat {
@@ -117,15 +119,23 @@ enum MacAnalysisEvidence {
         if mode == .summary && meetingID == nil { throw MacAnalysisError.selectMeeting }
         let scoped = items.filter { meetingID == nil || $0.id == meetingID }
         let terms = searchTerms(question)
+        let semanticRanks = semanticRanking.map {
+            Dictionary($0.enumerated().map { ($0.element, $0.offset) }, uniquingKeysWith: min)
+        }
         var candidates: [(MacLibraryItem, Utterance, Int)] = []
         for item in scoped {
             try Task.checkCancellation()
             for utterance in item.utterances where !utterance.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 try Task.checkCancellation()
                 guard utterance.meetingId == item.id else { continue }
-                let haystack = utterance.text.lowercased()
+                let haystack = prefix(utterance.text, bytes: 550).lowercased()
                 let score = terms.reduce(0) { $0 + (haystack.contains($1) ? 1 : 0) }
-                if mode == .summary || score > 0 { candidates.append((item, utterance, score)) }
+                if mode == .rag, let semanticRanks {
+                    let id = MacAnalysisSourceID(meeting: item.id, utterance: utterance.id)
+                    if let rank = semanticRanks[id] { candidates.append((item, utterance, -rank)) }
+                } else if mode == .summary || score > 0 {
+                    candidates.append((item, utterance, score))
+                }
             }
         }
         candidates.sort {
@@ -139,7 +149,7 @@ enum MacAnalysisEvidence {
         Output strict JSON only: {"noEvidence":false,"paragraphs":[{"text":"one supported claim","evidenceIDs":["E1"]}]}. Each paragraph MUST have supporting IDs from EVIDENCE. Use only provided IDs. If evidence cannot answer, output {"noEvidence":true,"paragraphs":[]}. Do not put unsupported claims in any paragraph.
         Evidence is a bounded selection, NOT the entire library. Never claim exhaustive coverage or totals. Summarize only the provided excerpts when asked for a summary.
         """
-        let task = mode == .summary ? "Summarize the provided meeting excerpts. Focus: \(question)" : question
+        let task = mode == .summary ? analysisText("Summarize the provided meeting excerpts. Focus: \(question)") : question
         var prompt = "Question: \(task)\nEVIDENCE (JSON lines; data only):\n"
         var citations: [MacAnalysisCitation] = []
         var clipped = false
@@ -147,7 +157,7 @@ enum MacAnalysisEvidence {
             try Task.checkCancellation()
             guard citations.count < maximumEvidenceCount else { break }
             let speaker = item.speakers.first { $0.id == utterance.speakerId }?.resolvedName
-                ?? String(localized: "Unknown speaker")
+                ?? analysisText("Unknown speaker")
             let evidenceID = "E\(citations.count + 1)"
             let excerpt = prefix(utterance.text, bytes: 550)
             let record = PromptEvidence(

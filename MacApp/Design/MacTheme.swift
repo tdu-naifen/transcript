@@ -112,7 +112,30 @@ struct MacStatusLabel: View {
         } icon: {
             Circle().fill(color).frame(width: 7, height: 7)
         }
+
         .font(.caption)
         .accessibilityElement(children: .combine)
+    }
+}
+
+struct MacPhoneConnectionIcon: View {
+    let isConnected: Bool
+    let isWorking: Bool
+    var size: CGFloat = 20
+
+    var body: some View {
+        Image(systemName: "iphone")
+            .font(.system(size: size, weight: .light))
+            .padding(.trailing, 5)
+            .overlay(alignment: .topTrailing) {
+                Circle().fill(isConnected ? Color.green : .red)
+                    .frame(width: size > 30 ? 12 : 7, height: size > 30 ? 12 : 7)
+            }
+            .overlay(alignment: .bottomTrailing) {
+                if isWorking {
+                    ProgressView().controlSize(.mini)
+                }
+            }
+            .accessibilityHidden(true)
     }
 }

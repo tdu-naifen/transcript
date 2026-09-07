@@ -2,8 +2,14 @@ import SwiftUI
 
 @main
 struct TranscriptMacApp: App {
-    @State private var workspace = MacWorkspace()
+    @State private var workspace: MacWorkspace
     @AppStorage("mac.appearance") private var appearance = MacAppearance.system
+
+    init() {
+        let workspace = MacWorkspace()
+        _workspace = State(initialValue: workspace)
+        Task { await workspace.startServices() }
+    }
 
     var body: some Scene {
         WindowGroup("app.name", id: "main") {

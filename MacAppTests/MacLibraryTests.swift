@@ -342,6 +342,58 @@ final class MacLibraryTests: XCTestCase {
         XCTAssertEqual(workspace.search, "")
     }
 
+    func testImportingAnotherRecordingPreservesSelectedAudio() async throws {
+        try await assertImportPreservesSelectedAudio(corrupt: false)
+    }
+
+    func testRejectedImportPreservesSelectedAudio() async throws {
+        try await assertImportPreservesSelectedAudio(corrupt: true)
+    }
+
+    private func assertImportPreservesSelectedAudio(corrupt: Bool) async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = MacLibraryModel(directory: root.appendingPathComponent("Library"))
+        await library.importAudio(from: try makeAudio(in: root))
+        XCTAssertNil(library.errorMessage)
+        let selected = try XCTUnwrap(library.items.first)
+        let workspace = MacWorkspace(library: library)
+        defer { workspace.player.unload() }
+        workspace.selectedMeetingID = selected.id
+        let selectedURL = try library.audioURL(for: selected)
+        workspace.player.load(url: selectedURL)
+        workspace.player.seek(to: 0.2)
+        let duration = workspace.player.duration
+        XCTAssertTrue(workspace.player.isLoaded)
+
+        let incoming: URL
+        if corrupt {
+            incoming = root.appendingPathComponent("Corrupt.m4a")
+            try Data("Not an audio recording".utf8).write(to: incoming)
+        } else {
+            incoming = try makeAudio(in: root, name: "Another meeting.m4a")
+        }
+
+        // Follow the import completion path without rerunning the unchanged detail's task.
+        workspace.setSamples(false)
+        await workspace.library.importAudio(from: incoming)
+        workspace.selectFirstIfNeeded()
+
+        XCTAssertEqual(library.items.count, corrupt ? 1 : 2)
+        XCTAssertEqual(library.errorMessage != nil, corrupt)
+        XCTAssertFalse(library.isImporting)
+        XCTAssertEqual(workspace.selectedItem?.id, selected.id)
+        XCTAssertEqual(workspace.section, .meetings)
+        XCTAssertFalse(workspace.showingSamples)
+        XCTAssertTrue(workspace.player.isLoaded)
+        XCTAssertEqual(workspace.player.currentTime, 0.2, accuracy: 0.001)
+        XCTAssertEqual(workspace.player.duration, duration)
+        XCTAssertNil(workspace.player.errorMessage)
+        XCTAssertEqual(try library.audioURL(for: XCTUnwrap(workspace.selectedItem)), selectedURL)
+        workspace.player.seek(to: 0.1)
+        XCTAssertEqual(workspace.player.currentTime, 0.1, accuracy: 0.001)
+    }
+
     private func makeAudio(in root: URL, name: String = "Meeting.m4a") throws -> URL {
         let url = root.appendingPathComponent(name)
         let format = try XCTUnwrap(AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1))

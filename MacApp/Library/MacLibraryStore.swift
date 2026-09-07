@@ -5,6 +5,7 @@ import Foundation
 import TranscriptCore
 
 actor MacLibraryStore {
+    nonisolated let context: MacLibraryContext
     nonisolated let audioFiles: AudioFileStore
     private let meetings: MeetingRepository
     private let utterances: UtteranceRepository
@@ -31,6 +32,7 @@ actor MacLibraryStore {
             try identity.write(to: identityURL, atomically: true, encoding: .utf8)
             deviceID = identity
         }
+        context = MacLibraryContext(database: database, directory: root, audioFiles: audioFiles, deviceID: deviceID)
     }
 
     func load() async throws -> [MacLibraryItem] {

@@ -7,9 +7,75 @@ import XCTest
 
 @MainActor
 final class MacPairingIntegrationTests: XCTestCase {
+    func testUnsupportedPostPairingRequestReportsCapabilityFailureWithoutLosingTrust() async throws {
+        let harness = try await PairingHarness()
+        defer { harness.stop() }
+        let client = try await harness.client()
+        defer { client.close() }
+        try await pair(client, harness)
+        try await client.send("unsupported-feature")
+        try await waitUntil { if case .failed = harness.server.state { true } else { false } }
+        XCTAssertEqual(harness.server.state, .failed(
+            MacAuthenticatedConnectionError.unsupportedRequest.localizedDescription
+        ))
+        XCTAssertNil(harness.server.connectedPeer)
+        XCTAssertEqual(harness.store.savedPeers.count, 1)
+    }
+
+    func testRemoteClosureAfterPairingReportsDisconnectWithoutLosingTrust() async throws {
+        let harness = try await PairingHarness()
+        defer { harness.stop() }
+        let client = try await harness.client()
+        try await pair(client, harness)
+        client.close()
+        try await waitUntil { if case .failed = harness.server.state { true } else { false } }
+        XCTAssertEqual(harness.server.state, .failed(MacAuthenticatedConnectionError.closed.localizedDescription))
+        XCTAssertNil(harness.server.connectedPeer)
+        XCTAssertEqual(harness.store.savedPeers.count, 1)
+    }
+
+    func testMissingHeartbeatHasConnectionSpecificTimeout() async throws {
+        let harness = try await PairingHarness(idleTimeout: .milliseconds(100))
+        defer { harness.stop() }
+        let client = try await harness.client()
+        defer { client.close() }
+        try await pair(client, harness)
+        try await waitUntil { if case .failed = harness.server.state { true } else { false } }
+        XCTAssertEqual(harness.server.state, .failed(MacAuthenticatedConnectionError.idleTimeout.localizedDescription))
+        XCTAssertEqual(harness.store.savedPeers.count, 1)
+    }
+
+    func testDiscoveryRecoveryDoesNotDisconnectAuthenticatedSocket() async throws {
+        let harness = try await PairingHarness()
+        defer { harness.stop() }
+        let client = try await harness.client()
+        defer { client.close() }
+        try await pair(client, harness)
+        let listener = PairingRecoveryListener()
+        let service = MacBonjourService(serviceName: "Office Mac", pairing: harness.server) { _ in listener }
+        service.start()
+        defer { service.stop() }
+        let failure = MacBonjourService.Failure.network(.posix(.ENETDOWN))
+        for event: MacBonjourListenerEvent in [.waiting(failure), .failed(failure)] {
+            listener.emit(.ready)
+            listener.emit(.registered("Office Mac"))
+            listener.emit(event)
+            service.recoverIfNeeded()
+            XCTAssertEqual(harness.server.state, .connected)
+            XCTAssertFalse(harness.server.allowsNewPairing)
+            try await client.send("ping")
+            let pong = try await client.receive()
+            XCTAssertEqual(pong.type, "pong")
+        }
+        service.stop()
+        XCTAssertEqual(harness.server.state, .idle, "Explicit Stop must still close the session")
+    }
+
     func testRealBonjourEndpointCompletesAuthenticatedPairing() async throws {
         let store = PairingMemoryStore()
-        let service = MacBonjourService(serviceName: "Pairing-\(UUID().uuidString)", pairingStore: store)
+        let service = MacBonjourService(
+            serviceName: "Pairing-\(UUID().uuidString)", pairingStore: store, preferences: nil
+        )
         let parameters = NWParameters.tcp
         parameters.includePeerToPeer = true
         let browser = NWBrowser(for: .bonjour(type: "_vtscribe._tcp", domain: nil), using: parameters)
@@ -384,7 +450,7 @@ private final class PairingDiscoveredEndpoint {
 }
 
 @MainActor
-private final class PairingMemoryStore: MacPairingIdentityStoring {
+final class PairingMemoryStore: MacPairingIdentityStoring {
     let key = Curve25519.Signing.PrivateKey()
     var savedPeers: [MacPairedDevice] = []
     var failWrites = false
@@ -399,18 +465,30 @@ private final class PairingMemoryStore: MacPairingIdentityStoring {
 }
 
 @MainActor
-private final class PairingHarness {
+private final class PairingRecoveryListener: MacBonjourListening {
+    private var callback: (@MainActor @Sendable (MacBonjourListenerEvent) -> Void)?
+    func start(onEvent: @escaping @MainActor @Sendable (MacBonjourListenerEvent) -> Void) {
+        callback = onEvent
+    }
+    func cancel() {}
+    func emit(_ event: MacBonjourListenerEvent) { callback?(event) }
+}
+
+@MainActor
+final class PairingHarness {
     let store = PairingMemoryStore()
     let server: MacPairingServer
     private let listener: NWListener
 
     init(
         handshakeTimeout: Duration = .seconds(2),
-        confirmationTimeout: Duration = .seconds(2)
+        confirmationTimeout: Duration = .seconds(2),
+        idleTimeout: Duration = .seconds(120)
     ) async throws {
         server = MacPairingServer(
             name: "Reference Mac", store: store,
-            handshakeTimeout: handshakeTimeout, confirmationTimeout: confirmationTimeout
+            handshakeTimeout: handshakeTimeout, confirmationTimeout: confirmationTimeout,
+            idleTimeout: idleTimeout
         )
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
@@ -438,7 +516,7 @@ private final class PairingHarness {
 
 /// Independent CryptoKit client implementing the published byte contract, not the server's crypto helpers.
 @MainActor
-private final class PairingReferenceClient {
+final class PairingReferenceClient {
     let identity: Curve25519.Signing.PrivateKey
     let transport: MacPairingTransport
     private let prefix = Data("TranscriptPairing/v1/".utf8)

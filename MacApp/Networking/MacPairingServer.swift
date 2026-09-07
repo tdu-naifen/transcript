@@ -2,10 +2,27 @@ import CryptoKit
 import Foundation
 import Network
 import Observation
+import OSLog
+
+enum MacAuthenticatedConnectionError: String, LocalizedError {
+    case closed, idleTimeout, unsupportedRequest
+
+    var errorDescription: String? {
+        switch self {
+        case .closed:
+            String(localized: "The iPhone connection ended. Reconnect from your iPhone. Your saved pairing is unchanged.")
+        case .idleTimeout:
+            String(localized: "The iPhone stopped sending connection heartbeats. Open Transcript on your iPhone to reconnect. Your saved pairing is unchanged.")
+        case .unsupportedRequest:
+            String(localized: "The iPhone requested an unavailable feature. Enable meeting receiving on this Mac, reconnect, and retry. Your saved pairing is unchanged.")
+        }
+    }
+}
 
 @MainActor
 @Observable
 final class MacPairingServer {
+    typealias MeetingCopySessionFactory = @MainActor (MacPairedDevice, Data) -> MacMeetingCopySession?
     enum State: Equatable {
         case idle, negotiating, awaitingConfirmation, connected
         case failed(String)
@@ -23,6 +40,7 @@ final class MacPairingServer {
     private(set) var peers: [MacPairedDevice] = []
     private(set) var allowsNewPairing = false
     private(set) var localApproved = false
+    @ObservationIgnored var makeMeetingCopySession: MeetingCopySessionFactory?
     @ObservationIgnored private let store: any MacPairingIdentityStoring
     @ObservationIgnored private var session: MacPairingSession?
     @ObservationIgnored private var enableTask: Task<Void, Never>?
@@ -74,6 +92,7 @@ final class MacPairingServer {
             connection: connection, name: name, store: store,
             handshakeTimeout: handshakeTimeout, confirmationTimeout: confirmationTimeout,
             idleTimeout: idleTimeout,
+            makeMeetingCopySession: makeMeetingCopySession,
             allowPairing: { [weak self] in
                 guard let self, self.allowsNewPairing, self.attemptsLeft > 0 else { return false }
                 self.attemptsLeft -= 1
@@ -122,10 +141,19 @@ final class MacPairingServer {
         state = .idle
     }
 
-    func stop() {
+    func disableNewPairing() {
         enableTask?.cancel()
         allowsNewPairing = false
         attemptsLeft = 0
+    }
+
+    func isConnectedAndTrusted(_ peer: MacPairedDevice) throws -> Bool {
+        guard state == .connected, connectedPeer?.publicKey == peer.publicKey else { return false }
+        return try store.peers().contains { $0.publicKey == peer.publicKey }
+    }
+
+    func stop() {
+        disableNewPairing()
         disconnect()
     }
 
@@ -166,10 +194,14 @@ private final class MacPairingSession {
     private var readyRead: Task<MacPairingMessage, any Error>?
     private var mayReceiveReady = false
     private var authenticated = false
+    private let makeMeetingCopySession: MacPairingServer.MeetingCopySessionFactory?
+    private var meetingCopySession: MacMeetingCopySession?
+    private let logger = Logger(subsystem: "com.transcript.mac", category: "PairingSession")
 
     init(
         connection: NWConnection, name: String, store: any MacPairingIdentityStoring,
         handshakeTimeout: Duration, confirmationTimeout: Duration, idleTimeout: Duration,
+        makeMeetingCopySession: MacPairingServer.MeetingCopySessionFactory?,
         allowPairing: @escaping @MainActor () -> Bool,
         onConfirmation: @escaping @MainActor (MacPairingServer.Confirmation) -> Void,
         onConnected: @escaping @MainActor (MacPairedDevice) -> Void,
@@ -181,6 +213,7 @@ private final class MacPairingSession {
         self.handshakeTimeout = handshakeTimeout
         self.confirmationTimeout = confirmationTimeout
         self.idleTimeout = idleTimeout
+        self.makeMeetingCopySession = makeMeetingCopySession
         self.allowPairing = allowPairing
         self.onConfirmation = onConfirmation
         self.onConnected = onConnected
@@ -188,12 +221,19 @@ private final class MacPairingSession {
     }
 
     func start() {
+        logger.info("Incoming connection accepted; awaiting identity verification.")
         transport.start()
         setDeadline(handshakeTimeout)
         work = Task { [weak self] in
             guard let self else { return }
             do { try await run() }
-            catch { finish(authenticated ? nil : error) }
+            catch {
+                if authenticated {
+                    finish(error as? MacAuthenticatedConnectionError ?? .closed)
+                } else {
+                    finish(error)
+                }
+            }
         }
     }
 
@@ -215,8 +255,16 @@ private final class MacPairingSession {
     private func finish(_ error: (any Error)?) {
         guard !ended else { return }
         ended = true
+        if let error {
+            let reason = (error as? MacAuthenticatedConnectionError)?.rawValue ?? "handshakeFailure"
+            logger.error("Connection ended: authenticated=\(self.authenticated), reason=\(reason, privacy: .public)")
+        } else {
+            logger.info("Connection closed locally: authenticated=\(self.authenticated)")
+        }
         deadline?.cancel()
         work?.cancel()
+        meetingCopySession?.cancel()
+        meetingCopySession = nil
         readyRead?.cancel()
         approvalWaiter?.resume(returning: false)
         approvalWaiter = nil
@@ -230,7 +278,9 @@ private final class MacPairingSession {
         deadline = Task { [weak self] in
             do { try await Task.sleep(for: duration) }
             catch { return }
-            self?.finish(MacPairingError.timedOut)
+            guard let self else { return }
+            if self.authenticated { self.finish(MacAuthenticatedConnectionError.idleTimeout) }
+            else { self.finish(MacPairingError.timedOut) }
         }
     }
 
@@ -351,12 +401,20 @@ private final class MacPairingSession {
         guard ready.type == "ready", ready.value == nil else { throw MacPairingError.invalidMessage }
         try ensureActive()
         authenticated = true
+        logger.info("Authenticated connection established.")
         onConnected(trusted)
+        meetingCopySession = makeMeetingCopySession?(trusted, identity.publicKey.rawRepresentation)
         while true {
             setDeadline(idleTimeout)
             let message = try await receive()
-            guard message.type == "ping", message.value == nil else { throw MacPairingError.invalidMessage }
-            try await send(.init(type: "pong"))
+            if message.type == "ping", message.value == nil {
+                try await send(.init(type: "pong"))
+            } else if message.type == MeetingCopyWire.innerType, let meetingCopySession {
+                let response = try await meetingCopySession.handle(message)
+                try await send(response)
+            } else {
+                throw MacAuthenticatedConnectionError.unsupportedRequest
+            }
         }
     }
 }

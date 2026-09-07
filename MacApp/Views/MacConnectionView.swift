@@ -25,7 +25,11 @@ struct MacConnectionView: View {
                     .foregroundStyle(.secondary)
                 VStack(spacing: 23) {
                     HStack(spacing: 25) {
-                        Image(systemName: "iphone").font(.system(size: 52, weight: .ultraLight))
+                        MacPhoneConnectionIcon(
+                            isConnected: service.pairing.connectedPeer != nil,
+                            isWorking: workspace.meetingCopy.progress != nil || service.pairing.state == .negotiating,
+                            size: 52
+                        )
                         Image(systemName: "ellipsis").font(.title)
                         Image(systemName: "desktopcomputer").font(.system(size: 60, weight: .ultraLight))
                     }
@@ -40,8 +44,12 @@ struct MacConnectionView: View {
                     controls
                     MacStatusLabel(
                         title: service.pairing.connectedPeer == nil ? "Not connected" : "Authenticated connection",
-                        color: service.pairing.connectedPeer == nil ? .orange : .green
+                        color: service.pairing.connectedPeer == nil ? .red : .green
                     )
+                    Text(workspace.meetingCopy.canReceive
+                         ? "Meeting receiving is enabled. Send or retry explicitly from your iPhone."
+                         : "Enable meeting receiving below to accept copies from your paired iPhone.")
+                    .font(.caption).foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(30)
@@ -58,6 +66,7 @@ struct MacConnectionView: View {
                     }
                 }
                 pairingControls
+                receivingControls
                 instruction(1, title: "Open Transcript on your iPhone",
                             detail: "Go to Home → Connection and choose Find a Mac. Keep Wi-Fi enabled on both devices.")
                 instruction(2, title: "Select this Mac",
@@ -67,7 +76,7 @@ struct MacConnectionView: View {
                         .font(.headline)
                     Text("Trusted device identities are stored in Keychain. Reconnection verifies the saved identity without asking you to compare another code.")
                         .foregroundStyle(.secondary)
-                    Text("Meeting transfer is not available in this version. No audio, transcripts or meeting metadata are sent.")
+                    Text("Meeting copies include audio and transcript text, not voiceprints. Existing meetings are never overwritten. Processing, result return and automatic sync are not included.")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 MacInfoCard {
@@ -110,6 +119,64 @@ struct MacConnectionView: View {
             Button("Cancel", role: .cancel) { peerToUnpair = nil }
         } message: {
             Text("This device will need a new code comparison to connect. Your saved meetings are not deleted.")
+        }
+    }
+
+    private var receivingControls: some View {
+        MacInfoCard {
+            Toggle("Allow meeting copies from paired devices", isOn: Binding(
+                get: { workspace.meetingCopy.isEnabled },
+                set: { workspace.setMeetingCopyEnabled($0) }
+            ))
+            .disabled(!workspace.meetingCopy.isReady)
+            .accessibilityIdentifier("macAllowMeetingCopies")
+            Text("Changing this permission reconnects the devices. Send and Retry stay explicit on your iPhone.")
+                .font(.caption).foregroundStyle(.secondary)
+            Text("Receiving limits: 128 MiB audio, 16 MiB transcript, 256 MiB pending copies.")
+                .font(.caption).foregroundStyle(.secondary)
+            if workspace.meetingCopy.isPreparing {
+                ProgressView("Preparing receiving storage")
+            }
+            if let progress = workspace.meetingCopy.progress {
+                Text(verbatim: progress.title).font(.headline)
+                ProgressView(value: Double(progress.receivedBytes), total: Double(max(1, progress.totalBytes)))
+                    .accessibilityIdentifier("macMeetingCopyProgress")
+                Text(
+                    Double(progress.receivedBytes) / Double(max(1, progress.totalBytes)),
+                    format: .percent.precision(.fractionLength(0))
+                )
+                .monospacedDigit()
+                .accessibilityIdentifier("macMeetingCopyPercent")
+                Text(progress.receivedBytes == progress.totalBytes
+                     ? "Verifying audio and saving the meeting. Not confirmed yet."
+                     : "Receiving an immutable meeting copy")
+                .font(.caption).foregroundStyle(.secondary)
+            }
+            if let error = workspace.meetingCopy.errorMessage {
+                Label(error, systemImage: "exclamationmark.triangle")
+                    .foregroundStyle(.orange)
+                    .accessibilityIdentifier("macMeetingCopyError")
+            }
+            if !workspace.meetingCopy.isReady && !workspace.meetingCopy.isPreparing {
+                Button("Retry receiving storage") {
+                    Task { await workspace.retryMeetingCopyStorage() }
+                }
+            }
+            if let receipt = workspace.meetingCopy.lastReceipt {
+                if workspace.library.items.contains(where: { $0.id == receipt.meetingID }) {
+                    Label("Meeting copy saved on this Mac", systemImage: "checkmark.circle")
+                        .accessibilityIdentifier("macMeetingCopySaved")
+                    Button("Open received meeting") {
+                        workspace.setSamples(false)
+                        workspace.search = ""
+                        workspace.selectedMeetingID = receipt.meetingID
+                    }
+                    .accessibilityIdentifier("macOpenReceivedMeeting")
+                } else {
+                    Text("Copy receipt confirmed. The meeting may have been removed from this Mac.")
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
         }
     }
 
@@ -185,12 +252,16 @@ struct MacConnectionView: View {
     }
 
     private var statusTitle: LocalizedStringKey {
+        if service.pairing.state == .connected, service.pairing.connectedPeer != nil {
+            return "Connected to your iPhone"
+        }
         switch service.state {
-        case .idle: "Connect your iPhone"
-        case .starting: "Starting discovery…"
-        case .advertising: "Visible to your iPhone"
-        case .waiting: "Waiting for the network"
-        case .failed: "Discovery unavailable"
+        case .idle: return "Connect your iPhone"
+        case .starting: return "Starting discovery…"
+        case .advertising:
+            return service.pairing.peers.isEmpty ? "Visible to your iPhone" : "Waiting for your iPhone to reconnect"
+        case .waiting: return "Waiting for the network"
+        case .failed: return "Discovery unavailable"
         }
     }
 
@@ -214,7 +285,7 @@ struct MacConnectionView: View {
             }
         case .advertising:
             HStack {
-                MacStatusLabel(title: "Advertising service", color: .green)
+                MacStatusLabel(title: "Advertising service", color: .secondary)
                 Button("Stop Discovery") { service.stop() }
                     .accessibilityIdentifier("macStopDiscovery")
             }

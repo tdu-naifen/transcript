@@ -7,6 +7,25 @@ struct MacSettingsView: View {
     @State private var modelAvailability = MacAnalysisAvailability.checking
 
     var body: some View {
+        TabView {
+            Tab("General", systemImage: "gearshape") {
+                generalSettings
+            }
+            Tab("Backups", systemImage: "externaldrive.badge.timemachine") {
+                ScrollView {
+                    MacBackupSettingsView {
+                        try await workspace.library.processingContext()
+                    }
+                    .padding(24)
+                }
+            }
+        }
+        .frame(width: 720, height: 680)
+        .navigationTitle("Settings")
+        .task { modelAvailability = await MacFoundationModelsBackend().availability() }
+    }
+
+    private var generalSettings: some View {
         Form {
             Section {
                 Picker("Appearance", selection: $appearance) {
@@ -18,17 +37,17 @@ struct MacSettingsView: View {
                 Text("Appearance")
             }
             Section("Models") {
-                LabeledContent("Transcription", value: String(localized: "Not configured"))
-                LabeledContent("Speaker analysis", value: String(localized: "Not configured"))
-                LabeledContent("Local AI", value: modelAvailability.message)
-                Text("LLM Analysis uses Apple's on-device model. Apple Intelligence must be enabled. Importing and listening do not require this model.")
+                Text("Choose transcription models and inspect compatibility in Processing. Choose the language model and text embedding model independently in LLM Analysis.")
+                    .font(.caption).foregroundStyle(.secondary)
+                LabeledContent("Apple Intelligence", value: modelAvailability.message)
+                Text("Apple Intelligence is only required for the Apple language model. MLX models use separately downloaded weights on Apple silicon. Importing and listening do not require an AI model.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Storage & Privacy") {
                 LabeledContent("Storage", value: String(localized: "This Mac only"))
                 Text("Imported M4A files are copied into the app's local library. The original file is never changed. Samples are read-only and never saved.")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("Bonjour discovery is opt-in for this session. Pairing requires identity verification and matching codes. Meeting transfer is not available.")
+                Text("Discovery remembers your choice. Pairing verifies device identity. Enable meeting receiving in Connection to accept immutable copies explicitly sent from your iPhone.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {
@@ -40,9 +59,6 @@ struct MacSettingsView: View {
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
         .background(MacTheme.settingsBackground(scheme: scheme))
-        .frame(width: 560, height: 620)
-        .navigationTitle("Settings")
         .accessibilityIdentifier("macSettingsForm")
-        .task { modelAvailability = await MacFoundationModelsBackend().availability() }
     }
 }

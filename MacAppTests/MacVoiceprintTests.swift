@@ -81,6 +81,40 @@ final class MacVoiceprintTests: XCTestCase {
         XCTAssertEqual(persisted, before)
     }
 
+    func testReloadReflectsPersistedSpeakerRenameWithoutChangingIdentity() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let database = try AppDatabase.onDisk(directory: root)
+        let speakers = SpeakerRepository(database)
+        let speaker = Speaker(
+            id: "stable", anonymousName: "Calm Otter", originDeviceId: "test"
+        )
+        try await speakers.upsert(speaker)
+        let meeting = Meeting(title: "Names", startedAt: Date(), state: .recorded, originDeviceId: "test")
+        try await MeetingRepository(database).insert(meeting)
+        try await speakers.assignDisplayIndex(
+            meetingId: meeting.id, speakerId: speaker.id, displayIndex: 0, deviceId: "test"
+        )
+        let library = MacLibraryModel(directory: root)
+        let model = MacVoiceprintsModel()
+        await library.load()
+        await model.load { try await library.voiceprints() }
+        XCTAssertEqual(model.selectedProfile?.speaker.resolvedName, "Calm Otter")
+
+        try await speakers.rename(id: speaker.id, displayName: "Alice", deviceId: "test")
+        await library.load()
+        await model.load { try await library.voiceprints() }
+        XCTAssertEqual(model.selectedID, speaker.id)
+        XCTAssertEqual(model.selectedProfile?.speaker.resolvedName, "Alice")
+        XCTAssertEqual(model.selectedProfile?.speaker.anonymousName, "Calm Otter")
+        XCTAssertEqual(library.items.first?.speakers.first?.resolvedName, "Alice")
+        XCTAssertNil(model.errorMessage)
+
+        let reopened = MacLibraryModel(directory: root)
+        let persisted = try await reopened.voiceprints()
+        XCTAssertEqual(persisted.first?.speaker.resolvedName, "Alice")
+    }
+
     func testEmptyLibraryIsHonestAndReadyStoreCanRetry() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
