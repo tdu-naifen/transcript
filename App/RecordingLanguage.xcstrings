@@ -236,6 +236,17 @@
         }
       }
     },
+    "Speech engines are busy. Audio is being saved; retry transcription from the saved meeting." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "语音引擎正忙，录音仍在保存。请稍后从已保存的会议中重试转写。"
+          }
+        }
+      }
+    },
     "System language" : {
       "localizations" : {
         "en" : {

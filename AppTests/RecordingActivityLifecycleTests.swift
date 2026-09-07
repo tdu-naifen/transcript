@@ -4,28 +4,65 @@ import TranscriptCore
 
 @MainActor
 final class RecordingActivityLifecycleTests: XCTestCase {
+    func testHeldActivityAStopRequestCannotStopBAndFreshBRequestWorks() async throws {
+        let suite = "activity-stop-\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let entered = expectation(description: "A activity teardown held")
+        let gate = LifecycleGate(entered: entered)
+        let fixture = try await makeFixture(
+            activity: ActivitySpy(endGate: gate),
+            consumeStopRequest: { RecordingActivityCommunication.consumeStopRequest(for: $0, defaults: defaults) }
+        )
+        await fixture.recorder.toggleRecording()
+        await fulfillment(of: [entered], timeout: 5)
+        let second = try await fixture.services.session.start(title: "B")
+        await fixture.recorder.recordingDidStart(meetingId: second.id)
+        defaults.set(true, forKey: "recordingStopRequested")
+        RecordingActivityCommunication.requestStop(meetingId: "", defaults: defaults)
+        RecordingActivityCommunication.requestStop(meetingId: fixture.meeting.id, defaults: defaults)
+        XCTAssertNil(fixture.recorder.consumeActivityStopRequest())
+        XCTAssertEqual(fixture.recorder.phase, .recording)
+        XCTAssertEqual(fixture.engine.stopCount, 1)
+        // Consuming A cannot clear B even when both requests coexist.
+        RecordingActivityCommunication.requestStop(meetingId: second.id, defaults: defaults)
+        XCTAssertTrue(RecordingActivityCommunication.consumeStopRequest(for: fixture.meeting.id, defaults: defaults))
+        let stopB = try XCTUnwrap(fixture.recorder.consumeActivityStopRequest())
+        await stopB.value
+        XCTAssertEqual(fixture.engine.stopCount, 2)
+        XCTAssertEqual(fixture.recorder.phase, .idle)
+        await gate.open()
+        let savedB = try await MeetingRepository(fixture.services.database).fetch(id: second.id)
+        XCTAssertEqual(savedB?.durationMs, 100)
+    }
+
     func testCaptureStopsBeforeSuspendedActivityEndAndPausedStopIsIdempotent() async throws {
         let entered = expectation(description: "Activity end entered")
         let gate = LifecycleGate(entered: entered)
         let activity = ActivitySpy(endGate: gate)
-        let fixture = try await makeFixture(activity: activity)
+        let asrEntered = expectation(description: "ASR entered while activity teardown is held")
+        let asrGate = LifecycleGate(entered: asrEntered)
+        let fixture = try await makeFixture(activity: activity, asrFinish: { await asrGate.wait() })
         await fixture.recorder.togglePause()
         XCTAssertEqual(fixture.recorder.phase, .paused)
 
         let stop = Task { await fixture.recorder.toggleRecording() }
         await fulfillment(of: [entered], timeout: 5)
+        await stop.value
+        await fulfillment(of: [asrEntered], timeout: 5)
         XCTAssertEqual(fixture.engine.stopCount, 1)
-        XCTAssertEqual(fixture.recorder.phase, .stopping)
+        XCTAssertEqual(fixture.recorder.phase, .idle)
+        XCTAssertTrue(fixture.recorder.canStartRecording)
         let protectedID = await fixture.services.session.activeMeetingId
-        XCTAssertEqual(protectedID, fixture.meeting.id)
+        XCTAssertNil(protectedID)
         let deletion = await LibraryModel(services: fixture.services).delete(fixture.meeting)
         XCTAssertFalse(deletion, "A draining recording must remain protected until publication")
-        await fixture.recorder.toggleRecording()
         XCTAssertNil(fixture.recorder.requestStop())
         XCTAssertEqual(activity.ending, [fixture.meeting.id])
 
         await gate.open()
-        await stop.value
+        await asrGate.open()
+        await fixture.services.recordingFinalization.wait(meetingId: fixture.meeting.id)
         XCTAssertEqual(fixture.engine.stopCount, 1)
         XCTAssertEqual(fixture.recorder.phase, .idle)
         let stored = try await MeetingRepository(fixture.services.database).fetch(id: fixture.meeting.id)
@@ -43,24 +80,26 @@ final class RecordingActivityLifecycleTests: XCTestCase {
         await fulfillment(of: [entered], timeout: 5)
         XCTAssertEqual(fixture.engine.stopCount, 1)
         XCTAssertEqual(activity.ended, [fixture.meeting.id])
-        XCTAssertEqual(fixture.recorder.phase, .processing)
+        await stop.value
+        XCTAssertEqual(fixture.recorder.phase, .idle)
         XCTAssertFalse(fixture.recorder.isBusy)
-        XCTAssertTrue(fixture.recorder.isProcessingTranscript)
-        XCTAssertFalse(fixture.recorder.canStartRecording)
+        XCTAssertTrue(fixture.recorder.canStartRecording)
+        XCTAssertTrue(fixture.services.recordingFinalization.isBusy(fixture.meeting.id))
         let draining = try await MeetingRepository(fixture.services.database).fetch(id: fixture.meeting.id)
         XCTAssertEqual(draining?.state, .recorded)
         XCTAssertEqual(draining?.durationMs, 100)
         XCTAssertGreaterThan(draining?.audioByteCount ?? 0, 0)
-        await fixture.recorder.toggleRecording()
         XCTAssertEqual(fixture.engine.stopCount, 1)
         let protectedID = await fixture.services.session.activeMeetingId
-        XCTAssertEqual(protectedID, fixture.meeting.id)
+        XCTAssertNil(protectedID)
+        let isProcessing = await fixture.services.session.isProcessing(meetingId: fixture.meeting.id)
+        XCTAssertTrue(isProcessing)
 
         await gate.open()
-        await stop.value
+        await fixture.services.recordingFinalization.wait(meetingId: fixture.meeting.id)
         let stored = try await MeetingRepository(fixture.services.database).fetch(id: fixture.meeting.id)
         XCTAssertEqual(stored?.state, .recorded)
-        XCTAssertFalse(fixture.recorder.isProcessingTranscript)
+        XCTAssertFalse(fixture.services.recordingFinalization.isBusy(fixture.meeting.id))
         XCTAssertTrue(fixture.recorder.canStartRecording)
     }
 
@@ -85,22 +124,77 @@ final class RecordingActivityLifecycleTests: XCTestCase {
         XCTAssertEqual(row.audioFileName, "\(row.id).m4a")
         XCTAssertFalse(fixture.recorder.isBusy)
         XCTAssertTrue(fixture.recorder.audioArchiveSaved)
-        XCTAssertFalse(fixture.recorder.canStartRecording)
+        await stop.value
+        XCTAssertTrue(fixture.recorder.canStartRecording)
         let deletion = await LibraryModel(services: fixture.services).delete(row)
         XCTAssertFalse(deletion)
         await gate.open()
-        await stop.value
+        await fixture.services.recordingFinalization.wait(meetingId: fixture.meeting.id)
         print("DURABILITY_APP archive=\(archiveElapsed) processingComplete=\(started.duration(to: .now))")
     }
 
     func testGeneralProcessingFailureCannotDowngradeDurableAudio() async throws {
         let fixture = try await makeFixture(asrFinish: { throw CocoaError(.fileReadUnknown) })
         await fixture.recorder.toggleRecording()
+        await fixture.services.recordingFinalization.wait(meetingId: fixture.meeting.id)
         let row = try await MeetingRepository(fixture.services.database).fetch(id: fixture.meeting.id)
         XCTAssertEqual(row?.state, .recorded)
         XCTAssertGreaterThan(row?.audioByteCount ?? 0, 0)
-        XCTAssertNotNil(fixture.recorder.errorMessage)
+        XCTAssertNil(fixture.recorder.errorMessage)
+        XCTAssertNotNil(fixture.services.recordingFinalization.failures[fixture.meeting.id])
         XCTAssertTrue(fixture.recorder.canStartRecording)
+    }
+
+    func testJobEnqueueFailurePreservesDurableAudioAndRecoverableIntent() async throws {
+        let fixture = try await makeFixture()
+        try await fixture.services.database.writer.write {
+            try $0.execute(sql: """
+                CREATE TRIGGER rejectProcessingJob BEFORE UPDATE ON recordingProcessingJob
+                BEGIN SELECT RAISE(FAIL, 'local job write failed'); END
+                """)
+        }
+        await fixture.recorder.toggleRecording()
+        await fixture.services.recordingFinalization.wait(meetingId: fixture.meeting.id)
+        let saved = try await MeetingRepository(fixture.services.database).fetch(id: fixture.meeting.id)
+        XCTAssertEqual(saved?.state, .recorded)
+        XCTAssertEqual(saved?.durationMs, 100)
+        XCTAssertNotNil(saved?.audioSHA256)
+        XCTAssertNil(fixture.recorder.errorMessage, "A background job error does not belong to the new recorder")
+        XCTAssertNotNil(fixture.services.recordingFinalization.failures[fixture.meeting.id])
+        XCTAssertTrue(fixture.recorder.canStartRecording)
+        try await fixture.services.database.writer.write { try $0.execute(sql: "DROP TRIGGER rejectProcessingJob") }
+        try await fixture.services.recordingFinalization.recover()
+        XCTAssertEqual(fixture.services.recordingFinalization.jobs[fixture.meeting.id]?.state, .interrupted)
+        let text = try await UtteranceRepository(fixture.services.database).fetch(meetingId: fixture.meeting.id)
+        XCTAssertEqual(text.map(\.text), ["Preserved text"])
+    }
+
+    func testCancelledFinalizationIsRetryableAndNeverBecomesRecorderError() async throws {
+        let fixture = try await makeFixture(asrFinish: { throw CancellationError() })
+        await fixture.recorder.toggleRecording()
+        await fixture.services.recordingFinalization.wait(meetingId: fixture.meeting.id)
+        XCTAssertEqual(fixture.recorder.phase, .idle)
+        XCTAssertNil(fixture.recorder.errorMessage)
+        XCTAssertEqual(fixture.services.recordingFinalization.jobs[fixture.meeting.id]?.state, .needsRetry)
+        let busy = await fixture.services.session.isProcessing(meetingId: fixture.meeting.id)
+        XCTAssertFalse(busy)
+    }
+
+    func testInactiveStopPersistsWorkAndDefersFinalizationUntilForeground() async throws {
+        let entered = expectation(description: "Foreground finalizer entered")
+        let gate = LifecycleGate(entered: entered)
+        let fixture = try await makeFixture(asrFinish: { await gate.wait() })
+        fixture.recorder.sceneActivityChanged(isActive: false)
+        await fixture.recorder.toggleRecording()
+        XCTAssertTrue(fixture.recorder.canStartRecording)
+        XCTAssertEqual(fixture.services.recordingFinalization.jobs[fixture.meeting.id]?.state, .processing)
+        let beforeForeground = await gate.enteredCount
+        XCTAssertEqual(beforeForeground, 0)
+        fixture.recorder.sceneActivityChanged(isActive: true)
+        await fulfillment(of: [entered], timeout: 5)
+        await gate.open()
+        await fixture.services.recordingFinalization.wait(meetingId: fixture.meeting.id)
+        XCTAssertEqual(fixture.services.recordingFinalization.jobs[fixture.meeting.id]?.state, .complete)
     }
 
     func testCaptureFailureEndsActivityAndPreservesFailedRecording() async throws {
@@ -139,11 +233,13 @@ final class RecordingActivityLifecycleTests: XCTestCase {
     func testSpeechFailureDoesNotMarkSuccessfullySealedAudioAsFailed() async throws {
         let fixture = try await makeFixture(asrFinish: { throw RecordingSpeechUnavailable() })
         await fixture.recorder.toggleRecording()
+        await fixture.services.recordingFinalization.wait(meetingId: fixture.meeting.id)
         let stored = try await MeetingRepository(fixture.services.database).fetch(id: fixture.meeting.id)
         XCTAssertEqual(stored?.state, .recorded)
         XCTAssertGreaterThan(stored?.audioByteCount ?? 0, 0)
         XCTAssertEqual(fixture.engine.stopCount, 1)
-        XCTAssertEqual(fixture.recorder.errorMessage, RecordingSpeechUnavailable().localizedDescription)
+        XCTAssertNil(fixture.recorder.errorMessage)
+        XCTAssertEqual(fixture.services.recordingFinalization.failures[fixture.meeting.id], RecordingSpeechUnavailable().localizedDescription)
         let rows = try await UtteranceRepository(fixture.services.database).fetch(meetingId: fixture.meeting.id)
         XCTAssertEqual(rows.map(\.text), ["Preserved text"])
     }
@@ -214,7 +310,7 @@ final class RecordingActivityLifecycleTests: XCTestCase {
         XCTAssertEqual(engine.stopCount, 1)
     }
 
-    func testDrainPreventsReentrantStartUntilPublishCompletes() async throws {
+    func testDurableDrainAllowsNewCaptureBeforeOldActivityCallbackOrPublication() async throws {
         let (services, engine) = try makeServices()
         let first = try await services.session.start(title: "First")
         let entered = expectation(description: "capture callback entered")
@@ -226,19 +322,15 @@ final class RecordingActivityLifecycleTests: XCTestCase {
         }
 
         await fulfillment(of: [entered], timeout: 5)
-        do {
-            _ = try await services.session.start(title: "Rejected")
-            XCTFail("start must be rejected while drain is suspended")
-        } catch AudioCaptureError.alreadyRecording {
-            // Expected: the first meeting remains isolated until drain returns.
-        }
+        let token = try await drain.value
+        let second = try await services.session.start(title: "Second")
         let meetingsWhileDraining = try await MeetingRepository(services.database).fetchAll()
-        XCTAssertEqual(meetingsWhileDraining.count, 1)
+        XCTAssertEqual(meetingsWhileDraining.count, 2)
 
         await gate.open()
-        let token = try await drain.value
         _ = try await services.session.publish(token, as: .recorded)
-        let second = try await services.session.start(title: "Second")
+        let activeID = await services.session.activeMeetingId
+        XCTAssertEqual(activeID, second.id)
         _ = try await services.session.stop()
         XCTAssertNotEqual(first.id, second.id)
         XCTAssertEqual(engine.stopCount, 2)
@@ -247,7 +339,8 @@ final class RecordingActivityLifecycleTests: XCTestCase {
     private func makeFixture(
         activity: ActivitySpy = ActivitySpy(),
         asrFinish: @escaping @Sendable () async throws -> Void = {},
-        frameCount: Int = 1_600
+        frameCount: Int = 1_600,
+        consumeStopRequest: @escaping (String) -> Bool = { RecordingActivityCommunication.consumeStopRequest(for: $0) }
     ) async throws -> Fixture {
         let (services, engine) = try makeServices(frameCount: frameCount)
         let meeting = try await services.session.start(title: "Lifecycle recording")
@@ -263,7 +356,7 @@ final class RecordingActivityLifecycleTests: XCTestCase {
         )
         let recorder = RecorderModel(
             services: services, library: LibraryModel(services: services),
-            activityController: activity, transcription: transcription
+            activityController: activity, transcription: transcription, consumeStopRequest: consumeStopRequest
         )
         await recorder.recordingDidStart(meetingId: meeting.id)
         return Fixture(services: services, engine: engine, meeting: meeting, recorder: recorder)
@@ -277,7 +370,11 @@ final class RecordingActivityLifecycleTests: XCTestCase {
         let services = try AppServices(database: .onDisk(directory: root), store: store, captureEngine: engine)
         let session = services.session
         let database = services.database
+        let finalization = services.recordingFinalization
         addTeardownBlock {
+            for meeting in try await MeetingRepository(database).fetchAll() {
+                await finalization.wait(meetingId: meeting.id)
+            }
             session.invalidate()
             try database.writer.close()
             try FileManager.default.removeItem(at: root)
@@ -297,12 +394,14 @@ private actor LifecycleGate {
     private let entered: XCTestExpectation
     private var isOpen = false
     private var waiters: [CheckedContinuation<Void, Never>] = []
+    private(set) var enteredCount = 0
 
     init(entered: XCTestExpectation) {
         self.entered = entered
     }
 
     func wait() async {
+        enteredCount += 1
         entered.fulfill()
         if isOpen { return }
         await withCheckedContinuation { waiters.append($0) }
@@ -327,8 +426,9 @@ private final class ActivitySpy: RecordingActivityControlling {
     func start(meetingId: String) async {}
     func update(meetingId: String, elapsed: TimeInterval, recentTranscriptLines: [String], isPaused: Bool) async {}
     func end(meetingId: String) async {
+        let isFirstEnd = ending.isEmpty
         ending.append(meetingId)
-        await endGate?.wait()
+        if isFirstEnd { await endGate?.wait() }
         ended.append(meetingId)
     }
 }
@@ -364,9 +464,9 @@ private final class ActivityBackend {
     }
 }
 
-private final class LifecycleCaptureEngine: AudioCaptureControlling, @unchecked Sendable {
+final class LifecycleCaptureEngine: AudioCaptureControlling, @unchecked Sendable {
     private let lock = NSLock()
-    private var chunksContinuation: AsyncStream<AudioChunk>.Continuation?
+    private var chunksContinuations: [AsyncStream<AudioChunk>.Continuation] = []
     private var eventsContinuation: AsyncStream<AudioCaptureEvent>.Continuation?
     private var stops = 0
     var stopCount: Int { lock.withLock { stops } }
@@ -374,7 +474,7 @@ private final class LifecycleCaptureEngine: AudioCaptureControlling, @unchecked 
     init(frameCount: Int = 1_600) { self.frameCount = frameCount }
 
     func chunks() -> AsyncStream<AudioChunk> {
-        AsyncStream { continuation in lock.withLock { chunksContinuation = continuation } }
+        AsyncStream { continuation in lock.withLock { chunksContinuations.append(continuation) } }
     }
     func levels() -> AsyncStream<AudioLevel> { AsyncStream { $0.finish() } }
     func events() -> AsyncStream<AudioCaptureEvent> {
@@ -382,11 +482,11 @@ private final class LifecycleCaptureEngine: AudioCaptureControlling, @unchecked 
     }
     func start() throws {
         lock.withLock {
-            chunksContinuation?.yield(AudioChunk(
+            for continuation in chunksContinuations { continuation.yield(AudioChunk(
                 index: 0, startFrame: 0, sampleRate: 16_000,
                 samples: (0..<frameCount).map { Float(sin(Double($0) * 2 * .pi * 440 / 16_000)) * 0.1 },
                 isFinal: false
-            ))
+            )) }
         }
     }
     func pause() throws {}
@@ -395,16 +495,21 @@ private final class LifecycleCaptureEngine: AudioCaptureControlling, @unchecked 
     func stop() -> Int {
         lock.withLock {
             stops += 1
-            chunksContinuation?.yield(AudioChunk(
+            for continuation in chunksContinuations {
+                continuation.yield(AudioChunk(
                 index: 1, startFrame: frameCount, sampleRate: 16_000, samples: [], isFinal: true
-            ))
+                ))
+                continuation.finish()
+            }
+            chunksContinuations.removeAll()
             eventsContinuation?.yield(.stopped(frameCount: frameCount))
         }
         return frameCount
     }
     func invalidate() {
         lock.withLock {
-            chunksContinuation?.finish()
+            chunksContinuations.forEach { $0.finish() }
+            chunksContinuations.removeAll()
             eventsContinuation?.finish()
         }
     }

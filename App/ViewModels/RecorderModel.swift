@@ -11,7 +11,6 @@ final class RecorderModel {
         case recording
         case paused
         case stopping
-        case processing
     }
 
     /// Interruption / route notices (UI.md), kept as data rather than pre-formatted
@@ -42,8 +41,8 @@ final class RecorderModel {
     }
 
     private(set) var phase: Phase = .idle
-    private(set) var isProcessingTranscript = false
     private(set) var audioArchiveSaved = false
+    private(set) var lastArchivedMeeting: Meeting?
     var canStartRecording: Bool { phase == .idle && !stopInProgress }
     private(set) var level: AudioLevel = .silence
     private(set) var elapsed: TimeInterval = 0
@@ -54,7 +53,7 @@ final class RecorderModel {
 
     private let services: AppServices
     private let library: LibraryModel
-    let transcription: TranscriptionModel
+    private(set) var transcription: TranscriptionModel
     private var levelTask: Task<Void, Never>?
     private var eventTask: Task<Void, Never>?
     private var tickTask: Task<Void, Never>?
@@ -67,8 +66,12 @@ final class RecorderModel {
     private var stopInProgress = false
     private var captureFailure: String?
     private var sceneIsActive = true
-    private let processing: any RecordingTranscriptionControlling
+    private var processing: any RecordingTranscriptionControlling
+    private let makeTranscription: () -> TranscriptionModel
+    private let makeProcessing: ((TranscriptionModel) -> any RecordingTranscriptionControlling)?
+    private var inputs: [BoundedRecordingInput] = []
     private let requestPermission: () async -> MicrophonePermission.Status
+    private let consumeStopRequest: (String) -> Bool
 
     init(
         services: AppServices,
@@ -76,13 +79,20 @@ final class RecorderModel {
         activityController: any RecordingActivityControlling = RecordingActivityController(),
         transcription: TranscriptionModel? = nil,
         processing: (any RecordingTranscriptionControlling)? = nil,
-        requestPermission: @escaping () async -> MicrophonePermission.Status = { await MicrophonePermission.request() }
+        makeTranscription: (() -> TranscriptionModel)? = nil,
+        makeProcessing: ((TranscriptionModel) -> any RecordingTranscriptionControlling)? = nil,
+        requestPermission: @escaping () async -> MicrophonePermission.Status = { await MicrophonePermission.request() },
+        consumeStopRequest: @escaping (String) -> Bool = { RecordingActivityCommunication.consumeStopRequest(for: $0) }
     ) {
         self.services = services
         self.library = library
-        self.transcription = transcription ?? TranscriptionModel(services: services)
-        self.processing = processing ?? self.transcription
+        let initialTranscription = transcription ?? TranscriptionModel(services: services)
+        self.transcription = initialTranscription
+        self.processing = processing ?? initialTranscription
+        self.makeTranscription = makeTranscription ?? { TranscriptionModel(services: services) }
+        self.makeProcessing = makeProcessing
         self.requestPermission = requestPermission
+        self.consumeStopRequest = consumeStopRequest
         self.activityController = activityController
     }
 
@@ -105,6 +115,7 @@ final class RecorderModel {
 
     func sceneActivityChanged(isActive: Bool) {
         sceneIsActive = isActive
+        services.recordingFinalization.setActive(isActive)
         transcription.setLanguageSwitchingAllowed(isActive && phase == .recording)
     }
 
@@ -112,10 +123,6 @@ final class RecorderModel {
         let localization = LocalizationManager.shared
         switch phase {
         case .idle: return localization.localized("Ready")
-        case .processing:
-            return audioArchiveSaved
-                ? localization.text("Audio saved. Finishing transcript…", table: "RecordingRecovery")
-                : localization.text("Finishing transcript…", table: "RecordingRecovery")
         case .starting: return localization.localized("Starting")
         case .recording: return localization.localized("Recording")
         case .paused: return localization.localized("Paused")
@@ -145,7 +152,7 @@ final class RecorderModel {
         switch phase {
         case .idle: await start()
         case .recording, .paused: await stop()
-        case .starting, .stopping, .processing: break
+        case .starting, .stopping: break
         }
     }
 
@@ -182,6 +189,7 @@ final class RecorderModel {
     private func start() async {
         guard canStartRecording else { return }
         phase = .starting
+        errorMessage = nil
         defer {
             if phase == .idle { services.audioOwnership.releaseCapture() }
         }
@@ -190,7 +198,8 @@ final class RecorderModel {
             // its pending archive. This does not restart an already drained encoder.
             if await services.session.activeMeetingId != nil {
                 let pending = try await services.session.drainCapture()
-                _ = try await services.session.publish(pending, as: .recorded)
+                try await services.recordingFinalization.adoptArchive(pending)
+                lastArchivedMeeting = try? await MeetingRepository(services.database).fetch(id: pending.meetingId)
             }
             try services.audioOwnership.prepareForCapture()
             permission = await requestPermission()
@@ -199,16 +208,19 @@ final class RecorderModel {
                 return
             }
             processing.refreshAvailability()
+            let recordingLocale = services.recordingLocale
             try await processing.prepare()
-            // Subscribed before capture starts, so no chunk is lost while the model
-            // loads; the broadcast stream buffers until inference catches up.
-            let chunks = services.session.chunks()
-            let diarizationChunks = services.session.chunks()
-            let meeting = try await services.session.start(title: Self.defaultTitle(at: Date()))
+            let model = transcription
+            let speechInput = BoundedRecordingInput(source: services.session.chunks()) { model.markInputIncomplete() }
+            let speakerInput = BoundedRecordingInput(source: services.session.chunks()) { model.markSpeakerInputIncomplete() }
+            inputs = [speechInput, speakerInput]
+            let meeting = try await services.session.start(
+                title: Self.defaultTitle(at: Date()), localeIdentifier: recordingLocale.identifier
+            )
             try processing.start(
                 meetingId: meeting.id,
-                chunks: chunks,
-                diarizationChunks: diarizationChunks
+                chunks: speechInput.stream,
+                diarizationChunks: speakerInput.stream
             )
             await recordingDidStart(meetingId: meeting.id)
         } catch {
@@ -252,14 +264,14 @@ final class RecorderModel {
         stopInProgress = true
         defer {
             stopInProgress = false
-            isProcessingTranscript = false
         }
         phase = .stopping
         transcription.setLanguageSwitchingAllowed(false)
         stopTicking()
         var pendingStop: RecordingSession.PendingStop?
         var stopFailure: (any Error)?
-        var speechEndedEarly = false
+        let oldProcessor = processing
+        let oldCaptureFailure = captureFailure
         let activityController = activityController
         do {
             pendingStop = try await services.session.drainCapture(
@@ -275,46 +287,23 @@ final class RecorderModel {
             RecordingDiagnostics.log(stopFailure)
             errorMessage = stopFailure.localizedDescription
         }
-        // File and database durability never wait for ASR/diarization. Keep the
-        // processing/session fence, but release microphone ownership and busy UI.
-        isProcessingTranscript = true
+        // Transfer the old processor and token before exposing an idle recorder.
+        // No finalization task captures this mutable recorder.
+        if pendingStop != nil {
+            lastArchivedMeeting = try? await MeetingRepository(services.database).fetch(id: meetingId)
+        }
         audioArchiveSaved = pendingStop != nil
-        phase = .processing
         startedAt = nil
         level = .silence
         services.audioOwnership.releaseCapture()
-        await library.reload()
-        do {
-            try await processing.finish()
-        } catch is RecordingSpeechUnavailable {
-            // A partial transcript is not a failed audio archive.
-            speechEndedEarly = true
-        } catch {
-            if stopFailure == nil { stopFailure = error }
-        }
-        if stopFailure == nil, let captureFailure {
-            stopFailure = LiveRecordingDrainError(failures: [captureFailure])
-        }
-        if let pendingStop {
-            do {
-                let saved = try await services.session.publish(
-                    pendingStop,
-                    as: stopFailure == nil ? .recorded : .failed
-                )
-                _ = try await MeetingRepository(services.database).refreshPrimaryLanguage(
-                    id: saved.id, deviceId: services.deviceId
-                )
-                await services.speakerAnalysis.enqueue(saved)
-            } catch {
-                stopFailure = error
-            }
-        }
-        if let stopFailure {
-            RecordingDiagnostics.log(stopFailure)
-            errorMessage = stopFailure.localizedDescription
-        } else if speechEndedEarly {
-            errorMessage = RecordingSpeechUnavailable().localizedDescription
-        }
+        await services.recordingFinalization.enqueue(
+            token: pendingStop, meetingId: meetingId, processor: oldProcessor,
+            services: services, library: library,
+            captureFailure: stopFailure?.localizedDescription ?? oldCaptureFailure
+        )
+        transcription = makeTranscription()
+        processing = makeProcessing?(transcription) ?? transcription
+        inputs.removeAll()
         startedAt = nil
         recordingMeetingId = nil
         captureFailure = nil
@@ -341,10 +330,7 @@ final class RecorderModel {
                 } else {
                     elapsed = accumulated
                 }
-                if RecordingActivityCommunication.consumeStopRequest(), isActive {
-                    requestStop()
-                    return
-                }
+                if consumeActivityStopRequest() != nil { return }
                 let activitySecond = Int(elapsed)
                 if activitySecond != lastActivitySecond {
                     lastActivitySecond = activitySecond
@@ -363,6 +349,12 @@ final class RecorderModel {
     private func stopTicking() {
         tickTask?.cancel()
         tickTask = nil
+    }
+
+    @discardableResult
+    func consumeActivityStopRequest() -> Task<Void, Never>? {
+        guard isActive, let id = recordingMeetingId, consumeStopRequest(id) else { return nil }
+        return requestStop()
     }
 
     private func observeStreams() {

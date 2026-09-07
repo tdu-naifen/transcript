@@ -14,17 +14,21 @@ struct RecordingActivityAttributes: ActivityAttributes {
 
 enum RecordingActivityCommunication {
     static let appGroup = "group.com.transcript.Transcript"
-    static let stopRequestKey = "recordingStopRequested"
+    private static let stopRequestPrefix = "recordingStopRequested.v2."
 
-    static func requestStop() {
-        UserDefaults(suiteName: appGroup)?.set(true, forKey: stopRequestKey)
+    static func requestStop(meetingId: String, defaults: UserDefaults? = UserDefaults(suiteName: appGroup)) {
+        guard !meetingId.isEmpty else { return }
+        // One atomic value per meeting. An old activity cannot overwrite or clear
+        // another meeting's request, including across the widget/app processes.
+        defaults?.set(meetingId, forKey: stopRequestPrefix + meetingId)
     }
 
-    static func consumeStopRequest() -> Bool {
-        guard let defaults = UserDefaults(suiteName: appGroup), defaults.bool(forKey: stopRequestKey) else {
+    static func consumeStopRequest(for meetingId: String, defaults: UserDefaults? = UserDefaults(suiteName: appGroup)) -> Bool {
+        guard !meetingId.isEmpty, let defaults,
+              defaults.string(forKey: stopRequestPrefix + meetingId) == meetingId else {
             return false
         }
-        defaults.set(false, forKey: stopRequestKey)
+        defaults.removeObject(forKey: stopRequestPrefix + meetingId)
         return true
     }
 }
@@ -32,9 +36,13 @@ enum RecordingActivityCommunication {
 struct StopRecordingIntent: LiveActivityIntent {
     static let title: LocalizedStringResource = "Stop Recording"
     static let description = IntentDescription("Stops the active recording in Transcript.")
+    @Parameter(title: "Meeting ID") var meetingId: String
+
+    init() { meetingId = "" }
+    init(meetingId: String) { self.meetingId = meetingId }
 
     func perform() async throws -> some IntentResult {
-        RecordingActivityCommunication.requestStop()
+        RecordingActivityCommunication.requestStop(meetingId: meetingId)
         return .result()
     }
 }

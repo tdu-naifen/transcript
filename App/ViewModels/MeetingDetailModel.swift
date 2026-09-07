@@ -2,6 +2,11 @@ import Foundation
 import Observation
 import TranscriptCore
 
+struct SpeakerRenameAction: Equatable, Sendable {
+    let speakerId: String
+    let name: String
+}
+
 /// Backs `MeetingDetailView` (UI.md §3): transcript + speaker data for one meeting,
 /// plus the audio player driving tap-to-seek and the current-line highlight.
 @MainActor
@@ -25,12 +30,16 @@ final class MeetingDetailModel {
     private(set) var meeting: Meeting
     private(set) var playback: AudioPlaybackModel
     let speakerAnalysis: SpeakerAnalysisService
+    let recordingFinalization: RecordingFinalizationCoordinator
 
     private(set) var utterances: [Utterance] = []
     private(set) var participants: [ParticipantSummary] = []
     private(set) var speakersById: [String: Speaker] = [:]
     private(set) var loadFailure: String?
     private(set) var renamingSpeakerId: String?
+    private(set) var failedSpeakerRename: SpeakerRenameAction?
+    private(set) var speakerRenameFailure: String?
+    private var renameRequestID = UUID()
     private(set) var reprocessingState: ReprocessingState = .idle
     private(set) var speakerProjection = SpeakerProjection.empty
     private(set) var sessionPhase: RecordingSession.Phase = .idle
@@ -77,6 +86,7 @@ final class MeetingDetailModel {
         self.meetingRepository = MeetingRepository(services.database)
         self.meetingReprocessor = services.meetingReprocessor
         self.speakerAnalysis = speakerAnalysisService ?? services.speakerAnalysis
+        self.recordingFinalization = services.recordingFinalization
         self.audioURL = audioURL
         self.audioStore = services.store
         self.audioOwnership = services.audioOwnership
@@ -139,12 +149,14 @@ final class MeetingDetailModel {
         guard canRetrySpeakerAnalysis else { return }
         isRetryingSpeakerAnalysis = true
         defer { isRetryingSpeakerAnalysis = false }
-        guard await session.activeMeetingId != meeting.id else { return }
+        guard await session.activeMeetingId != meeting.id,
+              !(await session.isProcessing(meetingId: meeting.id)) else { return }
         await speakerAnalysis.enqueue(meeting, retry: true)
         await load()
     }
 
     var recordingStatusText: String? {
+        if let status = recordingFinalization.statusText(meeting.id) { return status }
         let key: String
         if isCurrentRecording {
             switch sessionPhase {
@@ -220,7 +232,8 @@ final class MeetingDetailModel {
         defer { isRequestingSpeakerAnalysis = false }
         // A durable archive can be played while ASR still drains. Only publication
         // releases the transcript fence; capture's idle phase is not sufficient.
-        guard await session.activeMeetingId != meeting.id else { return }
+        guard await session.activeMeetingId != meeting.id,
+              !(await session.isProcessing(meetingId: meeting.id)) else { return }
         do {
             let snapshot = try await SpeakerProjection.fetch(database: database, meetingID: meeting.id)
             try Task.checkCancellation()
@@ -271,7 +284,7 @@ final class MeetingDetailModel {
 
     func startReprocessing() {
         guard reprocessingTask == nil, hasLocalAudioForReprocessing, let audioURL else { return }
-        guard !recordingIsActive() else {
+        guard !isCurrentRecording, !recordingFinalization.isBusy(meeting.id) else {
             reprocessingState = .failed(String(describing: MeetingReprocessingConflict.recordingInProgress))
             return
         }
@@ -295,6 +308,7 @@ final class MeetingDetailModel {
             } catch {
                 reprocessingState = .failed(reprocessingErrorMessage(error))
             }
+            await recordingFinalization.reload()
             reprocessingTask = nil
         }
     }
@@ -315,6 +329,10 @@ final class MeetingDetailModel {
             LocalizationManager.shared.text(key, table: "Reprocessing")
         }
         switch error {
+        case MeetingReprocessingConflict.mixedLanguages:
+            return RecordingProcessingText.mixed
+        case MeetingReprocessingSnapshotError.changed:
+            return RecordingProcessingText.changed
         case MeetingReprocessingConflict.recordingInProgress:
             return localized("Stop recording before reprocessing.")
         case MeetingReprocessingConflict.anotherMeetingInProgress,
@@ -365,22 +383,29 @@ final class MeetingDetailModel {
     /// Renaming is iPhone-only and always allowed post-recording (UI.md §4.2); this
     /// screen is only ever reached post-recording. An empty name reverts to the
     /// anonymous animal name rather than storing a blank display name.
-    func confirmRename(newName: String) async {
-        guard let speakerId = renamingSpeakerId else { return }
-        renamingSpeakerId = nil
-        await renameSpeaker(id: speakerId, newName: newName)
+    func renameSpeaker(id speakerId: String, newName: String) async {
+        await renameSpeaker(action: SpeakerRenameAction(speakerId: speakerId, name: newName))
     }
 
-    func renameSpeaker(id speakerId: String, newName: String) async {
-        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+    func dismissSpeakerRenameFailure() { speakerRenameFailure = nil }
+
+    func renameSpeaker(action: SpeakerRenameAction) async {
+        let requestID = UUID()
+        renameRequestID = requestID
+        speakerRenameFailure = nil
+        failedSpeakerRename = nil
+        let trimmed = action.name.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
             try await speakerRepository.rename(
-                id: speakerId, displayName: trimmed.isEmpty ? nil : trimmed, deviceId: deviceId
+                id: action.speakerId, displayName: trimmed.isEmpty ? nil : trimmed, deviceId: deviceId
             )
             let snapshot = try await SpeakerProjection.fetch(database: database, meetingID: meeting.id)
+            guard renameRequestID == requestID else { return }
             applyProjection(snapshot)
         } catch {
-            loadFailure = String(describing: error)
+            guard renameRequestID == requestID else { return }
+            failedSpeakerRename = action
+            speakerRenameFailure = error.localizedDescription
         }
     }
 

@@ -5,6 +5,40 @@ import TranscriptCore
 
 @MainActor
 final class SpeakerProjectionTests: XCTestCase {
+    func testImmutableRenameSurvivesDismissalAndFailedSaveRetainsRetryInput() async throws {
+        let (services, meeting) = try await fixture()
+        let speaker = Speaker(id: "rename-target", anonymousName: "Raven", originDeviceId: "test")
+        try await SpeakerRepository(services.database).upsert(speaker)
+        try await UtteranceRepository(services.database).append(
+            utterance(meeting, id: "rename-line", start: 0, end: 1_000, speaker: speaker.id)
+        )
+        let detail = MeetingDetailModel(meeting: meeting, audioURL: nil, services: services)
+        await detail.load()
+        detail.beginRename(speakerId: speaker.id)
+        let action = SpeakerRenameAction(speakerId: speaker.id, name: "User typed name")
+        detail.cancelRename()
+        try await services.database.writer.write {
+            try $0.execute(sql: """
+                CREATE TRIGGER rejectSpeakerRename BEFORE UPDATE OF displayName ON speaker
+                BEGIN SELECT RAISE(FAIL, 'rename disk failure'); END
+                """)
+        }
+        await detail.renameSpeaker(action: action)
+        XCTAssertNotNil(detail.speakerRenameFailure)
+        XCTAssertEqual(detail.failedSpeakerRename, action)
+        XCTAssertEqual(detail.participants.first?.resolvedName, "Raven")
+        XCTAssertNil(detail.loadFailure)
+        detail.dismissSpeakerRenameFailure()
+        XCTAssertEqual(detail.failedSpeakerRename?.name, "User typed name")
+        try await services.database.writer.write { try $0.execute(sql: "DROP TRIGGER rejectSpeakerRename") }
+        await detail.renameSpeaker(action: try XCTUnwrap(detail.failedSpeakerRename))
+        XCTAssertNil(detail.speakerRenameFailure)
+        XCTAssertEqual(detail.participants.first?.resolvedName, "User typed name")
+        let reopened = MeetingDetailModel(meeting: meeting, audioURL: nil, services: services)
+        await reopened.load()
+        XCTAssertEqual(reopened.participants.first?.resolvedName, "User typed name")
+    }
+
     func testSpeakerPendingStateIsIndependentOfASRFinality() async throws {
         let (services, meeting) = try await fixture()
         let live = liveModel(services, meeting)

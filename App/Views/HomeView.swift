@@ -83,7 +83,8 @@ struct HomeView: View {
                                     NavigationLink(value: result.meeting) {
                                         MeetingRow(
                                             meeting: result.meeting,
-                                            participants: result.participants.map(\.speaker)
+                                            participants: result.participants.map(\.speaker),
+                                            processingStatus: library.recordingFinalization.statusText(result.meeting.id)
                                         )
                                     }
                                     .accessibilityIdentifier("homeMeeting-\(result.meeting.id)")
@@ -138,7 +139,10 @@ struct HomeView: View {
                         } else {
                             ForEach(library.meetings.prefix(5)) { meeting in
                                 NavigationLink(value: meeting) {
-                                    MeetingRow(meeting: meeting, participants: library.participants[meeting.id] ?? [])
+                                    MeetingRow(
+                                        meeting: meeting, participants: library.participants[meeting.id] ?? [],
+                                        processingStatus: library.recordingFinalization.statusText(meeting.id)
+                                    )
                                 }
                                 .accessibilityIdentifier("homeMeeting-\(meeting.id)")
                                 .swipeActions(allowsFullSwipe: false) {

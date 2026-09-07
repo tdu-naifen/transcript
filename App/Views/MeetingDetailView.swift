@@ -110,7 +110,11 @@ struct MeetingDetailView: View {
         .alert(Text("library.delete_failed"), isPresented: $deletionFailed) {
             Button("OK", role: .cancel) {}
         } message: {
-            Text("The meeting was not deleted. Stop any active recording and try again.", tableName: "MeetingDeletion")
+            if model.recordingFinalization.isBusy(meeting.id) || model.isReprocessing {
+                Text(RecordingProcessingText.busy)
+            } else {
+                Text("The meeting was not deleted. Stop any active recording and try again.", tableName: "MeetingDeletion")
+            }
         }
         .sheet(isPresented: $isEngineeringDetailPresented) {
             EngineeringDetailSheet(meeting: model.meeting, audioURL: model.audioURL)
@@ -140,14 +144,19 @@ struct MeetingDetailView: View {
             isPresented: Binding(
                 get: { model.renamingSpeakerId != nil },
                 set: { if !$0 { model.cancelRename() } }
-            )
-        ) {
+            ),
+            presenting: model.renamingSpeakerId
+        ) { speakerId in
             TextField("名字", text: $renameText)
+                .accessibilityIdentifier("detailSpeakerNameField")
             Button("取消", role: .cancel) { model.cancelRename() }
             Button("保存") {
-                Task { await model.confirmRename(newName: renameText) }
+                let action = SpeakerRenameAction(speakerId: speakerId, name: renameText)
+                model.cancelRename()
+                Task { await model.renameSpeaker(action: action) }
             }
-        } message: {
+            .accessibilityIdentifier("detailSpeakerNameSaveButton")
+        } message: { _ in
             Text("清空可恢复为原始动物名，所有会议同步生效。")
         }
         .alert("重命名", isPresented: $isMeetingRenamePresented) {
@@ -172,8 +181,9 @@ struct MeetingDetailView: View {
             Text(reprocessingText("The current transcript stays unchanged unless reprocessing finishes successfully."))
         }
         .onChange(of: model.renamingSpeakerId) { _, speakerId in
-            renameText = speakerId.flatMap { model.speakersById[$0]?.resolvedName } ?? ""
+            if let speakerId { renameText = model.speakersById[speakerId]?.resolvedName ?? "" }
         }
+        .speakerRenameFailureAlert(model: model, enabled: !isInsightsPresented)
         .task { await model.observe() }
         .task { await model.observeRecordingState() }
         .onDisappear {
@@ -381,6 +391,7 @@ struct MeetingDetailView: View {
                         ParticipantRow(participant: participant) {
                             model.beginRename(speakerId: participant.id)
                         }
+                        .accessibilityIdentifier("detailSpeakerRenameButton.\(participant.id)")
                     }
                 }
                 .transition(reduceMotion ? .identity : .opacity.combined(with: .move(edge: .top)))
@@ -834,19 +845,20 @@ private struct SpeakerInsightsView: View {
         .alert(acceptanceText("Edit speaker name"), isPresented: Binding(
             get: { renamingSpeakerId != nil },
             set: { if !$0 { renamingSpeakerId = nil } }
-        )) {
+        ), presenting: renamingSpeakerId) { speakerId in
             TextField(acceptanceText("Speaker name"), text: $renameText)
                 .accessibilityIdentifier("speakerNameField")
             Button(acceptanceText("Cancel"), role: .cancel) { renamingSpeakerId = nil }
             Button(acceptanceText("Save")) {
-                guard let speakerId = renamingSpeakerId else { return }
+                let action = SpeakerRenameAction(speakerId: speakerId, name: renameText)
                 renamingSpeakerId = nil
-                Task { await model.renameSpeaker(id: speakerId, newName: renameText) }
+                Task { await model.renameSpeaker(action: action) }
             }
             .accessibilityIdentifier("speakerNameSaveButton")
-        } message: {
+        } message: { _ in
             Text(acceptanceText("This name is used for this speaker in every meeting."))
         }
+        .speakerRenameFailureAlert(model: model)
     }
 
     private func timeAxis(includesMidpoint: Bool) -> some View {

@@ -33,6 +33,7 @@ final class LibraryModel {
     private let speakerRepository: SpeakerRepository
     private let store: AudioFileStore
     private let recordingSession: RecordingSession
+    let recordingFinalization: RecordingFinalizationCoordinator
     private var reloadID = UUID()
     private(set) var nextCursor: SearchCursor?
     let database: AppDatabase
@@ -43,6 +44,7 @@ final class LibraryModel {
         speakerRepository = SpeakerRepository(services.database)
         store = services.store
         recordingSession = services.session
+        recordingFinalization = services.recordingFinalization
         database = services.database
     }
 
@@ -115,6 +117,12 @@ final class LibraryModel {
         guard await recordingSession.activeMeetingId != meeting.id else {
             errorTitleKey = "library.delete_failed"
             errorMessage = LocalizationManager.shared.text("Stop this recording before deleting the meeting.", table: "MeetingDeletion")
+            return false
+        }
+        guard !(await recordingSession.isProcessing(meetingId: meeting.id)),
+              !recordingFinalization.isBusy(meeting.id) else {
+            errorTitleKey = "library.delete_failed"
+            errorMessage = RecordingProcessingText.busy
             return false
         }
         let stored: Meeting?

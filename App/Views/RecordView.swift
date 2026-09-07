@@ -72,8 +72,7 @@ struct RecordView: View {
                 Text("\((model.recordingSampleRate / 1_000).formatted()) kHz")
                 Label(
                     recordingStatusLabel,
-                    systemImage: model.isProcessingTranscript && model.audioArchiveSaved
-                        ? "checkmark.circle" : model.isActive ? "record.circle" : "mic"
+                    systemImage: model.isActive ? "record.circle" : "mic"
                 )
                     .foregroundStyle(model.isActive ? Color.red : AppColors.controlTint)
             }
@@ -88,18 +87,8 @@ struct RecordView: View {
                 .contentTransition(.numericText())
                 .monospacedDigit()
                 .padding(.bottom, 8)
-            if model.isProcessingTranscript {
-                HStack(spacing: 8) {
-                    ProgressView().controlSize(.small)
-                    Text("Finishing transcript…", tableName: "SpeakerProjection")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                }
-                .accessibilityIdentifier("recordingProcessingStatus")
-            } else {
-                LevelMeterView(level: model.level, isActive: model.phase == .recording)
-                    .frame(height: 26)
-            }
+            LevelMeterView(level: model.level, isActive: model.phase == .recording)
+                .frame(height: 26)
             adaptiveRow {
                 Label("Apple Speech", systemImage: "waveform")
                 if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: 4) }
@@ -181,7 +170,7 @@ struct RecordView: View {
             }
             .disabled(!model.isActive)
             .accessibilityIdentifier("recordingPauseButton")
-            RecordButton(isRecording: model.isActive, isBusy: model.isBusy || model.isProcessingTranscript) {
+            RecordButton(isRecording: model.isActive, isBusy: model.isBusy) {
                 if model.isActive { onStop() }
                 else { Task { await model.toggleRecording() } }
             }
@@ -197,10 +186,7 @@ struct RecordView: View {
     }
 
     private var recordingStatusLabel: String {
-        guard model.isProcessingTranscript else { return model.stateLabel }
-        return LocalizationManager.shared.text(
-            model.audioArchiveSaved ? "Audio saved" : "Finishing transcript…", table: "SpeakerProjection"
-        )
+        model.stateLabel
     }
 
     private func adaptiveRow<Content: View>(@ViewBuilder content: () -> Content) -> some View {

@@ -22,7 +22,7 @@ struct TranscriptRecordingLiveActivity: Widget {
                     Text(clock(context.state.elapsedSeconds))
                         .font(.headline.monospacedDigit())
                     Spacer()
-                    Button(intent: StopRecordingIntent()) {
+                    Button(intent: StopRecordingIntent(meetingId: context.attributes.meetingId)) {
                         Image(systemName: "stop.fill")
                             .font(.caption.weight(.bold))
                             .foregroundStyle(.white)
@@ -55,7 +55,7 @@ struct TranscriptRecordingLiveActivity: Widget {
                         .font(.caption.weight(.semibold))
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Button(intent: StopRecordingIntent()) {
+                    Button(intent: StopRecordingIntent(meetingId: context.attributes.meetingId)) {
                         Image(systemName: "stop.fill")
                             .foregroundStyle(.red)
                     }

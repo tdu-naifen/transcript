@@ -195,7 +195,7 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
             fail(Failure.unavailable)
             return
         }
-        let (inputs, inputContinuation) = AsyncStream<AnalyzerInput>.makeStream()
+        let inputQueue = AppleAnalyzerInputQueue()
         let collector = Task {
             for try await result in speech.results {
                 try Task.checkCancellation()
@@ -214,7 +214,7 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
         }
         do {
             let converter = try AppleAudioConverter(outputFormat: format)
-            try await analyzer.start(inputSequence: inputs)
+            try await analyzer.start(inputSequence: inputQueue.stream)
             continuation.yield(.ready(.init(language: .locale(locale.identifier), loadSeconds: 0)))
             var hasOrigin = false
             for await chunk in chunks {
@@ -224,19 +224,20 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
                     hasOrigin = true
                 }
                 if let buffer = try converter.convert(chunk) {
-                    inputContinuation.yield(AnalyzerInput(buffer: buffer))
+                    try inputQueue.append(AnalyzerInput(buffer: buffer))
                 }
                 if chunk.isFinal { break }
             }
             try Task.checkCancellation()
             if let tail = try converter.finish() {
-                inputContinuation.yield(AnalyzerInput(buffer: tail))
+                try inputQueue.append(AnalyzerInput(buffer: tail))
             }
-            inputContinuation.finish()
+            inputQueue.finish()
             try await analyzer.finalizeAndFinishThroughEndOfInput()
             try await collector.value
         } catch {
-            inputContinuation.finish()
+            inputQueue.finish()
+            if !Task.isCancelled { fail(error) }
             collector.cancel()
             await analyzer.cancelAndFinishNow()
             let result = await collector.result
@@ -264,6 +265,31 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
             localeIdentifier: locale, isFinal: isFinal
         )
     }
+}
+
+/// The actual SDK-facing PCM queue, not merely the capture-side buffer.
+/// Overflow stops transcription explicitly; archival capture remains independent.
+struct AppleAnalyzerInputQueue {
+    enum Failure: Error { case overflow }
+    let stream: AsyncStream<AnalyzerInput>
+    private let continuation: AsyncStream<AnalyzerInput>.Continuation
+
+    init() {
+        let pair = AsyncStream<AnalyzerInput>.makeStream(bufferingPolicy: .bufferingOldest(4))
+        stream = pair.stream
+        continuation = pair.continuation
+    }
+
+    func append(_ input: AnalyzerInput) throws {
+        switch continuation.yield(input) {
+        case .enqueued: return
+        case .dropped: throw Failure.overflow
+        case .terminated: throw CancellationError()
+        @unknown default: throw Failure.overflow
+        }
+    }
+
+    func finish() { continuation.finish() }
 }
 
 struct AppleTranscriptStore: Sendable {

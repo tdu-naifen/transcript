@@ -6,6 +6,98 @@ final class TranscriptUITests: XCTestCase {
         continueAfterFailure = false
     }
 
+    func testActualSpeakerSaveRefreshesPersistsAcrossRelaunchAndOtherMeetings() {
+        let app = isolatedApp()
+        let firstName = "Saved Detail \(UUID().uuidString.prefix(6))"
+        let secondName = "Saved Insights \(UUID().uuidString.prefix(6))"
+        func open(_ meetingId: String) {
+            app.launchArguments = [
+                "-uiFixture", "1", "-appLanguage", "en",
+                "-uiFixtureSelectedTab", "recordings",
+                "-uiFixtureOpenMeetingId", meetingId
+            ]
+            app.launch()
+            XCTAssertTrue(app.buttons["meetingOptionsButton"].waitForExistence(timeout: 5))
+        }
+        func detailSpeakerButton() -> XCUIElement {
+            let button = app.buttons["detailSpeakerRenameButton.fixture-speaker-alexandra"]
+            if !button.exists {
+                let toggle = app.buttons["participantsToggle"]
+                XCTAssertTrue(toggle.waitForExistence(timeout: 3))
+                toggle.tap()
+            }
+            XCTAssertTrue(button.waitForExistence(timeout: 3))
+            return button
+        }
+        func assertName(_ name: String, on element: XCUIElement) {
+            if element.identifier.hasPrefix("speakerRenameButton.") {
+                let expectedLabel = "Edit speaker name: \(name)"
+                let expectation = XCTNSPredicateExpectation(
+                    predicate: NSPredicate(format: "label == %@", expectedLabel), object: element
+                )
+                XCTAssertEqual(XCTWaiter.wait(for: [expectation], timeout: 5), .completed)
+                XCTAssertEqual(element.label, expectedLabel)
+            } else {
+                let nameLabel = element.staticTexts.matching(NSPredicate(format: "label == %@", name)).firstMatch
+                XCTAssertTrue(nameLabel.waitForExistence(timeout: 5), "Expected exact speaker name: \(name); got \(element.label)")
+                XCTAssertEqual(nameLabel.label, name)
+            }
+        }
+        func assertReopenedName(_ name: String, on element: XCUIElement, screenshot: String? = nil) {
+            element.tap()
+            let alert = app.alerts.firstMatch
+            let field = alert.textFields.firstMatch
+            XCTAssertTrue(field.waitForExistence(timeout: 3))
+            XCTAssertEqual(field.value as? String, name)
+            if let screenshot {
+                attachScreenshot(of: app, name: screenshot)
+            }
+            alert.buttons["Cancel"].tap()
+            XCTAssertTrue(alert.waitForNonExistence(timeout: 3))
+        }
+
+        open("fixture-meeting-1on1")
+        detailSpeakerButton().tap()
+        let alert = app.alerts.firstMatch
+        XCTAssertTrue(alert.textFields.firstMatch.waitForExistence(timeout: 3))
+        replaceText(in: alert.textFields.firstMatch, with: firstName)
+        alert.buttons.matching(identifier: "detailSpeakerNameSaveButton").firstMatch.tap()
+        XCTAssertTrue(alert.waitForNonExistence(timeout: 3))
+        assertName(firstName, on: detailSpeakerButton())
+        attachScreenshot(of: app, name: "speaker-detail-save-refreshed")
+        assertReopenedName(firstName, on: detailSpeakerButton(), screenshot: "speaker-detail-exact-persisted-field")
+        app.terminate()
+
+        // Same isolated disk run and real process restart; fixture seeding is idempotent.
+        open("fixture-meeting-1on1")
+        assertName(firstName, on: detailSpeakerButton())
+        assertReopenedName(firstName, on: detailSpeakerButton())
+        app.terminate()
+        open("fixture-meeting-review-90min")
+        assertName(firstName, on: detailSpeakerButton())
+        assertReopenedName(firstName, on: detailSpeakerButton())
+        app.buttons["meetingOptionsButton"].tap()
+        app.buttons["speakerInsightsMenuItem"].tap()
+        let insightsButton = app.buttons["speakerRenameButton.fixture-speaker-alexandra"]
+        XCTAssertTrue(insightsButton.waitForExistence(timeout: 3))
+        insightsButton.tap()
+        let insightsAlert = app.alerts["Edit speaker name"]
+        XCTAssertTrue(insightsAlert.textFields.firstMatch.waitForExistence(timeout: 3))
+        XCTAssertEqual(insightsAlert.textFields.firstMatch.value as? String, firstName)
+        replaceText(in: insightsAlert.textFields.firstMatch, with: secondName)
+        insightsAlert.buttons.matching(identifier: "speakerNameSaveButton").firstMatch.tap()
+        XCTAssertTrue(insightsAlert.waitForNonExistence(timeout: 3))
+        assertName(secondName, on: insightsButton)
+        attachScreenshot(of: app, name: "speaker-insights-save-refreshed")
+        assertReopenedName(secondName, on: insightsButton, screenshot: "speaker-insights-exact-persisted-field")
+        app.terminate()
+
+        open("fixture-meeting-1on1")
+        assertName(secondName, on: detailSpeakerButton())
+        attachScreenshot(of: app, name: "speaker-save-cross-meeting-relaunch")
+        assertReopenedName(secondName, on: detailSpeakerButton(), screenshot: "speaker-cross-meeting-relaunch-exact-field")
+    }
+
     func testRecordingExpandsCollapsesAndStops() {
         let app = realRecordingApp(expandCollapse: true)
         app.launch()
@@ -1028,8 +1120,18 @@ final class TranscriptUITests: XCTestCase {
     private func replaceText(in field: XCUIElement, with text: String) {
         field.tap()
         let currentValue = field.value as? String ?? ""
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentValue.count))
-        field.typeText(text)
+        if !currentValue.isEmpty && currentValue != field.placeholderValue {
+            // A tap can leave the insertion point in the middle of a long name.
+            field.typeKey(.rightArrow, modifierFlags: .command)
+            field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: currentValue.utf16.count))
+        }
+        let clearedValue = field.value as? String ?? ""
+        XCTAssertTrue(clearedValue.isEmpty || clearedValue == field.placeholderValue,
+                      "The entire field must be cleared before replacement: \(clearedValue)")
+        if !text.isEmpty {
+            field.typeText(text)
+            XCTAssertEqual(field.value as? String, text)
+        }
     }
 
     func testRealRecordingLaunchConfigurationsRequireIndependentStorageOptIn() throws {

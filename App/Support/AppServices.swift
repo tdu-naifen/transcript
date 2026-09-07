@@ -5,7 +5,7 @@ import TranscriptCore
 import UIKit
 
 /// Everything the app needs that outlives a view: the database, the audio directory,
-/// the single recording session, and the ASR model.
+/// the single capture session, and independently owned per-meeting processors.
 @MainActor
 final class AppServices {
     let database: AppDatabase
@@ -18,6 +18,7 @@ final class AppServices {
     let audioOwnership: AudioSessionOwnership
     let speechResources = AppleSpeechResources()
     let speakerAnalysis: SpeakerAnalysisService
+    let recordingFinalization: RecordingFinalizationCoordinator
     private(set) var recordingRecoveryError: String?
 
     init(
@@ -46,6 +47,7 @@ final class AppServices {
             database: self.database, deviceId: deviceId, store: self.store,
             captureEngine: captureEngine
         )
+        recordingFinalization = RecordingFinalizationCoordinator(database: self.database, session: session)
         recovery = RecordingRecovery(database: self.database, deviceId: deviceId, store: self.store)
         modelDownloader = ASRModelDownloader()
         speakerAnalysis = SpeakerAnalysisService(
@@ -84,6 +86,7 @@ final class AppServices {
         recordingRecoveryError = nil
         let live = await session.activeMeetingId
         do {
+            try await recordingFinalization.recover()
             let recovered = try await recovery.salvageInterruptedRecordings(
                 excluding: live.map { [$0] } ?? []
             )

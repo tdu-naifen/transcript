@@ -1,0 +1,72 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Audio saved. Finishing transcript…" : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "录音已保存，正在完成转写…"
+          }
+        }
+      }
+    },
+    "Audio saved. Transcription needs retry; cleanup is still running." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "录音已保存，转写需要重试；清理仍在进行。"
+          }
+        }
+      }
+    },
+    "The recording or transcript changed during processing. Nothing was replaced. Retry using the latest version." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "处理期间录音或转写内容已更改，未替换任何内容。请基于最新版本重试。"
+          }
+        }
+      }
+    },
+    "This meeting’s transcript is still processing. Wait for it to finish, or fully close and reopen the app to interrupt processing, then retry deletion." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此会议仍在转写。请等待完成，或关闭并重新打开应用中断处理，然后重试删除。"
+          }
+        }
+      }
+    },
+    "This recording contains multiple languages. Whole-file retry is unavailable to avoid replacing it with the wrong language. Existing text and audio are unchanged." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "此录音包含多种语言。为避免用错误语言替换内容，暂不支持整段重试。现有文字和录音保持不变。"
+          }
+        }
+      }
+    },
+    "Transcription needs retry. Saved audio and existing text are preserved. Use Reprocess to explicitly replace the transcript." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "转写需要重试。录音和现有文字均已保留。使用“重新处理”确认替换转写内容。"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

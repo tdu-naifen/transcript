@@ -1,0 +1,11 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Could not rename speaker" : {
+      "localizations" : {
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法重命名说话人" } }
+      }
+    }
+  },
+  "version" : "1.0"
+}

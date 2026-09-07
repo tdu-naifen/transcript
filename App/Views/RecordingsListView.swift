@@ -35,7 +35,8 @@ struct RecordingsListView: View {
                                 NavigationLink(value: meeting) {
                                     MeetingRow(
                                         meeting: meeting,
-                                        participants: model.participants[meeting.id] ?? []
+                                        participants: model.participants[meeting.id] ?? [],
+                                        processingStatus: model.recordingFinalization.statusText(meeting.id)
                                     )
                                 }
                                 .accessibilityIdentifier("meetingRow-\(meeting.id)")
@@ -169,6 +170,7 @@ struct RecordingsListView: View {
 struct MeetingRow: View {
     let meeting: Meeting
     let participants: [Speaker]
+    var processingStatus: String? = nil
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
@@ -188,6 +190,10 @@ struct MeetingRow: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                if let processingStatus {
+                    Text(processingStatus).font(.caption).foregroundStyle(.secondary)
+                        .accessibilityIdentifier("meetingProcessingStatus-\(meeting.id)")
+                }
                 ForEach(participants.prefix(3)) { speaker in
                     HStack(spacing: 6) {
                         SpeakerDotsView(colorIndexes: [speaker.colorIndex])

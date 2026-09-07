@@ -70,6 +70,7 @@
       }
     },
     "Finishing transcript…" : {
+      "extractionState" : "stale",
       "localizations" : {
         "en" : {
           "stringUnit" : {

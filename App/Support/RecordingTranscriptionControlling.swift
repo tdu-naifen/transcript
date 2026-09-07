@@ -4,6 +4,8 @@ import TranscriptCore
 @MainActor
 protocol RecordingTranscriptionControlling {
     var isAvailable: Bool { get }
+    var needsForegroundFinalization: Bool { get }
+    var processingIssue: String? { get }
     func refreshAvailability()
     func prepare() async throws
     func start(meetingId: String, chunks: AsyncStream<AudioChunk>, diarizationChunks: AsyncStream<AudioChunk>) throws
@@ -12,6 +14,8 @@ protocol RecordingTranscriptionControlling {
 }
 
 extension RecordingTranscriptionControlling {
+    var needsForegroundFinalization: Bool { true }
+    var processingIssue: String? { nil }
     func prepare() async throws {}
 }
 

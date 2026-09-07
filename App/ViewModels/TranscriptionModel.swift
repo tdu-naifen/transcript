@@ -49,10 +49,11 @@ final class TranscriptionModel {
 
     private let services: AppServices
     private let resources: AppleSpeechResources
-    private let analyzerSlots = RecordingAnalyzerSlots()
+    private let analyzerSlots = RecordingAnalyzerSlots.shared
     private var preparedSlot: UUID?
     private var transcriber: (any AppleTranscribing)?
     private let makeTranscriber: () -> any AppleTranscribing
+    private let preparationTimeout: Duration
     private var audioOnly = false
     private var resourceRecoveryLocale: Locale?
     private var diarizer: SpeakerDiarizer?
@@ -61,11 +62,14 @@ final class TranscriptionModel {
     private var currentMeetingId: String?
     private var diarizationTimeline = DiarizationTimelineAccumulator()
     private var processingFailure: String?
+    private var incomplete = false
     private var routingTask: Task<Void, Never>?
     private var switchTask: Task<Void, Never>?
     private var switchGeneration = UUID()
     private var activeRunID: UUID?
     private var acceptsSwitches = false
+    private var activeBoundary: RecordingLanguageBoundary?
+    private var routedLocale: Locale?
     private var replacement: (engine: any AppleTranscribing, locale: Locale, slot: UUID)?
     private var runs: [SpeechRun] = []
     private struct SpeechRun {
@@ -79,11 +83,16 @@ final class TranscriptionModel {
         diarization: @Sendable () async throws -> Void
     )?
 
-    init(services: AppServices, resources: AppleSpeechResources? = nil, makeTranscriber: @escaping () -> any AppleTranscribing = { AppleLiveTranscriber() }) {
+    init(
+        services: AppServices, resources: AppleSpeechResources? = nil,
+        preparationTimeout: Duration = .seconds(3),
+        makeTranscriber: @escaping () -> any AppleTranscribing = { AppleLiveTranscriber() }
+    ) {
         self.services = services
         // Future-default setup must not cancel a language change in the active meeting.
         self.resources = resources ?? AppleSpeechResources()
         self.makeTranscriber = makeTranscriber
+        self.preparationTimeout = preparationTimeout
         self.injectedFinishOperations = nil
         status = .idle
     }
@@ -97,6 +106,7 @@ final class TranscriptionModel {
         self.services = services
         self.resources = services.speechResources
         self.makeTranscriber = { AppleLiveTranscriber() }
+        self.preparationTimeout = .seconds(3)
         self.injectedFinishOperations = (asr: asrFinish, diarization: diarizationFinish)
         self.currentMeetingId = meetingId
         self.displayedMeetingID = meetingId
@@ -104,6 +114,12 @@ final class TranscriptionModel {
     }
 
     var isAvailable: Bool { status != .modelMissing }
+    var needsForegroundFinalization: Bool {
+        !runs.isEmpty || diarizer != nil || injectedFinishOperations != nil
+    }
+    var processingIssue: String? {
+        incomplete || audioOnly ? RecordingSpeechUnavailable().localizedDescription : nil
+    }
 
     func refreshAvailability() {
         guard status == .idle || status == .modelMissing else { return }
@@ -117,22 +133,27 @@ final class TranscriptionModel {
         effectiveLocale = nil
         speakerWarning = nil
         let locale = services.recordingLocale
-        let slot = try await analyzerSlots.acquire()
+        incomplete = false
+        let availableSlot = services.recordingFinalization.isSaturated ? nil : await analyzerSlots.acquireIfAvailable()
+        guard let slot = availableSlot else {
+            transcriber = nil
+            audioOnly = true
+            incomplete = true
+            status = .failed(RecordingResourcesBusy().localizedDescription)
+            return
+        }
         let transcriber = makeTranscriber()
         do {
-            try Task.checkCancellation()
-            try await transcriber.prepare(locale: locale)
+            try await RecordingSpeechPreparation.prepare(
+                transcriber, locale: locale, slot: slot, slots: analyzerSlots, timeout: preparationTimeout
+            )
             self.transcriber = transcriber
             preparedSlot = slot
             effectiveLocale = locale
         } catch is CancellationError {
-            await transcriber.cancelAndWait()
-            await analyzerSlots.release(slot)
             status = .idle
             throw CancellationError()
         } catch {
-            await transcriber.cancelAndWait()
-            await analyzerSlots.release(slot)
             if case AppleLiveTranscriber.Failure.resourcesNotReady = error {
                 resourceRecoveryLocale = locale
                 resources.prepare(locale: locale)
@@ -140,13 +161,25 @@ final class TranscriptionModel {
             // Transcription availability must not prevent saving microphone audio.
             self.transcriber = nil
             audioOnly = true
+            incomplete = true
             RecordingDiagnostics.log(error)
-            status = .failed((error as? AppleLiveTranscriber.Failure)?.localizedDescription ?? RecordingLanguageText.speechFailure)
+            status = .failed(error is RecordingResourcesBusy
+                ? error.localizedDescription
+                : (error as? AppleLiveTranscriber.Failure)?.localizedDescription ?? RecordingLanguageText.speechFailure)
         }
+
     }
 
-    /// `chunks` must be subscribed before capture starts so no chunk is missed while
-    /// the model loads; the stream buffers until inference catches up.
+    func markInputIncomplete() {
+        incomplete = true
+    }
+
+    func markSpeakerInputIncomplete() {
+        speakerWarning = RecordingLanguageText.speakerFailure
+    }
+
+    /// Subscribe before capture starts. Bounded inputs report any inference gaps;
+    /// the independent audio archive remains available for explicit retry.
     func start(
         meetingId: String,
         chunks: AsyncStream<AudioChunk>,
@@ -162,6 +195,7 @@ final class TranscriptionModel {
         processingFailure = nil
         detectedLanguage = nil
         currentMeetingId = meetingId
+        routedLocale = nil
         acceptsSwitches = true
         if let transcriber, let effectiveLocale, let slot = preparedSlot {
             preparedSlot = nil
@@ -172,24 +206,56 @@ final class TranscriptionModel {
         routingTask = Task { [weak self] in
             for await chunk in chunks {
                 guard !Task.isCancelled, let self else { break }
-                if acceptsSwitches, let replacement {
+                if acceptsSwitches, !chunk.samples.isEmpty, let replacement {
                     self.replacement = nil
-                    let old = runs.last
-                    activate(replacement.engine, locale: replacement.locale, meetingID: meetingId, slot: replacement.slot)
-                    pendingLocale = nil
-                    languageReadyForBoundary = false
-                    languageSwitchFailure = nil
-                    if let old { await old.channel.finish() }
+                    let generation = switchGeneration
+                    let boundary = RecordingLanguageBoundary()
+                    activeBoundary = boundary
+                    do {
+                        try await RecordingProcessingRepository(services.database).commitLanguageBoundary(
+                            meetingId: meetingId, previousLocale: routedLocale?.identifier,
+                            newLocale: replacement.locale.identifier, boundary: boundary
+                        )
+                        try Task.checkCancellation()
+                        let old = runs.last
+                        activate(replacement.engine, locale: replacement.locale, meetingID: meetingId, slot: replacement.slot)
+                        if generation == switchGeneration {
+                            pendingLocale = nil
+                            languageReadyForBoundary = false
+                            languageSwitchFailure = nil
+                        }
+                        if let old { await old.channel.finish() }
+                    } catch {
+                        let slots = analyzerSlots
+                        Task {
+                            await replacement.engine.cancelAndWait()
+                            await slots.release(replacement.slot)
+                        }
+                        if !(error is CancellationError) {
+                            incomplete = true
+                            RecordingDiagnostics.log(error)
+                            if generation == switchGeneration { languageSwitchFailure = RecordingLanguageIssue(error) }
+                        }
+                    }
+                    if activeBoundary === boundary { activeBoundary = nil }
                 }
-                if let run = runs.last { await run.channel.send(chunk) }
+                if Task.isCancelled { break }
+                if let run = runs.last {
+                    if !chunk.samples.isEmpty { routedLocale = effectiveLocale }
+                    await run.channel.send(chunk)
+                }
             }
             if let run = self?.runs.last { await run.channel.finish() }
         }
 
         // Speaker attribution is optional; Apple speech never depends on Sortformer.
         let modelPath = DiarizationModelStore.sortformerMainModelPath()
-        if DiarizationModelStore.isSortformerInstalled(at: modelPath) {
+        if !audioOnly, DiarizationModelStore.isSortformerInstalled(at: modelPath) {
             startDiarization(meetingId: meetingId, chunks: diarizationChunks, modelPath: modelPath)
+        } else {
+            diarizationTask = Task {
+                for await _ in diarizationChunks { if Task.isCancelled { break } }
+            }
         }
         if audioOnly, let locale = resourceRecoveryLocale {
             resourceRecoveryLocale = nil
@@ -248,6 +314,7 @@ final class TranscriptionModel {
     }
 
     func cancelLanguageSwitch() {
+        activeBoundary?.cancel()
         switchGeneration = UUID()
         switchTask?.cancel()
         switchTask = nil
@@ -344,6 +411,9 @@ final class TranscriptionModel {
         if (failure == nil || failure is RecordingSpeechUnavailable), let processingFailure {
             failure = LiveRecordingDrainError(failures: [processingFailure])
         }
+        if failure == nil, incomplete || audioOnly {
+            failure = RecordingSpeechUnavailable()
+        }
         do {
             try await reconcileSpeakerAssignments()
             if injectedFinishOperations != nil { try await requireTranscriptProduced() }
@@ -369,6 +439,7 @@ final class TranscriptionModel {
     }
 
     func discard() async {
+        incomplete = true
         setLanguageSwitchingAllowed(false)
         routingTask?.cancel()
         for run in runs {
@@ -463,8 +534,20 @@ final class TranscriptionModel {
                 }
             }
         case .failed(let message):
+            incomplete = true
             RecordingDiagnostics.log(message)
             if runID == activeRunID { status = .failed(RecordingLanguageText.speechFailure) }
+            if let currentMeetingId {
+                do {
+                    try await RecordingProcessingRepository(services.database).recordFailure(
+                        meetingId: currentMeetingId, error: message
+                    )
+                    await services.recordingFinalization.reload()
+                } catch {
+                    processingFailure = String(describing: error)
+                    RecordingDiagnostics.log(error)
+                }
+            }
         case .finished:
             if runID == activeRunID, status == .running || status == .preparing { status = .idle }
         }

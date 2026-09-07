@@ -63,7 +63,6 @@ private struct ReadyView: View {
     @State private var isStartingRecording = false
     @State private var isStoppingRecording = false
     @State private var namingError: String?
-    @State private var activeMeeting: Meeting?
     @State private var namingMeetingId: String?
     @State private var lastNamedMeetingId: String?
     @State private var meetingName = ""
@@ -103,7 +102,7 @@ private struct ReadyView: View {
     }
 
     private var hasRecordingSession: Bool {
-        recorder.phase != .idle || isStartingRecording || recorder.isProcessingTranscript
+        recorder.phase != .idle || isStartingRecording
     }
 
     private var isCaptureActive: Bool {
@@ -162,6 +161,7 @@ private struct ReadyView: View {
         }
         .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.8), value: isRecordingExpanded)
         .task { macConnection.enablePairing() }
+        .task { await recorder.onAppear() }
         .onChange(of: scenePhase, initial: true) { _, phase in
             services.speakerAnalysis.setActive(phase == .active)
             recorder.sceneActivityChanged(isActive: phase == .active)
@@ -197,25 +197,16 @@ private struct ReadyView: View {
             Text(recorder.errorMessage ?? "")
         }
         .onChange(of: recorder.phase) { oldPhase, newPhase in
-            if newPhase == .recording || newPhase == .paused {
-                Task { await captureActiveMeeting() }
-            } else if newPhase == .stopping && oldPhase != .stopping {
-                Task {
-                    if activeMeeting == nil { await captureActiveMeeting() }
-                }
-            } else if newPhase == .idle && (oldPhase == .stopping || oldPhase == .processing) {
+            if newPhase == .idle && oldPhase == .stopping {
                 withAnimation(.snappy) { isRecordingExpanded = false }
                 Task { await library.reload() }
             }
         }
-        .onChange(of: recorder.audioArchiveSaved) { _, saved in
-            guard saved else { return }
+        .onChange(of: recorder.lastArchivedMeeting) { _, archived in
+            guard let archived else { return }
             withAnimation(.snappy) { isRecordingExpanded = false }
-            Task {
-                await captureActiveMeeting()
-                await library.reload()
-                presentMeetingNaming()
-            }
+            presentMeetingNaming(archived)
+            Task { await library.reload() }
         }
     }
 
@@ -224,14 +215,12 @@ private struct ReadyView: View {
         // Lock the root entry synchronously so a second tap cannot toggle the new session off.
         guard recorder.canStartRecording, !isStartingRecording, !isStoppingRecording else { return }
         isStartingRecording = true
-        activeMeeting = nil
         isRecordingExpanded = true
         Task {
             defer { isStartingRecording = false }
             await recorder.onAppear()
             guard recorder.canStartRecording else { return }
             await recorder.toggleRecording()
-            await captureActiveMeeting()
         }
     }
 
@@ -240,21 +229,14 @@ private struct ReadyView: View {
         isStoppingRecording = true
         Task {
             defer { isStoppingRecording = false }
-            if activeMeeting == nil { await captureActiveMeeting() }
             // Capture must stop regardless of whether the naming alert is completed.
             guard recorder.isActive else { return }
             await recorder.toggleRecording()
-            presentMeetingNaming()
         }
     }
 
-    private func captureActiveMeeting() async {
-        guard let id = await services.session.activeMeetingId else { return }
-        activeMeeting = try? await MeetingRepository(services.database).fetch(id: id)
-    }
-
-    private func presentMeetingNaming() {
-        guard !isMeetingNamingPresented, let meeting = activeMeeting, lastNamedMeetingId != meeting.id else { return }
+    private func presentMeetingNaming(_ meeting: Meeting) {
+        guard !isMeetingNamingPresented, lastNamedMeetingId != meeting.id else { return }
         lastNamedMeetingId = meeting.id
         namingMeetingId = meeting.id
         defaultMeetingName = meeting.title
@@ -313,27 +295,19 @@ private struct RecordingMiniBar: View {
     let onStop: () -> Void
 
     private var statusLabel: String {
-        guard model.isProcessingTranscript else { return model.stateLabel }
-        return LocalizationManager.shared.text(
-            model.audioArchiveSaved ? "Audio saved. Finishing transcript…" : "Finishing transcript…",
-            table: "SpeakerProjection"
-        )
+        model.stateLabel
     }
 
     var body: some View {
         HStack(spacing: 12) {
             Button(action: onExpand) {
                 HStack(spacing: 12) {
-                    if model.isProcessingTranscript && model.audioArchiveSaved {
-                        Image(systemName: "checkmark.circle").foregroundStyle(.secondary)
-                    } else {
-                        Circle()
-                            .fill(model.isActive && model.phase != .paused ? Color.red : Color.secondary)
-                            .frame(width: 8, height: 8)
-                    }
+                    Circle()
+                        .fill(model.isActive && model.phase != .paused ? Color.red : Color.secondary)
+                        .frame(width: 8, height: 8)
                     Text(Format.clock(model.elapsed))
                         .font(.subheadline.monospacedDigit().weight(.semibold))
-                    if model.isBusy || model.isProcessingTranscript {
+                    if model.isBusy {
                         ProgressView()
                         Text(statusLabel).font(.caption)
                             .fixedSize(horizontal: false, vertical: true)
