@@ -19,6 +19,8 @@
 - **人数限制**：现有 Sortformer 只有 4 个模型槽位；全局身份库可以保存更多人，不代表单场 40 人识别已支持。动态聚类路线待 iOS 研究与单 writer 协调，不能通过去掉 UI 过滤伪装支持。
 - **分析复用**：复用 MLX Swift LM 的语言模型和文本 embedding 推理、Textual 的原生 Markdown 显示；会议证据、时间定位与索引失效由 Mac 适配。默认仍为 Apple 语言模型 + 关键词检索，可独立选择 Apple English 句向量或兼容 MLX embedding。选择不等于模型已安装或可以运行。
 - **模型文件**：MLX 使用 Apple 芯片和本地兼容权重目录，或由用户明确下载受支持仓库的固定 40 位 commit。应用不会自动下载权重或执行任意模型卡代码。
+- **Processing 安装修复**：安装按钮使用独立原生确认面板，支持三个内置模型一起安装或单独安装，显示每个模型的下载、校验、取消、错误和重试。Core 下载到 Mac 私有 staging，固定 Hugging Face manifest 的逐文件大小、LFS SHA-256 / Git blob SHA-1 验证通过后才发布及保存配置。缺失或损坏的已管理文件持久标记为不可用，重试下载新副本；网络失败不会删除已验证模型，用户选择的目录和语言不被静默改写。
+- **实际安装结果**：用户授权后已在 Mac App sandbox 安装并验证 Nemotron multilingual/2240ms、Sortformer v2.1 与 CAMPPlus，共 777,944,334 字节、36 个固定版本文件；复用已验证 Nemotron，另下载 Sortformer/CAMPPlus。35 项模型测试（含实际 sandbox 安装复验）和原生按钮确认/取消测试通过。Sortformer/CAMPPlus 已下载不代表它们已经接入 Mac ASR 任务；当前任务仍明确为 ASR-only，不宣称 40 人识别。
 - **检索边界**：语义索引仅驻留内存，最多 512 个转写片段；模型版本、向量维度、资料内容变化后重建。摘要使用有预算的时间顺序片段，不冒充整场总结。引用校验保证来源存在，不证明模型结论正确；Markdown 外部图片与任意链接默认不加载。
 - **验证状态**：本次 Mac XCTest 目标运行 197 项（1 项真实模型测试按 opt-in 跳过，0 失败），另有 16 项 Swift Testing 迁移测试通过；索引修复后的 45 项接收测试再次通过。原生接收权限开关、重启保留测试通过。此前公开 AMI 音频已实际跑通 Nemotron、入库、Apple embedding 和引用生成；这不等于 RAG 全 UI 或真实 iPhone 互通已验收。未操作用户 iPhone。
 

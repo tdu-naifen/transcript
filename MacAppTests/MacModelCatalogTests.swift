@@ -10,7 +10,12 @@ final class MacModelCatalogTests: XCTestCase {
             + MacModelCard.builtins.flatMap { [$0.name, $0.runtimeDescription] }
             + ["Processing", "Create local ASR version", "Requires adapter · card only",
                "preparing", "running", "cancelling", "needsRetry", "cancelled", "failed",
-               "readyForReview", "savedLocally", "stale", "loadingAudio", "transcribing", "saving"]
+               "readyForReview", "savedLocally", "stale", "loadingAudio", "transcribing", "saving",
+               "Install built-in models…", "Download built-in model files?", "Download selected models",
+               "Downloaded · ASR runtime available", "Downloaded · not used by Mac ASR",
+               "Queued", "Downloading", "Verifying model files", "Downloaded and validated",
+               "Download failed", "Download cancelled", "Retry unfinished downloads", "Cancelling download…"]
+            + ["Integrity check failed · unavailable"]
         for language in ["en", "zh-Hans"] {
             let path = try XCTUnwrap(Bundle.main.path(forResource: language, ofType: "lproj"))
             let bundle = try XCTUnwrap(Bundle(path: path))
@@ -150,5 +155,24 @@ final class MacModelCatalogTests: XCTestCase {
         card.id = "custom"
         XCTAssertThrowsError(try catalog.add(card))
         XCTAssertEqual(catalog.cards, MacModelCard.builtins)
+    }
+
+    func testInstallationPreservesLocatedFolderAndRejectsWrongASRVariant() throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let catalog = MacModelCatalog()
+        try catalog.load(directory: root)
+        let located = try MacProcessingTestFixtures.asr(in: root)
+        try catalog.useManagedASR(located)
+        let secondRoot = root.appendingPathComponent("second")
+        let managed = try MacProcessingTestFixtures.asr(in: secondRoot)
+        try catalog.useManagedASR(managed)
+        XCTAssertEqual(catalog.selected(.asr)?.localPath, located.directory.path)
+        XCTAssertThrowsError(try catalog.useManagedASR(.init(
+            variant: .init(family: "english", tierMilliseconds: 80), directory: managed.directory)))
+        let restored = MacModelCatalog()
+        try restored.load(directory: root)
+        XCTAssertEqual(restored.selected(.asr)?.localPath, located.directory.path)
+        XCTAssertEqual(restored.selected(.asr)?.installationDescription, "Downloaded · ASR runtime available")
     }
 }
