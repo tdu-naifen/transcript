@@ -61,6 +61,31 @@ An analysis-resource library API/test is not a claim of automatic LLM publicatio
 
 ## Evidence ledger
 
+### Post-merge cleanup
+
+The sole Mac target remains `TranscriptMac`, built from `MacApp/` by the root
+`project.yml`. The untracked alternate `mac/` project and superseded untracked
+sync drafts were archived outside the repository in the evidence directory's
+`cleanup-archive/`. Existing localization, package-lock and prototype-runtime WIP
+was preserved in stash `ea328bdb42e678782405c9771c43d75cdacb0bc6`, not mixed into
+the implementation. The earlier overlapping document WIP remains in stash
+`e19ecbaa1e6fda5119b04d55fcc1ae89d6ac88c6`.
+
+All eight retained review comments were checked against their committed fixes,
+replied to with evidence and resolved. The publication/input-fence selection was
+rerun with:
+
+```sh
+swift test --package-path Packages/TranscriptCore --skip-update \
+  --filter 'AutomaticSyncPublicationReviewTests|AutomaticSyncProcessingInputTests'
+```
+
+Result: 12 Swift Testing tests in two suites passed, including parameterized
+delivery-order, branch-arbitration, explicit-clear, coverage, alternate-supplier
+and input-change cases. Evidence: `cleanup-review-regressions.log`. Existing
+`postcommit-mac.log` additionally records production advertisement/retry and
+worker audio-purge regressions. Physical acceptance remains blocked.
+
 Evidence directory:
 `/Users/tingzhen/.copilot/session-state/a4ab0df9-4371-44ee-be89-af180b56d832/files/`.
 Final commit/build receipts are recorded below after integration; earlier passes

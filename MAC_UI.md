@@ -1,5 +1,13 @@
 # Mac UI — 本地会议处理与知识库
 
+## 工程入口
+
+唯一维护的 Mac 客户端源码是 [MacApp](MacApp)，使用根目录
+[project.yml](project.yml) 生成的 `Transcript.xcodeproj` 中的 `TranscriptMac`
+scheme。测试位于 [MacAppTests](MacAppTests) 和 [MacAppUITests](MacAppUITests)。
+本地未跟踪的 `mac/` 独立草稿工程及旧同步 DTO 已移出工作区备份，不属于当前客户端。
+代理临时工作目录不属于产品源码，不再作为 Git submodule 条目跟踪。
+
 ## 2026-09-07：会议内处理与集中模型设置
 
 - 代码集成提交为 `256ee83145d74ad39096381d868baf2b879b1365`。独立最终代码 review 与本地回归通过；真机无 USB、真实声纹与完整原生交互门禁仍未通过，见 [逐项验收表](SYNC_ACCEPTANCE.md)，不能将以下实现说明当作功能可用声明。
