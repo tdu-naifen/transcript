@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Observation
+import TranscriptCore
 
 /// App presentation only. A long-lived service must publish verified snapshots and
 /// own discovery, pairing, durable outbox work, receipts, and cancellation requests.
@@ -10,6 +11,7 @@ final class MacConnectionModel {
     struct Device: Identifiable, Equatable, Sendable {
         let id: String
         let name: String
+        var meetingCopyProbeHint = false
     }
 
     struct Pairing: Equatable {
@@ -42,6 +44,9 @@ final class MacConnectionModel {
             case receivedDurably
             case processing
             case resultsSynced
+            case copied
+            case stoppedLocally
+            case copyFailed(MeetingCopyProblem)
             case failed(reason: String)
         }
 
@@ -57,11 +62,17 @@ final class MacConnectionModel {
         let meetingTitle: String
         var phase: Phase
         var cancellation: Cancellation = .none
+        var failurePersistenceFailed = false
+
+        var canRetry: Bool {
+            if case .copyFailed(let problem) = phase { return problem.canRetry }
+            return phase == .awaitingReconnect || phase == .stoppedLocally
+        }
 
         var isFinished: Bool {
             if cancellation == .acknowledged { return true }
             switch phase {
-            case .resultsSynced, .failed: return true
+            case .resultsSynced, .failed, .copied, .stoppedLocally: return true
             default: return false
             }
         }
@@ -75,6 +86,9 @@ final class MacConnectionModel {
             case .receivedDurably: return "Mac received and saved the task"
             case .processing: return "Processing on Mac"
             case .resultsSynced: return "Results synced"
+            case .copied: return "Immutable copy saved on Mac"
+            case .stoppedLocally: return "Stopped on iPhone · Mac may retain a copy"
+            case .copyFailed(let problem): return problem.statusKey
             case .failed: return "Mac task failed"
             }
         }
@@ -101,13 +115,14 @@ final class MacConnectionModel {
     private(set) var localNetworkDenied = false
     private(set) var discoveryTimedOut = false
     private(set) var trustedDevice: Device?
-    /// Pairing v1 has no application-data messages or transfer negotiation.
-    let supportsMeetingTransfer = false
+    private(set) var supportsMeetingTransfer = false
     @ObservationIgnored private var onAction: ActionHandler?
     @ObservationIgnored private let discovery: (any MacDiscovering)?
     @ObservationIgnored private var discoveryTimeout: Task<Void, Never>?
     @ObservationIgnored private var pairingClient: IOSMacPairingClient?
     @ObservationIgnored private var lastEndpoint: NWEndpoint?
+    @ObservationIgnored private var lastProbeHint = false
+    @ObservationIgnored private var sender: MeetingCopySender?
     @ObservationIgnored private var selectedCandidate: Device?
     @ObservationIgnored private var actionGeneration = UUID()
 
@@ -124,15 +139,77 @@ final class MacConnectionModel {
             let client = try suppliedClient ?? Self.makePairingClient()
             pairingClient = client
             client.onUpdate = { [weak self] state in self?.applyPairing(state) }
+            client.onTransferReadiness = { [weak self] ready in self?.supportsMeetingTransfer = ready }
             onAction = { [weak self] action in
                 guard let self else { throw CancellationError() }
-                try self.handlePairingAction(action)
+                switch action {
+                case .retryTask(let id):
+                    guard let sender = self.sender else { throw PairingActionError.transferUnavailable }
+                    do { try await sender.retry(id: id) }
+                    catch { throw MeetingCopyProblem(error) }
+                case .requestCancellation(let id):
+                    guard let sender = self.sender else { throw PairingActionError.transferUnavailable }
+                    do { try await sender.cancel(id: id) }
+                    catch { throw MeetingCopyProblem(error) }
+                default:
+                    try self.handlePairingAction(action)
+                }
             }
+
             try client.restoreTrust()
             trustedDevice = client.pairedPeer.map(Self.device)
             connection = trustedDevice.map(Connection.offline) ?? .unpaired
         } catch {
             connection = .failed(reason: Self.text(error.localizedDescription))
+        }
+    }
+
+    func enableMeetingCopies(database: AppDatabase, store: AudioFileStore, using suppliedSender: MeetingCopySender? = nil) async {
+        guard sender == nil, let pairingClient else { return }
+        let sender = suppliedSender ?? MeetingCopySender(client: pairingClient, database: database, store: store)
+        self.sender = sender
+        sender.onChange = { [weak self] in Task { await self?.refreshCopyJobs() } }
+        await refreshCopyJobs()
+    }
+
+    func sendMeetingCopy(meetingID: String) async throws {
+        guard let sender else { throw PairingActionError.transferUnavailable }
+        do { try await sender.enqueue(meetingID: meetingID) }
+        catch { throw MeetingCopyProblem(error) }
+        await refreshCopyJobs()
+    }
+
+    func refreshCopyJobs() async {
+        guard let sender else { return }
+        do {
+            let entries = try await sender.summaries()
+            jobs = entries.map { entry in
+                let manifest = try? MeetingCopyWire.decodeManifest(entry.manifest)
+                let phase: Job.Phase
+                switch entry.state {
+                case "done": phase = .copied
+                case "cancelled": phase = .stoppedLocally
+                case "stale": phase = .failed(reason: Self.text("The meeting changed after export. This frozen copy cannot be sent."))
+                default:
+                    if sender.sendingID == entry.id {
+                        phase = .sending
+                    } else if let problem = sender.unpersistedFailures[entry.id] {
+                        phase = .copyFailed(problem)
+                    } else if let error = entry.error {
+                        phase = .copyFailed(.init(stored: error))
+                    } else {
+                        phase = .awaitingReconnect
+                    }
+                }
+                return Job(id: entry.id, meetingID: entry.meetingId,
+                           meetingTitle: manifest?.title ?? entry.meetingId, phase: phase,
+                           failurePersistenceFailed: sender.unpersistedFailures[entry.id] != nil)
+            }
+        } catch {
+            actionError = Self.text("Could not read the saved meeting-copy queue.")
+            if !sender.unpersistedFailures.isEmpty {
+                actionError = Self.text(MeetingCopyProblem.persistenceMessageKey)
+            }
         }
     }
 
@@ -158,8 +235,9 @@ final class MacConnectionModel {
             }
             selectedCandidate = candidate
             lastEndpoint = endpoint
+            lastProbeHint = candidate.meetingCopyProbeHint
             stopDiscovery()
-            client.connect(to: endpoint)
+            client.connect(to: endpoint, allowMeetingCopyProbe: lastProbeHint)
         case .confirmPairing:
             client.approve()
         case .cancelPairing:
@@ -167,7 +245,7 @@ final class MacConnectionModel {
             client.disconnect()
         case .retryConnection:
             if let lastEndpoint {
-                client.connect(to: lastEndpoint)
+                client.connect(to: lastEndpoint, allowMeetingCopyProbe: lastProbeHint)
             } else {
                 startDiscovery()
             }
@@ -176,6 +254,7 @@ final class MacConnectionModel {
             trustedDevice = client.pairedPeer.map(Self.device)
             selectedCandidate = nil
             lastEndpoint = nil
+            lastProbeHint = false
         case .discover:
             startDiscovery()
         case .retryTask, .requestCancellation:
@@ -269,6 +348,12 @@ final class MacConnectionModel {
         case .connecting:
             return Self.text("Verifying the Mac's identity and connection.")
         case .connected(_, let modelReady):
+            if supportsMeetingTransfer {
+                return Self.text("Ready to receive an immutable meeting copy. Processing and result sync are not included.")
+            }
+            if pairingClient?.canProbeMeetingTransfer == true {
+                return Self.text("Securely paired. Send checks compatibility before sharing meeting data.")
+            }
             guard supportsMeetingTransfer else {
                 return Self.text("Securely paired. Meeting transfer is not available in this version.")
             }
@@ -283,8 +368,8 @@ final class MacConnectionModel {
 
     func submissionBlockReason(meetingID: String) -> String? {
         guard isConnected else { return explanation }
-        guard supportsMeetingTransfer else {
-            return Self.text("This connection supports pairing only. Meeting transfer is not available yet.")
+        guard supportsMeetingTransfer || pairingClient?.canProbeMeetingTransfer == true else {
+            return Self.text("Update Transcript on the Mac to receive meeting copies, then discover and reconnect.")
         }
         guard !jobs.contains(where: { $0.meetingID == meetingID && !$0.isFinished }) else {
             return Self.text("This meeting already has an active Mac task.")
@@ -360,6 +445,8 @@ final class MacConnectionModel {
     }
 
     static func text(_ key: String) -> String {
+        let copyText = LocalizationManager.shared.text(key, table: "MeetingCopy")
+        if copyText != key { return copyText }
         let pairingText = LocalizationManager.shared.text(key, table: "MacPairing")
         if pairingText != key { return pairingText }
         let discoveryText = LocalizationManager.shared.text(key, table: "AppleSpeech")

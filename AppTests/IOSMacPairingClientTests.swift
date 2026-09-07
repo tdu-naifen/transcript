@@ -498,7 +498,7 @@ final class IOSMacPairingClientTests: XCTestCase {
 }
 
 @MainActor
-private extension IOSMacPairingClient {
+extension IOSMacPairingClient {
     var isFailed: Bool {
         if case .failed = state { return true }
         return false
@@ -513,7 +513,7 @@ private extension IOSMacPairingClient {
     }
 }
 
-private enum PairingTestError: Error { case timeout, storage, unexpectedMessage }
+enum PairingTestError: Error { case timeout, storage, unexpectedMessage }
 
 @MainActor
 private final class PairingDiscoveryProbe: MacDiscovering {
@@ -534,7 +534,7 @@ private final class PairingDiscoveryProbe: MacDiscovering {
 }
 
 @MainActor
-private func pairingEventually(_ condition: () -> Bool) async throws {
+func pairingEventually(_ condition: () -> Bool) async throws {
     let deadline = ContinuousClock.now.advanced(by: .seconds(3))
     while !condition() {
         guard ContinuousClock.now < deadline else { throw PairingTestError.timeout }
@@ -543,7 +543,7 @@ private func pairingEventually(_ condition: () -> Bool) async throws {
 }
 
 @MainActor
-private final class PairingStoreProbe: MacPairingIdentityStoring {
+final class PairingStoreProbe: MacPairingIdentityStoring {
     let key = Curve25519.Signing.PrivateKey()
     var saved: [MacPairedDevice] = []
     var saveCalls = 0
@@ -579,7 +579,7 @@ private final class PairingStoreProbe: MacPairingIdentityStoring {
 }
 
 @MainActor
-private final class PairingTCPFixture {
+final class PairingTCPFixture {
     let identity = Curve25519.Signing.PrivateKey()
     private let listener: NWListener
     private let script: @MainActor (PairingTestPeer) async throws -> Void
@@ -592,7 +592,9 @@ private final class PairingTCPFixture {
 
     init(script: @escaping @MainActor (PairingTestPeer) async throws -> Void) throws {
         self.script = script
-        listener = try NWListener(using: .tcp, on: .any)
+        let parameters = NWParameters.tcp
+        parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)
+        listener = try NWListener(using: parameters)
         listener.stateUpdateHandler = { [weak self] state in
             Task { @MainActor [weak self] in
                 switch state {
@@ -643,7 +645,7 @@ private final class PairingTCPFixture {
 }
 
 @MainActor
-private final class PairingTestPeer {
+final class PairingTestPeer {
     enum Proof { case valid, invalidSignature, earlyReady }
     enum HelloMutation { case none, controlName, trailingByte, wrongMode, wrongRole, wrongCommitment }
     enum SealedMutation { case counter, nonce, mode, unknownMessage, unexpectedValue }

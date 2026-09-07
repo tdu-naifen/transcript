@@ -1,0 +1,190 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Mac storage unavailable" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 存储不可用" } } } },
+    "Mac is busy" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 正忙" } } } },
+    "Copy connection interrupted" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "副本传输连接已中断" } } } },
+    "iPhone storage unavailable" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "iPhone 存储不可用" } } } },
+    "Meeting is still processing" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "会议仍在处理中" } } } },
+    "Copy could not be verified" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法验证副本" } } } },
+    "Meeting copy needs attention" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "会议副本需要处理" } } } },
+    "The Mac could not save the copy. Free space or resolve storage access on the Mac, then reconnect and retry." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 无法保存副本。请释放 Mac 存储空间或修复存储访问权限，然后重新连接并重试。" } } } },
+    "The Mac is busy. Wait for its current work to finish, then reconnect and retry." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "Mac 正忙。请等待当前任务完成，然后重新连接并重试。" } } } },
+    "The connection was interrupted before the copy was confirmed. Reconnect to your Mac and retry the saved copy." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "副本确认前连接已中断。请重新连接 Mac，并重试已保存的副本。" } } } },
+    "The iPhone could not save meeting-copy state. Check available storage, then retry. Delivery is not confirmed." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "iPhone 无法保存会议副本状态。请检查可用存储空间后重试。尚未确认送达。" } } } },
+    "This meeting is still being processed on iPhone. Wait for transcription and speaker analysis to finish, then send the copy." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此会议仍在 iPhone 上处理中。请等待转录和说话人分析完成后再发送副本。" } } } },
+    "The copy could not be verified. Check the recording and update Transcript on both devices before trying again." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "无法验证副本。请检查录音并更新两台设备上的 Transcript 后再试。" } } } },
+    "The saved copy queue is full. No existing copy or receipt was removed." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已保存的副本队列已满。未移除任何现有副本或回执。" } } } },
+    "This meeting already has a saved copy for this Mac. Review its status instead of creating another copy." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "此会议已有发送到该 Mac 的已保存副本。请查看其状态，不要创建另一个副本。" } } } },
+    "The original recording is unavailable for copying. Check that it is still saved on this iPhone." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "原始录音无法用于复制。请确认录音仍保存在此 iPhone 上。" } } } },
+    "Another meeting copy is being prepared or sent. Wait for it to finish." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "另一个会议副本正在准备或发送中。请等待其完成。" } } } },
+    "The meeting copy failed for an unknown reason. Review both devices before retrying; delivery is not confirmed." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "会议副本因未知原因失败。请检查两台设备后再重试；尚未确认送达。" } } } },
+    "The iPhone could not save the transfer error. This status may be lost after closing the app. Check storage before retrying; the Mac may retain a copy." : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "iPhone 无法保存传输错误。关闭应用后此状态可能丢失。请检查存储空间后再重试；Mac 可能仍保留副本。" } } } },
+    "The Mac already has this meeting or its deletion record. Nothing was overwritten." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Mac 已有此会议或其删除记录。未覆盖任何内容。"
+          }
+        }
+      }
+    },
+    "Checking and saving copy…" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在检查并保存副本…"
+          }
+        }
+      }
+    },
+    "Could not read the saved meeting-copy queue." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法读取已保存的会议副本队列。"
+          }
+        }
+      }
+    },
+    "Immutable copy saved on Mac" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "不可变副本已保存在 Mac 上"
+          }
+        }
+      }
+    },
+    "Keep Transcript open while sending. Interrupted copies stay queued for explicit retry." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送时请保持 Transcript 打开。中断的副本会保留在队列中，等待你手动重试。"
+          }
+        }
+      }
+    },
+    "Meeting copy was not confirmed. Update Transcript on the Mac if needed, then reconnect and retry. Your saved Mac identity is unchanged." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "会议副本尚未确认。必要时请更新 Mac 上的 Transcript，然后重新连接并重试。已保存的 Mac 身份保持不变。"
+          }
+        }
+      }
+    },
+    "Ready to receive an immutable meeting copy. Processing and result sync are not included." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "可以接收不可变会议副本。不包含处理或结果同步。"
+          }
+        }
+      }
+    },
+    "Securely paired. Send checks compatibility before sharing meeting data." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已安全配对。发送前会先检查兼容性，之后才会共享会议数据。"
+          }
+        }
+      }
+    },
+    "Send a copy to Mac" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送副本到 Mac"
+          }
+        }
+      }
+    },
+    "Send copy" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "发送副本"
+          }
+        }
+      }
+    },
+    "Send sealed audio and the current transcript as a new immutable meeting copy. No overwrite, processing, or result sync is included." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "将已封存的音频和当前转录发送为新的不可变会议副本。不覆盖已有会议，也不包含处理或结果同步。"
+          }
+        }
+      }
+    },
+    "Stop sending on iPhone" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "在 iPhone 上停止发送"
+          }
+        }
+      }
+    },
+    "Stopped on iPhone · Mac may retain a copy" : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已在 iPhone 上停止 · Mac 可能仍保留副本"
+          }
+        }
+      }
+    },
+    "The meeting changed after export. This frozen copy cannot be sent." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "导出后会议已更改。无法发送此已冻结的副本。"
+          }
+        }
+      }
+    },
+    "Update Transcript on the Mac to receive meeting copies, then discover and reconnect." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "请更新 Mac 上的 Transcript 以接收会议副本，然后重新查找并连接。"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

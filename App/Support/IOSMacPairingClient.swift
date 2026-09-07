@@ -35,6 +35,7 @@ final class IOSMacPairingClient {
 
     @MainActor
     private final class Session {
+        let id = UUID()
         let transport: MacPairingTransport
         let expectedPeer: MacPairedDevice?
         var cipher: MacPairingCipher?
@@ -48,18 +49,28 @@ final class IOSMacPairingClient {
         var deadline: Task<Void, Never>?
         var heartbeat: Task<Void, Never>?
         var sendTail: Task<Void, any Error>?
+        var probeAllowed = false
+        var transferAccepted = false
+        var pendingRequest: MeetingCopyWire.Message?
+        var reply: CheckedContinuation<MeetingCopyWire.Message, any Error>?
+        var requestDeadline: Task<Void, Never>?
 
         init(transport: MacPairingTransport, expectedPeer: MacPairedDevice?) {
             self.transport = transport
             self.expectedPeer = expectedPeer
         }
 
-        func cancel() {
+        func cancel(transferError: MeetingCopyProblem) {
             transport.cancel()
             reader?.cancel()
             deadline?.cancel()
             heartbeat?.cancel()
             sendTail?.cancel()
+            requestDeadline?.cancel()
+            let reply = reply
+            self.reply = nil
+            pendingRequest = nil
+            reply?.resume(throwing: transferError)
         }
     }
 
@@ -70,6 +81,10 @@ final class IOSMacPairingClient {
     private(set) var pairedPeer: MacPairedDevice?
     private(set) var state: State = .idle
     var onUpdate: ((State) -> Void)?
+    var onTransferReadiness: ((Bool) -> Void)?
+    var supportsMeetingTransfer: Bool { session?.transferAccepted == true }
+    var transferSessionID: UUID? { supportsMeetingTransfer ? session?.id : nil }
+    var canProbeMeetingTransfer: Bool { session?.connected == true && session?.probeAllowed == true }
 
     init(store: any MacPairingIdentityStoring, name: String = "iPhone", timeouts: Timeouts = .init()) {
         self.store = store
@@ -87,7 +102,7 @@ final class IOSMacPairingClient {
         }
     }
 
-    func connect(to endpoint: NWEndpoint) {
+    func connect(to endpoint: NWEndpoint, allowMeetingCopyProbe: Bool = false) {
         stopSession()
         do {
             pairedPeer = try storedPeer()
@@ -104,6 +119,7 @@ final class IOSMacPairingClient {
                 expectedPeer: pairedPeer
             )
             session = next
+            next.probeAllowed = allowMeetingCopyProbe
             next.transport.start()
             armDeadline(timeouts.initial, for: next)
             next.reader = Task { [weak self, weak next] in
@@ -133,6 +149,46 @@ final class IOSMacPairingClient {
     func disconnect() {
         stopSession()
         publish(.disconnected(pairedPeer))
+    }
+
+    /// Called only by explicit Send/Retry. The untrusted endpoint hint merely permits
+    /// this metadata-free probe; an authenticated response is the authorization gate.
+    func negotiateMeetingCopy() async throws {
+        guard canProbeMeetingTransfer else { throw MeetingCopyWire.Failure.incompatible }
+        if supportsMeetingTransfer { return }
+        var offer = MeetingCopyWire.Message(.capabilities)
+        offer.capability = MeetingCopyWire.capability
+        _ = try await exchange(offer)
+        guard supportsMeetingTransfer else { throw MeetingCopyWire.Failure.incompatible }
+    }
+
+    func exchange(_ request: MeetingCopyWire.Message) async throws -> MeetingCopyWire.Message {
+        guard let current = session, current.connected,
+              request.type == .capabilities ? current.probeAllowed : current.transferAccepted else {
+            throw MeetingCopyWire.Failure.incompatible
+        }
+        guard current.reply == nil else { throw MeetingCopyWire.Failure.busy }
+        let inner = try MeetingCopyWire.inner(request)
+        return try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                current.pendingRequest = request
+                current.reply = continuation
+                do {
+                    _ = try enqueue(inner, on: current)
+                    current.requestDeadline = Task { [weak self, weak current] in
+                        do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                        guard let self, let current else { return }
+                        self.fail(MacPairingError.timedOut, session: current)
+                    }
+                } catch { fail(error, session: current) }
+            }
+        } onCancel: {
+            Task { @MainActor [weak self, weak current] in
+                guard let self, let current, self.session === current else { return }
+                self.disconnect()
+            }
+        }
     }
 
     func unpair() throws {
@@ -253,16 +309,51 @@ final class IOSMacPairingClient {
         try requireCurrent(current)
         while true {
             let message = try await receive(on: current)
-            guard message.type == "pong", message.value == nil, current.awaitingPong else {
+            if message.type == MeetingCopyWire.innerType {
+                try handleTransferReply(message, on: current)
+            } else if message.type == "pong", message.value == nil, current.awaitingPong {
+                current.awaitingPong = false
+            } else {
                 throw MacPairingError.invalidMessage
             }
-            current.awaitingPong = false
             armDeadline(timeouts.idle, for: current)
         }
     }
 
+    private func handleTransferReply(_ inner: MacPairingMessage, on current: Session) throws {
+        let reply = try MeetingCopyWire.message(inner)
+        guard let request = current.pendingRequest, let continuation = current.reply,
+              reply.requestID == request.requestID, reply.operation == request.operation else {
+            throw MacPairingError.invalidMessage
+        }
+        let allowed: Set<MeetingCopyWire.Kind>
+        switch request.type {
+        case .capabilities: allowed = [.accepted]
+        case .offer: allowed = [.status, .committed, .failed]
+        case .chunk: allowed = [.ack, .failed]
+        case .finalize: allowed = [.committed, .failed]
+        default: throw MacPairingError.invalidMessage
+        }
+        guard allowed.contains(reply.type) else { throw MacPairingError.invalidMessage }
+        if request.type == .capabilities {
+            current.transferAccepted = true
+            onTransferReadiness?(true)
+        }
+        current.requestDeadline?.cancel()
+        current.requestDeadline = nil
+        current.pendingRequest = nil
+        current.reply = nil
+        continuation.resume(returning: reply)
+    }
+
     private func receive(on current: Session) async throws -> MacPairingMessage {
-        let frame = try await current.transport.receive()
+        let frame: MacPairingFrame
+        do { frame = try await current.transport.receive() }
+        catch {
+            // Frozen v1 transport reports EOF as invalidMessage as well. Failure to
+            // read a frame is not a receiver rejection of the offered meeting.
+            throw MeetingCopyProblem(code: .network)
+        }
         try requireCurrent(current)
         guard frame.mode == nil, frame.counter != nil else { throw MacPairingError.invalidMessage }
         _ = try bytes(frame, type: "sealed")
@@ -282,6 +373,9 @@ final class IOSMacPairingClient {
         try requireCurrent(current)
         guard var cipher = current.cipher else { throw MacPairingError.invalidMessage }
         let frame = try cipher.seal(message)
+        guard try JSONEncoder().encode(frame).count <= MacPairingTransport.maximumFrameSize else {
+            throw MeetingCopyWire.Failure.invalid
+        }
         current.cipher = cipher
         let previous = current.sendTail
         let task = Task { [weak self, weak current] in
@@ -339,10 +433,11 @@ final class IOSMacPairingClient {
         guard session === current, !Task.isCancelled else { throw CancellationError() }
     }
 
-    private func stopSession() {
+    private func stopSession(transferError: MeetingCopyProblem = .init(code: .network)) {
         let previous = session
         session = nil
-        previous?.cancel()
+        previous?.cancel(transferError: transferError)
+        onTransferReadiness?(false)
     }
 
     private func fail(_ error: any Error, session current: Session) {
@@ -351,14 +446,16 @@ final class IOSMacPairingClient {
         let rejected: Bool
         if case .rejected? = error as? MacPairingError { rejected = true }
         else { rejected = false }
-        if !current.connected && (current.serverReady || (current.approvedLocally && !rejected)) {
+        if current.connected && current.pendingRequest != nil {
+            text = "Meeting copy was not confirmed. Update Transcript on the Mac if needed, then reconnect and retry. Your saved Mac identity is unchanged."
+        } else if !current.connected && (current.serverReady || (current.approvedLocally && !rejected)) {
             text = "Pairing did not finish on both devices. Unpair on both devices and explicitly pair again."
         } else if current.expectedPeer != nil {
             text = "The trusted Mac could not reconnect. Check that it is online and still trusts this iPhone. If trust was removed, unpair on both devices and explicitly pair again."
         } else {
             text = message(for: error)
         }
-        stopSession()
+        stopSession(transferError: MeetingCopyProblem(error))
         publish(.failed(message: text))
     }
 

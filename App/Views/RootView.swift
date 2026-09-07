@@ -160,7 +160,10 @@ private struct ReadyView: View {
             }
         }
         .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.8), value: isRecordingExpanded)
-        .task { macConnection.enablePairing() }
+        .task {
+            macConnection.enablePairing()
+            await macConnection.enableMeetingCopies(database: services.database, store: services.store)
+        }
         .task { await recorder.onAppear() }
         .onChange(of: scenePhase, initial: true) { _, phase in
             services.speakerAnalysis.setActive(phase == .active)

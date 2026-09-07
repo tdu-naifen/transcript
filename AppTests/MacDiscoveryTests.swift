@@ -104,8 +104,8 @@ final class MacDiscoveryTests: XCTestCase {
             XCTAssertEqual(
                 reason,
                 language == .en
-                    ? "This connection supports pairing only. Meeting transfer is not available yet."
-                    : "此连接仅支持配对，目前尚不支持传输会议。"
+                    ? "Update Transcript on the Mac to receive meeting copies, then discover and reconnect."
+                    : "请更新 Mac 上的 Transcript 以接收会议副本，然后重新查找并连接。"
             )
         }
     }

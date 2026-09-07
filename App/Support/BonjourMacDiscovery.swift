@@ -55,7 +55,8 @@ final class BonjourMacDiscovery: MacDiscovering {
                 guard case .service(let name, let type, let domain, let interface) = result.endpoint else { return nil }
                 let device = MacConnectionModel.Device(
                     id: "\(name).\(type).\(domain)@\(interface?.name ?? "")",
-                    name: name
+                    name: name,
+                    meetingCopyProbeHint: Self.meetingCopyHint(result.metadata)
                 )
                 return (device, result.endpoint)
             }
@@ -78,4 +79,10 @@ final class BonjourMacDiscovery: MacDiscovering {
     }
 
     func endpoint(for deviceID: String) -> NWEndpoint? { endpoints[deviceID] }
+
+    nonisolated private static func meetingCopyHint(_ metadata: NWBrowser.Result.Metadata) -> Bool {
+        guard case .bonjour(let record) = metadata else { return false }
+        // A spoofable discovery hint, never capability acceptance or an identity.
+        return record["meeting-copy"] == "2"
+    }
 }

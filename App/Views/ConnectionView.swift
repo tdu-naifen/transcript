@@ -244,6 +244,17 @@ struct MacTaskStatusView: View {
                             .font(.footnote)
                             .foregroundStyle(.red)
                     }
+                    if case .copyFailed(let problem) = job.phase {
+                        Text(MacConnectionModel.text(problem.messageKey))
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                    }
+                    if job.failurePersistenceFailed {
+                        Text(MacConnectionModel.text(MeetingCopyProblem.persistenceMessageKey))
+                            .font(.footnote)
+                            .foregroundStyle(.red)
+                            .accessibilityIdentifier("macCopyErrorNotSaved_\(job.id)")
+                    }
                     if job.cancellation == .requested {
                         Text("Cancellation requested · Waiting for Mac confirmation")
                             .font(.footnote)
@@ -253,12 +264,12 @@ struct MacTaskStatusView: View {
                     }
                     HStack {
                         if !job.isFinished && job.cancellation == .none {
-                            Button("Request cancellation", role: .destructive) {
+                            Button(MacConnectionModel.text("Stop sending on iPhone"), role: .destructive) {
                                 Task { await model.perform(.requestCancellation(job.id)) }
                             }
                             .accessibilityIdentifier("macCancelTask_\(job.id)")
                         }
-                        if job.phase == .awaitingReconnect && job.cancellation == .none {
+                        if job.canRetry && job.cancellation == .none {
                             Button("Retry sending") {
                                 Task { await model.perform(.retryTask(job.id)) }
                             }

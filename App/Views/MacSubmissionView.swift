@@ -57,7 +57,7 @@ struct MacSubmissionView: View {
                         .accessibilityHidden(true)
                     Text(MacConnectionModel.text(needsScrolling ? "Use Submit to confirm" : "Swipe up to Submit"))
                         .font(.headline)
-                    Text("Sending continues in the background after the task is saved on iPhone.")
+                    Text(MacConnectionModel.text("Keep Transcript open while sending. Interrupted copies stay queued for explicit retry."))
                         .font(.footnote)
                         .multilineTextAlignment(.center)
                 }
@@ -91,7 +91,7 @@ struct MacSubmissionView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 14) {
-                    Text("Process by Mac")
+                    Text(MacConnectionModel.text("Send a copy to Mac"))
                         .font(.title.bold())
                     Text(verbatim: meeting.title)
                         .font(.title2.weight(.semibold))
@@ -116,7 +116,7 @@ struct MacSubmissionView: View {
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Processing scope")
                             .font(.headline)
-                        Text("Transcribe the original recording, identify speakers, and sync results back to iPhone.")
+                        Text(MacConnectionModel.text("Send sealed audio and the current transcript as a new immutable meeting copy. No overwrite, processing, or result sync is included."))
                             .font(.subheadline)
                         Text("Your original recording stays unchanged.")
                             .font(.footnote)
@@ -147,7 +147,7 @@ struct MacSubmissionView: View {
             Button(action: submit) {
                 HStack {
                     if isEnqueueing { ProgressView().tint(.white) }
-                    Text(MacConnectionModel.text(isEnqueueing ? "Saving task on iPhone…" : "Submit"))
+                    Text(MacConnectionModel.text(isEnqueueing ? "Checking and saving copy…" : "Send copy"))
                 }
                 .frame(maxWidth: .infinity, minHeight: 44)
             }
@@ -203,7 +203,7 @@ struct MacSubmissionView: View {
             } catch {
                 isEnqueueing = false
                 submissionError = MacConnectionModel.text("Could not confirm that the task was saved. Check task status before trying again.")
-                    + "\n" + error.localizedDescription
+                    + "\n" + MacConnectionModel.text(error.localizedDescription)
             }
         }
     }

@@ -189,7 +189,9 @@ struct HomeView: View {
                 }
             }
             .fullScreenCover(item: $macSubmissionMeeting) { meeting in
-                MacSubmissionView(meeting: meeting, model: macConnection)
+                MacSubmissionView(meeting: meeting, model: macConnection) {
+                    try await macConnection.sendMeetingCopy(meetingID: meeting.id)
+                }
             }
             .refreshable {
                 await library.reload()

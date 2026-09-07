@@ -100,7 +100,9 @@ struct RecordingsListView: View {
             }
             .navigationTitle(LocalizationManager.shared.text("meetings.title"))
             .fullScreenCover(item: $macSubmissionMeeting) { meeting in
-                MacSubmissionView(meeting: meeting, model: macConnection)
+                MacSubmissionView(meeting: meeting, model: macConnection) {
+                    try await macConnection.sendMeetingCopy(meetingID: meeting.id)
+                }
             }
             .modifier(MeetingDeletionConfirmation(meeting: $pendingDeletion) { await model.delete($0) })
             .refreshable { await model.reload() }
