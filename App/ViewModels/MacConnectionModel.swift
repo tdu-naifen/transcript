@@ -107,6 +107,11 @@ final class MacConnectionModel {
 
     typealias ActionHandler = @MainActor (Action) async throws -> Void
 
+    struct RecoveryTiming {
+        var discoveryWindow: TimeInterval = 15
+        var backoff: [TimeInterval] = [0, 1, 3]
+    }
+
     var connection: Connection = .unavailable
     var devices: [Device] = []
     var jobs: [Job] = []
@@ -120,17 +125,25 @@ final class MacConnectionModel {
     @ObservationIgnored private let discovery: (any MacDiscovering)?
     @ObservationIgnored private var discoveryTimeout: Task<Void, Never>?
     @ObservationIgnored private var pairingClient: IOSMacPairingClient?
-    @ObservationIgnored private var lastEndpoint: NWEndpoint?
-    @ObservationIgnored private var lastProbeHint = false
     @ObservationIgnored private var sender: MeetingCopySender?
     @ObservationIgnored private var selectedCandidate: Device?
     @ObservationIgnored private var actionGeneration = UUID()
+    @ObservationIgnored private var operationTasks: [UUID: Task<Void, any Error>] = [:]
+    @ObservationIgnored private var persistentIntents: [(id: UUID, action: Action, task: Task<Void, Never>)] = []
+    @ObservationIgnored private var recoveryTask: Task<Void, Never>?
+    @ObservationIgnored private var recoveryGeneration = UUID()
+    @ObservationIgnored private var discoveryGeneration = UUID()
+    @ObservationIgnored private var browsing = false
+    @ObservationIgnored private var foreground = true
+    @ObservationIgnored private var didResume = false
+    @ObservationIgnored private var recoveryAllowed = true
+    @ObservationIgnored private let recoveryTiming: RecoveryTiming
 
-    init(discovery: (any MacDiscovering)? = nil, onAction: ActionHandler? = nil) {
+    init(discovery: (any MacDiscovering)? = nil, recoveryTiming: RecoveryTiming = .init(), onAction: ActionHandler? = nil) {
         self.onAction = onAction
         self.discovery = discovery
+        self.recoveryTiming = recoveryTiming
         if discovery != nil { connection = .unpaired }
-        discovery?.onUpdate = { [weak self] update in self?.applyDiscovery(update) }
     }
 
     func enablePairing(using suppliedClient: IOSMacPairingClient? = nil) {
@@ -159,6 +172,7 @@ final class MacConnectionModel {
             try client.restoreTrust()
             trustedDevice = client.pairedPeer.map(Self.device)
             connection = trustedDevice.map(Connection.offline) ?? .unpaired
+            if didResume { beginRecovery() }
         } catch {
             connection = .failed(reason: Self.text(error.localizedDescription))
         }
@@ -173,8 +187,21 @@ final class MacConnectionModel {
     }
 
     func sendMeetingCopy(meetingID: String) async throws {
-        guard let sender else { throw PairingActionError.transferUnavailable }
-        do { try await sender.enqueue(meetingID: meetingID) }
+        guard foreground, persistentIntents.isEmpty, isConnected, let sender else { throw PairingActionError.transferUnavailable }
+        let id = UUID()
+        let task = Task {
+            try Task.checkCancellation()
+            try await sender.enqueue(meetingID: meetingID)
+        }
+        operationTasks[id] = task
+        defer { operationTasks[id] = nil }
+        do {
+            try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
+        }
         catch { throw MeetingCopyProblem(error) }
         await refreshCopyJobs()
     }
@@ -229,32 +256,36 @@ final class MacConnectionModel {
         guard let client = pairingClient else { throw PairingActionError.unavailable }
         switch action {
         case .selectDevice(let id):
+            cancelRecovery()
+            recoveryAllowed = true
             guard let endpoint = discovery?.endpoint(for: id),
                   let candidate = devices.first(where: { $0.id == id }) else {
                 throw PairingActionError.candidateUnavailable
             }
             selectedCandidate = candidate
-            lastEndpoint = endpoint
-            lastProbeHint = candidate.meetingCopyProbeHint
-            stopDiscovery()
-            client.connect(to: endpoint, allowMeetingCopyProbe: lastProbeHint)
+            client.connect(to: endpoint, allowMeetingCopyProbe: candidate.meetingCopyProbeHint, requiredPeer: client.pairedPeer)
         case .confirmPairing:
             client.approve()
         case .cancelPairing:
-            stopDiscovery()
+            recoveryAllowed = false
+            cancelRecovery()
+            stopBrowsing()
             client.disconnect()
         case .retryConnection:
-            if let lastEndpoint {
-                client.connect(to: lastEndpoint, allowMeetingCopyProbe: lastProbeHint)
-            } else {
-                startDiscovery()
-            }
+            cancelRecovery()
+            recoveryAllowed = true
+            localNetworkDenied = false
+            stopBrowsing()
+            client.disconnect()
+            if trustedDevice != nil { beginRecovery() }
+            else { startDiscovery() }
         case .unpair:
+            recoveryAllowed = false
+            cancelRecovery()
+            stopBrowsing()
             try client.unpair()
             trustedDevice = client.pairedPeer.map(Self.device)
             selectedCandidate = nil
-            lastEndpoint = nil
-            lastProbeHint = false
         case .discover:
             startDiscovery()
         case .retryTask, .requestCancellation:
@@ -280,6 +311,7 @@ final class MacConnectionModel {
             connection = peer.map { .offline(Self.device($0)) } ?? .unpaired
         case .failed(let message):
             connection = .failed(reason: Self.text(message))
+            beginRecovery()
         }
     }
 
@@ -288,7 +320,12 @@ final class MacConnectionModel {
     }
 
     func endConnectionPresentation() {
-        stopDiscovery()
+        // An authenticated transport belongs to the app, not the connection sheet.
+        guard !isConnected else { return }
+        recoveryAllowed = false
+        cancelRecovery()
+        cancelAction()
+        stopBrowsing()
         switch connection {
         case .pairing, .connecting:
             pairingClient?.disconnect()
@@ -298,8 +335,103 @@ final class MacConnectionModel {
     }
 
     func suspendConnection() {
-        stopDiscovery()
+        foreground = false
+        didResume = false
+        cancelRecovery()
+        cancelAction()
+        stopBrowsing()
+        selectedCandidate = nil
+        devices = []
+        supportsMeetingTransfer = false
         pairingClient?.disconnect()
+        connection = trustedDevice.map(Connection.offline) ?? (pairingClient == nil ? .unavailable : .unpaired)
+    }
+
+    func resumeConnection() {
+        guard !didResume else { return }
+        didResume = true
+        foreground = true
+        recoveryAllowed = true
+        localNetworkDenied = false
+        beginRecovery()
+    }
+
+    private func cancelAction() {
+        actionGeneration = UUID()
+        operationTasks.values.forEach { $0.cancel() }
+        pendingAction = persistentIntents.first?.action
+    }
+
+    private func cancelRecovery() {
+        recoveryGeneration = UUID()
+        recoveryTask?.cancel()
+        recoveryTask = nil
+    }
+
+    private func beginRecovery() {
+        guard foreground, recoveryAllowed, !localNetworkDenied, trustedDevice != nil,
+              let client = pairingClient, let pin = client.pairedPeer,
+              discovery != nil, recoveryTask == nil, !isConnected else { return }
+        let generation = UUID()
+        recoveryGeneration = generation
+        recoveryTask = Task { [weak self] in
+            guard let self else { return }
+            var lastFailure: String?
+            defer {
+                if self.recoveryGeneration == generation { self.recoveryTask = nil }
+            }
+            do {
+                // Existing sends own asynchronous export/receipt cleanup. Let them
+                // retire before exposing a new session to any old continuation.
+                let drainDeadline = ContinuousClock.now.advanced(by: .seconds(self.recoveryTiming.discoveryWindow))
+                while !self.operationTasks.isEmpty || !self.persistentIntents.isEmpty || self.sender?.sendingID != nil {
+                    try await Task.sleep(for: .milliseconds(50))
+                    try Task.checkCancellation()
+                    guard ContinuousClock.now < drainDeadline else { return }
+                }
+                for delay in self.recoveryTiming.backoff {
+                    try await Task.sleep(for: .seconds(delay))
+                    try Task.checkCancellation()
+                    guard self.recoveryGeneration == generation, self.foreground else { return }
+                    self.startDiscovery(clearActionError: false)
+                    let deadline = ContinuousClock.now.advanced(by: .seconds(self.recoveryTiming.discoveryWindow))
+                    var attempted = Set<String>()
+                    while ContinuousClock.now < deadline {
+                        try Task.checkCancellation()
+                        guard self.recoveryGeneration == generation, self.foreground else { return }
+                        if self.isConnected { return }
+                        if self.localNetworkDenied { return }
+                        if case .failed(let reason) = self.connection { lastFailure = reason }
+                        if case .connecting = client.state {
+                            try await Task.sleep(for: .milliseconds(50))
+                            continue
+                        }
+                        // Labels only prioritize candidates. Every connection uses the
+                        // retained cryptographic pin; none can enter first-time pairing.
+                        let candidates = self.devices.sorted {
+                            let left = $0.name == self.trustedDevice?.name
+                            let right = $1.name == self.trustedDevice?.name
+                            return left == right ? $0.id < $1.id : left
+                        }
+                        if attempted.count < 4,
+                           let candidate = candidates.first(where: { !attempted.contains($0.id) }),
+                           let endpoint = self.discovery?.endpoint(for: candidate.id) {
+                            attempted.insert(candidate.id)
+                            self.selectedCandidate = candidate
+                            client.connect(to: endpoint, allowMeetingCopyProbe: candidate.meetingCopyProbeHint, requiredPeer: pin)
+                        }
+                        try await Task.sleep(for: .milliseconds(50))
+                    }
+                    self.stopBrowsing()
+                    client.disconnect()
+                }
+                self.discoveryTimedOut = true
+                if let lastFailure { self.connection = .failed(reason: lastFailure) }
+                else { self.connection = self.trustedDevice.map(Connection.offline) ?? .unpaired }
+            } catch {
+                // The cancelling lifecycle/action owns subsequent presentation.
+            }
+        }
     }
 
     var canDiscover: Bool { discovery != nil || onAction != nil }
@@ -355,7 +487,7 @@ final class MacConnectionModel {
                 return Self.text("Securely paired. Send checks compatibility before sharing meeting data.")
             }
             guard supportsMeetingTransfer else {
-                return Self.text("Securely paired. Meeting transfer is not available in this version.")
+                return Self.text("Securely paired. Receiving availability has not been confirmed. Check receiving on the Mac, then discover and reconnect.")
             }
             switch modelReady {
             case true: return Self.text("Mac connected · Processing model ready")
@@ -369,7 +501,7 @@ final class MacConnectionModel {
     func submissionBlockReason(meetingID: String) -> String? {
         guard isConnected else { return explanation }
         guard supportsMeetingTransfer || pairingClient?.canProbeMeetingTransfer == true else {
-            return Self.text("Update Transcript on the Mac to receive meeting copies, then discover and reconnect.")
+            return Self.text("Receiving is not advertised. It may be turned off on the Mac, the Mac version may be older, or discovery may be stale. Check receiving, then discover and reconnect; update the Mac if needed.")
         }
         guard !jobs.contains(where: { $0.meetingID == meetingID && !$0.isFinished }) else {
             return Self.text("This meeting already has an active Mac task.")
@@ -380,12 +512,28 @@ final class MacConnectionModel {
     /// Does not invent connection changes, task receipts, or cancellation acks.
     /// The adapter must publish authoritative state; returning alone is not an ack.
     func perform(_ action: Action) async {
-        if action == .cancelPairing {
-            actionGeneration = UUID()
-            pendingAction = nil
+        switch action {
+        case .unpair, .requestCancellation:
+            await performPersistentIntent(action)
+            return
+        default: break
         }
+        if action == .cancelPairing {
+            cancelAction()
+            recoveryAllowed = false
+            cancelRecovery()
+            stopBrowsing()
+            pairingClient?.disconnect()
+        }
+        guard foreground else { return }
         guard pendingAction == nil else { return }
+        if case .selectDevice = action, !operationTasks.isEmpty || sender?.sendingID != nil {
+            actionError = Self.text("Another meeting copy is being prepared or sent. Wait for it to finish.")
+            return
+        }
         if discovery != nil, action == .discover || (action == .retryConnection && !isConnected && pairingClient == nil) {
+            cancelRecovery()
+            recoveryAllowed = true
             startDiscovery()
             return
         }
@@ -397,54 +545,132 @@ final class MacConnectionModel {
         let generation = UUID()
         actionGeneration = generation
         actionError = nil
-        defer { if actionGeneration == generation { pendingAction = nil } }
-        do {
+        let task = Task {
+            try Task.checkCancellation()
             try await onAction(action)
+        }
+        operationTasks[generation] = task
+        defer {
+            operationTasks[generation] = nil
+            if actionGeneration == generation {
+                pendingAction = nil
+            }
+        }
+        do {
+            try await withTaskCancellationHandler {
+                try await task.value
+            } onCancel: {
+                task.cancel()
+            }
         } catch {
             if actionGeneration == generation { actionError = Self.text(error.localizedDescription) }
         }
     }
 
+    private func performPersistentIntent(_ action: Action) async {
+        if let existing = persistentIntents.first(where: { $0.action == action }) {
+            await existing.task.value
+            return
+        }
+        guard let onAction else {
+            actionError = Self.text("Secure pairing is unavailable. Reopen the app and try again.")
+            return
+        }
+        // Stop/Unpair are accepted local persistence intents, not cancellable
+        // network work. Finish them even if their UI task or scene disappears.
+        cancelAction()
+        recoveryAllowed = false
+        cancelRecovery()
+        stopBrowsing()
+        let previous = persistentIntents.last?.task
+        if previous == nil { actionError = nil }
+        let id = UUID()
+        let task = Task { [self] in
+            await previous?.value
+            do { try await onAction(action) }
+            catch { actionError = Self.text(error.localizedDescription) }
+            persistentIntents.removeAll { $0.id == id }
+            pendingAction = persistentIntents.first?.action
+        }
+        persistentIntents.append((id, action, task))
+        pendingAction = persistentIntents.first?.action
+        await task.value
+    }
+
     func stopDiscovery() {
+        recoveryAllowed = false
+        cancelRecovery()
+        stopBrowsing()
+        if !isConnected { pairingClient?.disconnect() }
+    }
+
+    private func stopBrowsing() {
+        browsing = false
+        discoveryGeneration = UUID()
         discoveryTimeout?.cancel()
         discoveryTimeout = nil
         discovery?.stop()
-        if case .discovering = connection { connection = .unpaired }
+        if case .discovering = connection { connection = trustedDevice.map(Connection.offline) ?? .unpaired }
     }
 
-    private func startDiscovery() {
-        stopDiscovery()
+    private func startDiscovery(clearActionError: Bool = true) {
+        stopBrowsing()
         pairingClient?.disconnect()
         devices = []
-        actionError = nil
+        if clearActionError { actionError = nil }
         localNetworkDenied = false
         discoveryTimedOut = false
         connection = .discovering
+        selectedCandidate = nil
+        browsing = true
+        let generation = discoveryGeneration
+        discovery?.onUpdate = { [weak self] update in
+            guard let self, self.discoveryGeneration == generation, self.browsing else { return }
+            self.applyDiscovery(update)
+        }
         discovery?.start()
         discoveryTimeout = Task { [weak self] in
             do { try await Task.sleep(for: .seconds(15)) } catch { return }
-            guard let self, case .discovering = connection else { return }
+            guard let self, self.discoveryGeneration == generation, case .discovering = connection else { return }
             discoveryTimedOut = devices.isEmpty
         }
     }
 
     private func applyDiscovery(_ update: MacDiscoveryUpdate) {
-        guard case .discovering = connection else { return }
+        guard browsing, foreground else { return }
         switch update {
         case .devices(let devices):
             self.devices = devices
             if !devices.isEmpty { discoveryTimedOut = false }
+            if let selectedCandidate {
+                if let current = devices.first(where: { $0.id == selectedCandidate.id }) {
+                    self.selectedCandidate = current
+                    pairingClient?.updateMeetingCopyProbeHint(current.meetingCopyProbeHint)
+                    if let client = pairingClient, case .disconnected = client.state { beginRecovery() }
+                } else {
+                    self.selectedCandidate = nil
+                    pairingClient?.disconnect()
+                    beginRecovery()
+                }
+            }
         case .permissionDenied:
-            stopDiscovery()
+            recoveryAllowed = false
+            cancelRecovery()
+            stopBrowsing()
+            pairingClient?.disconnect()
             localNetworkDenied = true
             connection = .failed(reason: Self.text("Local network access is off. Enable Local Network for Transcript in Settings, then try again."))
         case .failed(let message):
-            stopDiscovery()
+            stopBrowsing()
+            pairingClient?.disconnect()
             connection = .failed(reason: message)
+            beginRecovery()
         }
     }
 
     static func text(_ key: String) -> String {
+        let recoveryText = LocalizationManager.shared.text(key, table: "MacConnectionRecovery")
+        if recoveryText != key { return recoveryText }
         let copyText = LocalizationManager.shared.text(key, table: "MeetingCopy")
         if copyText != key { return copyText }
         let pairingText = LocalizationManager.shared.text(key, table: "MacPairing")

@@ -580,7 +580,7 @@ final class PairingStoreProbe: MacPairingIdentityStoring {
 
 @MainActor
 final class PairingTCPFixture {
-    let identity = Curve25519.Signing.PrivateKey()
+    let identity: Curve25519.Signing.PrivateKey
     private let listener: NWListener
     private let script: @MainActor (PairingTestPeer) async throws -> Void
     private var peers: [PairingTestPeer] = []
@@ -590,7 +590,8 @@ final class PairingTCPFixture {
     private(set) var errors: [any Error] = []
     private(set) var acceptedCount = 0
 
-    init(script: @escaping @MainActor (PairingTestPeer) async throws -> Void) throws {
+    init(identity: Curve25519.Signing.PrivateKey = .init(), script: @escaping @MainActor (PairingTestPeer) async throws -> Void) throws {
+        self.identity = identity
         self.script = script
         let parameters = NWParameters.tcp
         parameters.requiredLocalEndpoint = .hostPort(host: "127.0.0.1", port: .any)

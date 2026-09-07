@@ -291,8 +291,8 @@ final class MacDiscoveryTests: XCTestCase {
             XCTAssertEqual(
                 reason,
                 language == .en
-                    ? "Update Transcript on the Mac to receive meeting copies, then discover and reconnect."
-                    : "请更新 Mac 上的 Transcript 以接收会议副本，然后重新查找并连接。"
+                    ? "Receiving is not advertised. It may be turned off on the Mac, the Mac version may be older, or discovery may be stale. Check receiving, then discover and reconnect; update the Mac if needed."
+                    : "未发现接收功能的广播。可能是 Mac 关闭了接收、版本较旧，或发现信息已过期。请检查接收设置，然后重新查找并连接；必要时更新 Mac。"
             )
         }
     }

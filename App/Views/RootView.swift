@@ -39,6 +39,18 @@ struct RootView: View {
     #endif
 }
 
+struct MacConnectionSceneLifecycle: ViewModifier {
+    let model: MacConnectionModel
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content.onChange(of: scenePhase, initial: true) { _, phase in
+            if phase == .background { model.suspendConnection() }
+            if phase == .active { model.resumeConnection() }
+        }
+    }
+}
+
 /// Default button clearance, shared with the top-level lists.
 /// The tab content supplies its safe area, so no tab-bar height is hard-coded.
 enum FloatingRecordButtonMetrics {
@@ -168,8 +180,8 @@ private struct ReadyView: View {
         .onChange(of: scenePhase, initial: true) { _, phase in
             services.speakerAnalysis.setActive(phase == .active)
             recorder.sceneActivityChanged(isActive: phase == .active)
-            if phase == .background { macConnection.suspendConnection() }
         }
+        .modifier(MacConnectionSceneLifecycle(model: macConnection))
         .onChange(of: services.speakerAnalysis.revision) { _, _ in
             Task { await library.reload() }
         }

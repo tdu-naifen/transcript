@@ -1,0 +1,28 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Securely paired. Receiving availability has not been confirmed. Check receiving on the Mac, then discover and reconnect." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "已安全配对，但尚未确认接收功能是否可用。请检查 Mac 上的接收设置，然后重新查找并连接。"
+          }
+        }
+      }
+    },
+    "Receiving is not advertised. It may be turned off on the Mac, the Mac version may be older, or discovery may be stale. Check receiving, then discover and reconnect; update the Mac if needed." : {
+      "extractionState" : "manual",
+      "localizations" : {
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "未发现接收功能的广播。可能是 Mac 关闭了接收、版本较旧，或发现信息已过期。请检查接收设置，然后重新查找并连接；必要时更新 Mac。"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

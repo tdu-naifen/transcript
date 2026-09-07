@@ -13,11 +13,22 @@ final class IOSMacPairingClient {
         case failed(message: String)
     }
 
+    func updateMeetingCopyProbeHint(_ allowed: Bool) {
+        guard let current = session else { return }
+        current.probeAllowed = allowed
+        if !allowed {
+            current.transferAccepted = false
+            onTransferReadiness?(false)
+            if current.pendingRequest != nil { disconnect() }
+        }
+    }
+
     struct Timeouts {
         var initial: TimeInterval = 10
         var approval: TimeInterval = 60
         var idle: TimeInterval = 120
-        var heartbeat: TimeInterval = 30
+        var heartbeat: TimeInterval = 10
+        var pong: TimeInterval = 5
     }
 
     private enum ClientError: LocalizedError {
@@ -48,6 +59,7 @@ final class IOSMacPairingClient {
         var reader: Task<Void, Never>?
         var deadline: Task<Void, Never>?
         var heartbeat: Task<Void, Never>?
+        var pongDeadline: Task<Void, Never>?
         var sendTail: Task<Void, any Error>?
         var probeAllowed = false
         var transferAccepted = false
@@ -65,6 +77,7 @@ final class IOSMacPairingClient {
             reader?.cancel()
             deadline?.cancel()
             heartbeat?.cancel()
+            pongDeadline?.cancel()
             sendTail?.cancel()
             requestDeadline?.cancel()
             let reply = reply
@@ -102,14 +115,17 @@ final class IOSMacPairingClient {
         }
     }
 
-    func connect(to endpoint: NWEndpoint, allowMeetingCopyProbe: Bool = false) {
+    func connect(to endpoint: NWEndpoint, allowMeetingCopyProbe: Bool = false, requiredPeer: MacPairedDevice? = nil) {
         stopSession()
         do {
             pairedPeer = try storedPeer()
+            if let requiredPeer, pairedPeer?.publicKey != requiredPeer.publicKey {
+                throw ClientError.invalidTrust
+            }
             let identity: Curve25519.Signing.PrivateKey
             do { identity = try store.identity() }
             catch { throw ClientError.storage }
-            guard [timeouts.initial, timeouts.approval, timeouts.idle, timeouts.heartbeat]
+            guard [timeouts.initial, timeouts.approval, timeouts.idle, timeouts.heartbeat, timeouts.pong]
                 .allSatisfy({ $0.isFinite && $0 > 0 }),
                 timeouts.heartbeat < timeouts.idle else { throw MacPairingError.unavailable }
             let parameters = NWParameters.tcp
@@ -154,6 +170,7 @@ final class IOSMacPairingClient {
     /// Called only by explicit Send/Retry. The untrusted endpoint hint merely permits
     /// this metadata-free probe; an authenticated response is the authorization gate.
     func negotiateMeetingCopy() async throws {
+        try Task.checkCancellation()
         guard canProbeMeetingTransfer else { throw MeetingCopyWire.Failure.incompatible }
         if supportsMeetingTransfer { return }
         var offer = MeetingCopyWire.Message(.capabilities)
@@ -313,6 +330,8 @@ final class IOSMacPairingClient {
                 try handleTransferReply(message, on: current)
             } else if message.type == "pong", message.value == nil, current.awaitingPong {
                 current.awaitingPong = false
+                current.pongDeadline?.cancel()
+                current.pongDeadline = nil
             } else {
                 throw MacPairingError.invalidMessage
             }
@@ -403,6 +422,14 @@ final class IOSMacPairingClient {
                     try self.requireCurrent(current)
                     if !current.awaitingPong {
                         current.awaitingPong = true
+                        // Bound the queued write as well as the reply. Transfer replies
+                        // may refresh idle time, but can never extend this deadline.
+                        current.pongDeadline = Task { [weak self, weak current] in
+                            do { try await Task.sleep(for: .seconds(self?.timeouts.pong ?? 5)) }
+                            catch { return }
+                            guard let self, let current, current.awaitingPong else { return }
+                            self.fail(MacPairingError.timedOut, session: current)
+                        }
                         try await self.enqueue(MacPairingMessage(type: "ping"), on: current).value
                     }
                 }
@@ -446,7 +473,9 @@ final class IOSMacPairingClient {
         let rejected: Bool
         if case .rejected? = error as? MacPairingError { rejected = true }
         else { rejected = false }
-        if current.connected && current.pendingRequest != nil {
+        if case .identityMismatch? = error as? MacPairingError {
+            text = message(for: error)
+        } else if current.connected && current.pendingRequest != nil {
             text = "Meeting copy was not confirmed. Update Transcript on the Mac if needed, then reconnect and retry. Your saved Mac identity is unchanged."
         } else if !current.connected && (current.serverReady || (current.approvedLocally && !rejected)) {
             text = "Pairing did not finish on both devices. Unpair on both devices and explicitly pair again."
