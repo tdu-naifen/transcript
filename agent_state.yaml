@@ -1,3 +1,33 @@
+ios_recovery_20260906_2108:
+  authority: "Current recovery entry supersedes historical running/ownership claims below."
+  work_root: "/Users/tingzhen/Desktop/transcript"
+  main_head: "441d1458861616d6ccfcd41e6b4efcbc9ff5509a"
+  orchestrator: "Parent coordinates only; production edits delegated."
+  writer: "ios-integrated-takeover; bounded live dynamic identity implementation"
+  writer_scope: "Core live diarization/evidence accessors, narrowly required local v11+ persistence, App TranscriptionModel/projection/readiness integration and tests. Previously accepted sender/contract remain fixed."
+  exclusions: "Mac files, Shared/Pairing crypto, unrelated old Core Sync, existing unrelated catalogs and other worktrees."
+  resources: "Live implementation worker owns main build directories and dedicated Simulator A565D0B8-502B-4BA0-9704-E6D4845065BA; no physical iPhone or production trust."
+  status: running
+  next_gate: "Implement and independently validate bounded live dynamic identity. Actual Mac receiver adoption and joint interoperability remain separate; final accepted work stays on main with local commits only."
+  current_build: "Baseline166 and repair78 distinct tests passed; HIGH provenance issue closed. Postcommit main441d145:55 tests and strict device build passed;334 committed feature/test files match HEAD."
+  mac_coordination: "Read latest Mac session and MAC_UI handoff: Mac-only receiver/storage/UI owner on separate checkout. New outgoing coordination message refused by 50-message cap; no new bilateral agreement claimed."
+  transfer_gate: "Fixed reviewed Shared codec SHA and real sender/receiver durability/resume/conflict acceptance before product transfer completion."
+  speaker_gate: "Offline dynamic clustering is not live 40-person recognition or measured acoustic quality."
+  component_commits:
+    local_persistence: "8cb3052bbc7796e46802d5358236e7a52c5ca6fe"
+    offline_dynamic_backend: "86b89499a18f460e1f0682070bd17898f991fdf5"
+    ios_sender: "a4c175bb540fb4f041238516695b18c0bfb104a3"
+    hosted_isolation: "441d1458861616d6ccfcd41e6b4efcbc9ff5509a"
+  remaining: "Live CAM/dynamic integration; forty-realvoice/physical performance; Mac receiver wire adoption; actual joint transfer; result return/deletion/edit sync policies and implementation."
+  contract_handoff:
+    commit: "5d61b80f84052897e476b5ff8c1c15f0648e410a"
+    files: ["Shared/Sync/MeetingCopyWire.swift", "MAC_SYNC_PROTOCOL.md"]
+    codec_sha256: "a886cef8ca8c0bae2c5719024705a0a9eaa3f5a3d5614f2bbbe0253a86be8b59"
+    scope: "Contract/codec only; Mac can consume exact files, not historical draft DTOs. No product enablement or full transfer acceptance."
+    bounds: "768 raw chunk bytes; 4096 actual encrypted outer JSON bytes. Capability-only negotiation; local receiver quota rejection is failed/storage before status."
+    verification: "Independent security clear; real TCP/cipher/disk harness included in independent166-test baseline; postcommit strict Swift6 typecheck of fixed codec with unchanged Shared/Pairing passed."
+  evidence: "/Users/tingzhen/.copilot/session-state/6751623e-5db4-4ec4-a0df-a2ce62737d71/files/COMPACT-2103-CURRENT.txt"
+
 ios_direct_quality_takeover:
   updated_at: "2026-09-06T11:30:00-04:00"
   owner: "parent; direct modifications authorized by user"
