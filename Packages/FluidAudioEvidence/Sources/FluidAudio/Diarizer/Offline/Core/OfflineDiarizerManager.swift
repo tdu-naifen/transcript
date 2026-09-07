@@ -287,6 +287,49 @@ public final class OfflineDiarizerManager {
         try clusterRun(prepared, evidenceOnly: true).1
     }
 
+    public func prepareCompletedWindowEvidence(
+        samples: [Float], isolation: isolated (any Actor)? = #isolation
+    ) async throws -> CompletedWindowEvidence {
+        try Task.checkCancellation()
+        try config.validate()
+        guard samples.count == 160_000, config.samplesPerWindow == 160_000,
+              config.samplesPerStep == 32_000, samples.allSatisfy(\.isFinite) else {
+            throw OfflineDiarizationError.invalidConfiguration("A completed window requires exactly 160000 real samples.")
+        }
+        guard let models else { throw OfflineDiarizationError.modelNotLoaded("offline-diarizer") }
+        let source = ArrayAudioSampleSource(samples: samples)
+        let segmentation = try await OfflineSegmentationProcessor().process(
+            audioSource: source, segmentationModel: models.segmentationModel, config: config, windowLimit: 1)
+        try Task.checkCancellation()
+        let extractor = OfflineEmbeddingExtractor(
+            fbankModel: models.fbankModel, embeddingModel: models.embeddingModel,
+            pldaTransform: PLDATransform(pldaRhoModel: models.pldaRhoModel, psi: models.pldaPsi), config: config)
+        let rows = try await extractor.extractEmbeddings(audioSource: source, segmentation: segmentation)
+        try Task.checkCancellation()
+        return CompletedWindowEvidence(segmentation: segmentation, embeddings: rows, configuration: config)
+    }
+
+    /// Unforced AHC partitions of original rows for stable live anchoring.
+    /// Offline VBx may prune an absent identity in a small live cohort; its final
+    /// centroid label must not transfer that settled anchor to a newly arriving voice.
+    public func clusterEvidenceRows(_ rows: [CompletedWindowEvidence.Row]) throws -> EvidenceCohortResult {
+        try Task.checkCancellation()
+        guard rows.count <= 512, Set(rows.map(\.id)).count == rows.count,
+              config.clustering.numSpeakers == nil, config.clustering.minSpeakers == nil,
+              config.clustering.maxSpeakers == nil,
+              rows.allSatisfy({ $0.embedding256.count == 256 && $0.embedding256.allSatisfy(\.isFinite)
+                  && $0.embedding256.contains(where: { $0 != 0 })
+                  && $0.rho128.count == 128 && $0.rho128.allSatisfy(\.isFinite) }) else {
+            throw OfflineDiarizationError.invalidConfiguration("Invalid or oversized evidence cohort.")
+        }
+        guard models != nil else { throw OfflineDiarizationError.modelNotLoaded("offline-diarizer") }
+        guard !rows.isEmpty else { return EvidenceCohortResult(runID: UUID(), rowIDs: [], assignments: []) }
+        let assignments = AHCClustering().cluster(
+            embeddingFeatures: rows.map { $0.embedding256.map(Double.init) }, threshold: config.clusteringThreshold)
+        try Task.checkCancellation()
+        return EvidenceCohortResult(runID: UUID(), rowIDs: rows.map(\.id), assignments: assignments)
+    }
+
     private func clusterRun(
         _ prepared: PreparedDiarization, evidenceOnly: Bool
     ) throws -> (DiarizationResult, OfflineDiarizationEvidence) {

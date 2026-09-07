@@ -408,6 +408,38 @@ extension AppDatabase {
                 END;
                 """)
         }
+        migrator.registerMigration("v11_liveSpeakerEvidence") { db in
+            try db.create(table: "liveSpeakerSession") { t in
+                t.column("meetingId", .text).primaryKey().references("meeting", onDelete: .cascade)
+                t.column("epoch", .text).notNull()
+                t.column("frontier", .integer).notNull().defaults(to: 0)
+                t.column("bindingRevision", .integer).notNull().defaults(to: 0)
+            }
+            try db.create(table: "liveSpeakerIdentity") { t in
+                t.column("id", .text).primaryKey()
+                t.column("meetingId", .text).notNull().references("meeting", onDelete: .cascade)
+                t.column("epoch", .text).notNull()
+                t.column("ordinal", .integer).notNull()
+                t.column("speakerId", .text).references("speaker", onDelete: .setNull)
+                t.uniqueKey(["meetingId", "epoch", "ordinal"])
+            }
+            try db.create(table: "liveSpeakerSpan") { t in
+                t.column("meetingId", .text).notNull().references("meeting", onDelete: .cascade)
+                t.column("epoch", .text).notNull()
+                t.column("startTick", .integer).notNull()
+                t.column("endTick", .integer).notNull()
+                t.column("identityId", .text).references("liveSpeakerIdentity", onDelete: .cascade)
+                t.column("unknown", .boolean).notNull()
+                t.primaryKey(["meetingId", "epoch", "startTick"])
+                t.check(sql: "endTick > startTick AND startTick >= 0 AND (unknown = 0 OR identityId IS NULL)")
+            }
+            try db.create(index: "liveSpeakerSpan_end", on: "liveSpeakerSpan", columns: ["meetingId", "epoch", "endTick"])
+            try db.create(table: "liveSpeakerChecked") { t in
+                t.column("utteranceId", .text).primaryKey().references("utterance", onDelete: .cascade)
+                t.column("epoch", .text).notNull()
+                t.column("bindingRevision", .integer).notNull()
+            }
+        }
         return migrator
     }
 }

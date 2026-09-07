@@ -544,7 +544,7 @@ final class AppleSpeechIntegrationTests: XCTestCase {
     }
 
     func testLiveDiarizerNeverRequestsGPU() {
-        XCTAssertEqual(TranscriptionModel.liveDiarizerConfiguration(modelPath: URL(fileURLWithPath: "/unused")).computeUnits, .cpuAndNeuralEngine)
+        XCTAssertEqual(LiveDynamicSpeakers.computeUnits, .cpuAndNeuralEngine)
     }
 
     func testRapidLanguageChangesWaitForRetiringCollectorBeforeCreatingThirdEngine() async throws {

@@ -114,7 +114,7 @@ final class SpeakerProjectionTests: XCTestCase {
         }
     }
 
-    func testLateStableEvidenceBackfillsOnlyOverlappingRowsAndKeepsOlderIdentity() async throws {
+    func testLegacyLocalSlotsCannotAllocateOrBackfillPersistentPeople() async throws {
         let (services, meeting) = try await fixture()
         let early = utterance(meeting, id: "early", start: 1_000, end: 2_000)
         let unresolved = utterance(meeting, id: "unresolved", start: 72_000, end: 75_000)
@@ -128,16 +128,16 @@ final class SpeakerProjectionTests: XCTestCase {
             finalized: [turn(0, 1_000, 2_000)],
             tentative: [turn(1, 72_000, 75_000, finalized: false)]
         ), meetingId: meeting.id)
-        let earlyID = try XCTUnwrap(live.speaker(for: segment(early))?.id)
+        XCTAssertNil(live.speaker(for: segment(early)))
         XCTAssertNil(live.speaker(for: segment(unresolved)), "Tentative evidence is not a stable identity.")
         await live.apply(.update(finalized: [turn(1, 82_000, 84_000)], tentative: []), meetingId: meeting.id)
         await detail.load()
-        XCTAssertEqual(live.speaker(for: segment(early))?.id, earlyID)
+        XCTAssertNil(live.speaker(for: segment(early)))
         XCTAssertEqual(live.speaker(for: segment(early)), detail.speaker(for: early))
         XCTAssertEqual(live.speaker(for: segment(latest)), detail.speaker(for: latest))
         XCTAssertNil(live.speaker(for: segment(unresolved)), "Never copy the latest speaker into older gaps.")
         XCTAssertNil(detail.speaker(for: unresolved))
-        XCTAssertEqual(detail.participants.count, 2)
+        XCTAssertEqual(detail.participants.count, 0, "Only qualified dynamic publication can create people.")
     }
 
     func testPersisted72SecondBindingSurvives82SecondOnlyTimeline() async throws {
@@ -170,15 +170,15 @@ final class SpeakerProjectionTests: XCTestCase {
         XCTAssertNil(live.speaker(for: segment(gap)), "The same latest Raven is not evidence for an unbound gap.")
     }
 
-    func testLateASRFinalUsesRetainedFinalizedEvidenceAfterNewUpdates() async throws {
+    func testLateASRFinalCannotInheritIdentityFromLegacyLocalSlot() async throws {
         let (services, meeting) = try await fixture()
         let live = liveModel(services, meeting)
         await live.apply(.update(finalized: [turn(0, 1_000, 2_000)], tentative: []), meetingId: meeting.id)
         let early = utterance(meeting, id: "late-final", start: 1_000, end: 2_000)
         try await UtteranceRepository(services.database).append(early)
         await live.apply(.update(finalized: [turn(1, 82_000, 84_000)], tentative: []), meetingId: meeting.id)
-        XCTAssertEqual(live.speaker(for: segment(early))?.id, live.speakersByIndex[0]?.id)
-        XCTAssertNotEqual(live.speaker(for: segment(early))?.id, live.speakersByIndex[1]?.id)
+        XCTAssertNil(live.speaker(for: segment(early)))
+        XCTAssertTrue(live.speakersByIndex.isEmpty)
     }
 
     func testMixedSpeakerUtteranceRemainsUnassignedRegardlessOfPunctuation() async throws {

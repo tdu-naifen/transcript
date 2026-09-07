@@ -45,7 +45,8 @@ struct OfflineSegmentationProcessor {
         audioSource: AudioSampleSource,
         segmentationModel: MLModel,
         config: OfflineDiarizerConfig,
-        chunkHandler: SegmentationChunkHandler? = nil
+        chunkHandler: SegmentationChunkHandler? = nil,
+        windowLimit: Int? = nil
     ) async throws -> SegmentationOutput {
         let totalSamples = audioSource.sampleCount
         guard totalSamples > 0 else {
@@ -187,7 +188,8 @@ struct OfflineSegmentationProcessor {
         }
 
         var processedAnyBatch = false
-        var offsetIterator = stride(from: 0, to: totalSamples, by: stepSize).makeIterator()
+        var offsetIterator = stride(from: 0, to: totalSamples, by: stepSize)
+            .prefix(windowLimit ?? Int.max).makeIterator()
         var batchOffsets: [Int] = []
         batchOffsets.reserveCapacity(batchCapacity)
 

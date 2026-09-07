@@ -145,10 +145,10 @@ public actor DynamicSpeakerModelStore {
         return result
     }
 
-    static func loadVerified(directory: URL, cpuOnly: Bool = false) throws -> OfflineDiarizerModels {
+    static func loadVerified(directory: URL, cpuOnly: Bool = false, computeUnits: MLComputeUnits? = nil) throws -> OfflineDiarizerModels {
         try verify(directory: directory)
         let configuration = MLModelConfiguration()
-        configuration.computeUnits = cpuOnly ? .cpuOnly : .all
+        configuration.computeUnits = cpuOnly ? .cpuOnly : (computeUnits ?? .all)
         let start = Date()
         let segmentation = try MLModel(contentsOf: directory.appending(path: "Segmentation.mlmodelc"), configuration: configuration)
         let fbank = try MLModel(contentsOf: directory.appending(path: "FBank.mlmodelc"), configuration: configuration)

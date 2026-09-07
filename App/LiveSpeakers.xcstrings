@@ -1,0 +1,131 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "Live speaker identity capacity has been reached. Additional identities remain unknown; audio and transcription continue." : {
+      "localizations" : {
+        "en" : { "stringUnit" : { "state" : "translated", "value" : "Live speaker identity capacity has been reached. Additional identities remain unknown; audio and transcription continue." } },
+        "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "已达到实时说话人身份容量上限。新增身份保持为未知，录音和转写继续进行。" } }
+      }
+    },
+    "Live speaker identification could not continue. Audio and transcription are unaffected. Return to the app to retry." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live speaker identification could not continue. Audio and transcription are unaffected. Return to the app to retry."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实时说话人识别无法继续。录音和转写不受影响，返回应用后重试。"
+          }
+        }
+      }
+    },
+    "Live speaker identification is paused. Return to the app to continue." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live speaker identification is paused. Return to the app to continue."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实时说话人识别已暂停。返回应用后继续。"
+          }
+        }
+      }
+    },
+    "Live speaker identification is waiting for processing capacity. Audio and transcription continue; some labels may remain unknown." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live speaker identification is waiting for processing capacity. Audio and transcription continue; some labels may remain unknown."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实时说话人识别正在等待处理资源。录音和转写继续进行，部分标签可能保持为未知。"
+          }
+        }
+      }
+    },
+    "Live speaker labels could not be saved. Check device storage. Audio and transcription use their separate recovery status." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live speaker labels could not be saved. Check device storage. Audio and transcription use their separate recovery status."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "无法保存实时说话人标签，请检查设备存储空间。录音和转写的恢复状态单独显示。"
+          }
+        }
+      }
+    },
+    "Live speaker labels need complete 10-second audio windows. Short or unclear speech may remain unknown." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live speaker labels need complete 10-second audio windows. Short or unclear speech may remain unknown."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实时说话人标签需要完整的 10 秒音频窗口。过短或不清晰的发言可能保持为未知。"
+          }
+        }
+      }
+    },
+    "Live speaker models are unavailable. Audio and transcription continue; speaker labels may remain unknown." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Live speaker models are unavailable. Audio and transcription continue; speaker labels may remain unknown."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "实时说话人模型不可用。录音和转写继续进行，说话人标签可能保持为未知。"
+          }
+        }
+      }
+    },
+    "Preparing live speaker models. Audio and transcription continue." : {
+      "extractionState" : "stale",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Preparing live speaker models. Audio and transcription continue."
+          }
+        },
+        "zh-Hans" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "正在准备实时说话人模型。录音和转写继续进行。"
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

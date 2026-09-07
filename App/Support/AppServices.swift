@@ -19,6 +19,7 @@ final class AppServices {
     let speechResources = AppleSpeechResources()
     let speakerAnalysis: SpeakerAnalysisService
     let recordingFinalization: RecordingFinalizationCoordinator
+    private let liveSpeakerAnalysisEnabled: Bool
     private(set) var recordingRecoveryError: String?
 
     init(
@@ -40,6 +41,7 @@ final class AppServices {
         self.database = try database ?? AppDatabase.onDisk(
             directory: applicationSupport?.appendingPathComponent("Transcript", isDirectory: true)
         )
+        liveSpeakerAnalysisEnabled = database == nil && applicationSupport == nil
         self.store = try store ?? AudioFileStore.standard(applicationSupport: applicationSupport)
         self.audioOwnership = audioOwnership
         deviceId = UIDevice.current.identifierForVendor?.uuidString ?? "unknown-device"
@@ -58,6 +60,17 @@ final class AppServices {
         meetingReprocessor = MeetingReprocessingCoordinator(
             database: self.database, deviceId: deviceId, recordingSession: session,
             resources: speechResources
+        )
+    }
+
+    func makeLiveSpeakers(meetingID: String) -> LiveDynamicSpeakers? {
+        guard liveSpeakerAnalysisEnabled else { return nil }
+        return LiveDynamicSpeakers(
+            database: database, meetingID: meetingID, deviceID: deviceId, downloader: modelDownloader,
+            admission: .init(
+                acquire: { await RecordingAnalyzerSlots.shared.acquireIfAvailable() },
+                release: { await RecordingAnalyzerSlots.shared.release($0) }
+            )
         )
     }
 

@@ -5,7 +5,7 @@ import Foundation
 ///
 /// 2 stages from `FluidInference/campplus-coreml`:
 ///   - `preprocessor` (fp32, CPU): waveform -> [1, T, 80] fbank
-///   - `model` (fp16, ANE): fbank -> [1, 192] speaker embedding
+///   - `model` (fp16, configurable compute): fbank -> [1, 192] speaker embedding
 ///
 /// - Note: Beta — this is a beta model conversion; API, model artifacts, and accuracy may change.
 public struct CampPlusModels: Sendable {
@@ -49,15 +49,23 @@ public struct CampPlusModels: Sendable {
     }
 
     public static func load(from directory: URL) throws -> CampPlusModels {
+        try load(from: directory, embeddingComputeUnits: .cpuAndGPU)
+    }
+
+    /// Live callers can exclude GPU before either model is loaded. The original
+    /// overload retains its offline CPU/GPU default; preprocessing remains CPU-only.
+    public static func load(
+        from directory: URL, embeddingComputeUnits: MLComputeUnits
+    ) throws -> CampPlusModels {
         let cpu = MLModelConfiguration()
         cpu.computeUnits = .cpuOnly
         // CAM++ uses a dynamic time dim (RangeDim) which the ANE compiler rejects;
-        // it's tiny (~7.2M), so run on CPU/GPU. Dynamic length avoids padding
-        // corrupting the statistics-pooled embedding.
-        let gpu = MLModelConfiguration()
-        gpu.computeUnits = .cpuAndGPU
+        // the offline default remains CPU/GPU, while live callers select CPU-only.
+        // Dynamic length avoids padding corrupting the statistics-pooled embedding.
+        let embeddingConfiguration = MLModelConfiguration()
+        embeddingConfiguration.computeUnits = embeddingComputeUnits
         let pre = try loadModel(named: ModelNames.CampPlus.preprocessor, from: directory, configuration: cpu)
-        let model = try loadModel(named: ModelNames.CampPlus.model, from: directory, configuration: gpu)
+        let model = try loadModel(named: ModelNames.CampPlus.model, from: directory, configuration: embeddingConfiguration)
         logger.info("Loaded CAM++ speaker-embedding models")
         return CampPlusModels(preprocessor: pre, model: model)
     }

@@ -15,10 +15,13 @@
   "adapted": {
     "Package.swift": "Library-only distribution: removes development CLI/tests/dependencies, retains original runtime wrappers, resources, and pinned NemoTextProcessing binary URL/checksum.",
     "Sources/FluidAudio/Diarizer/Offline/Core/PreparedDiarization.swift": "Retains immutable preparation configuration for same-run evidence validation.",
-    "Sources/FluidAudio/Diarizer/Offline/Core/OfflineDiarizerManager.swift": "Adds clusterWithEvidence and cancellation propagation/draining. Original cluster API, AHC/VBx algorithms, thresholds, and quality defaults are retained."
+    "Sources/FluidAudio/Diarizer/Offline/Core/OfflineDiarizerManager.swift": "Adds clusterWithEvidence, caller-isolated completed-real-window extraction, bounded original-threshold AHC evidence partitions for live anchoring, and cancellation propagation/draining. Live partitions intentionally do not use small-cohort VBx pruning, which can transfer absent anchors to new voices. Original offline cluster API, AHC/VBx algorithms, thresholds, and quality defaults are retained.",
+    "Sources/FluidAudio/Diarizer/Offline/Segmentation/OfflineSegmentationProcessor.swift": "Optional windowLimit bounds completed-window scheduling to one real window; existing callers retain original offset scheduling.",
+    "Sources/FluidAudio/Speaker/CampPlusModels.swift": "Adds explicit embedding compute-unit overload so live loading excludes GPU. Original load(from:) API and offline CPU/GPU default remain unchanged; preprocessing remains CPU-only."
   },
   "added": {
-    "Sources/FluidAudio/Diarizer/Offline/Core/OfflineDiarizationEvidence.swift": "Public read-only same-invocation segmentation, extraction masks, vectors and cluster assignments; no production @testable access."
+    "Sources/FluidAudio/Diarizer/Offline/Core/OfflineDiarizationEvidence.swift": "Public read-only same-invocation segmentation, extraction masks, vectors and cluster assignments; no production @testable access.",
+    "Sources/FluidAudio/Diarizer/Offline/Core/CompletedWindowEvidence.swift": "Read-only complete-window extraction rows with immutable run/row UUIDs and bounded cohort assignment receipt; construction remains SDK-internal."
   },
   "modelProvenance": "Separate CC-BY-4.0 pinned model receipt/card/attribution in Packages/TranscriptCore/Sources/TranscriptCore/Resources. No model weights are vendored here.",
   "verification": "Compared retained source directories and notices against the local checkout at the exact revision above on 2026-09-06."

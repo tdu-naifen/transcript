@@ -85,6 +85,7 @@ final class SpeakerAnalysisService {
                     try Task.checkCancellation()
                     try await jobs.setState(meetingID: id, state: "running")
                     states[id] = .preparing
+                    var permit: UUID?
                     do {
                         guard let meeting = try await meetings.fetch(id: id),
                               let name = meeting.audioFileName else {
@@ -93,14 +94,20 @@ final class SpeakerAnalysisService {
                         let url = store.directory.appendingPathComponent(name)
                         try Task.checkCancellation()
                         guard isActive else { throw CancellationError() }
+                        permit = try await RecordingAnalyzerSlots.shared.acquire()
+                        try Task.checkCancellation()
+                        guard isActive else { throw CancellationError() }
                         try await engine.run(meetingID: id, audioURL: url) { [weak self] stage in
                             await MainActor.run {
                                 self?.states[id] = stage == .loadingAudio ? .preparing : .analyzing
                             }
                         }
+                        if let permit { await RecordingAnalyzerSlots.shared.release(permit) }
+                        permit = nil
                         states[id] = .complete
                         revision += 1
                     } catch {
+                        if let permit { await RecordingAnalyzerSlots.shared.release(permit) }
                         if Task.isCancelled || error is CancellationError {
                             // The engine drains its child workers before returning. Never
                             // overlap generations or re-enroll a completed voiceprint pass.

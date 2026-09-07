@@ -1,5 +1,6 @@
 import FluidAudio
 import Foundation
+import CoreML
 
 public struct VoiceprintRequest: Sendable {
   public let meetingId: String
@@ -101,6 +102,12 @@ struct VoiceprintInference: Sendable {
   let load: @Sendable () async throws -> Void
   let infer: @Sendable ([Float]) async throws -> [Float]
   let unload: @Sendable () async -> Void
+  var loadedComputeUnits: @Sendable () async -> VoiceprintLoadedComputeUnits? = { nil }
+}
+
+struct VoiceprintLoadedComputeUnits: Sendable, Equatable {
+  let preprocessor: MLComputeUnits
+  let embedding: MLComputeUnits
 }
 
 fileprivate actor VoiceprintJobResult {
@@ -138,15 +145,23 @@ fileprivate actor VoiceprintJobResult {
 
 private actor CampPlusRuntime {
   private let directory: URL
+  private let embeddingComputeUnits: MLComputeUnits
   private var embedder: CampPlusEmbedder?
+  private(set) var loadedComputeUnits: VoiceprintLoadedComputeUnits?
 
-  init(directory: URL) {
+  init(directory: URL, embeddingComputeUnits: MLComputeUnits) {
     self.directory = directory
+    self.embeddingComputeUnits = embeddingComputeUnits
   }
 
   func load() async throws {
     if embedder == nil {
-      embedder = CampPlusEmbedder(models: try CampPlusModels.load(from: directory))
+      let models = try CampPlusModels.load(from: directory, embeddingComputeUnits: embeddingComputeUnits)
+      loadedComputeUnits = .init(
+        preprocessor: models.preprocessor.configuration.computeUnits,
+        embedding: models.model.configuration.computeUnits
+      )
+      embedder = CampPlusEmbedder(models: models)
     }
   }
 
@@ -157,6 +172,7 @@ private actor CampPlusRuntime {
 
   func unload() {
     embedder = nil
+    loadedComputeUnits = nil
   }
 }
 
@@ -168,6 +184,10 @@ private actor VoiceprintInferenceWorker {
   private var loaded = false
   private var idleUnloadTask: Task<Void, Never>?
   private var activityGeneration = 0
+
+  func loadedComputeUnits() async -> VoiceprintLoadedComputeUnits? {
+    await inference.loadedComputeUnits()
+  }
 
   init(
     inference: VoiceprintInference,
@@ -280,6 +300,8 @@ public actor VoiceprintProcessor {
     public var minimumSampleDuration: TimeInterval
     public var maximumSampleDuration: TimeInterval
     public var idleUnloadDelay: Duration
+    /// Preserves the existing offline default. Live callers explicitly choose CPU-only.
+    public var embeddingComputeUnits: MLComputeUnits = .cpuAndGPU
 
     public init(
       maximumOutstandingJobs: Int = 4,
@@ -325,7 +347,7 @@ public actor VoiceprintProcessor {
     configuration: Configuration = .init(),
     modelDirectory: URL = DiarizationModelStore.campPlusDirectory()
   ) {
-    let runtime = CampPlusRuntime(directory: modelDirectory)
+    let runtime = CampPlusRuntime(directory: modelDirectory, embeddingComputeUnits: configuration.embeddingComputeUnits)
     self.configuration = configuration
     self.admissionGate = nil
     self.worker = Self.makeWorker(
@@ -333,7 +355,8 @@ public actor VoiceprintProcessor {
       inference: VoiceprintInference(
         load: { try await runtime.load() },
         infer: { try await runtime.infer($0) },
-        unload: { await runtime.unload() }
+        unload: { await runtime.unload() },
+        loadedComputeUnits: { await runtime.loadedComputeUnits }
       ),
       matcher: nil
     )
@@ -344,7 +367,7 @@ public actor VoiceprintProcessor {
     modelDirectory: URL = DiarizationModelStore.campPlusDirectory(),
     matcher: VoiceprintMatcher
   ) {
-    let runtime = CampPlusRuntime(directory: modelDirectory)
+    let runtime = CampPlusRuntime(directory: modelDirectory, embeddingComputeUnits: configuration.embeddingComputeUnits)
     self.configuration = configuration
     self.admissionGate = nil
     self.worker = Self.makeWorker(
@@ -352,7 +375,8 @@ public actor VoiceprintProcessor {
       inference: VoiceprintInference(
         load: { try await runtime.load() },
         infer: { try await runtime.infer($0) },
-        unload: { await runtime.unload() }
+        unload: { await runtime.unload() },
+        loadedComputeUnits: { await runtime.loadedComputeUnits }
       ),
       matcher: matcher
     )
@@ -369,6 +393,10 @@ public actor VoiceprintProcessor {
     self.worker = Self.makeWorker(
       configuration: configuration, inference: inference, matcher: matcher
     )
+  }
+
+  func loadedComputeUnits() async -> VoiceprintLoadedComputeUnits? {
+    await worker.loadedComputeUnits()
   }
 
   private static func makeWorker(
