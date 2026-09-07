@@ -10,6 +10,18 @@ extension AutomaticSyncRepository {
         public let revision: String
         /// Consent-independent content fence used by recipient publication.
         public let transcriptRevision: String
+        public let sourceDurationMs: Int?
+        public let sourceLocaleIdentifier: String?
+
+        init(meetingID: String, audioSHA256: String, revision: String, transcriptRevision: String,
+             sourceDurationMs: Int? = nil, sourceLocaleIdentifier: String? = nil) {
+            self.meetingID = meetingID
+            self.audioSHA256 = audioSHA256
+            self.revision = revision
+            self.transcriptRevision = transcriptRevision
+            self.sourceDurationMs = sourceDurationMs
+            self.sourceLocaleIdentifier = sourceLocaleIdentifier
+        }
     }
 
     public struct PublishedTranscript: Codable, Sendable, Equatable {
@@ -54,7 +66,8 @@ extension AutomaticSyncRepository {
             durationMs: meeting.durationMs, localeIdentifier: meeting.localeIdentifier)
         return ProcessingInput(meetingID: id, audioSHA256: audioSHA256,
             revision: IncrementalSHA256.hex(SHA256.hash(data: try Wire.encode(snapshot))),
-            transcriptRevision: try transcriptRevision(db, meetingID: id))
+            transcriptRevision: try transcriptRevision(db, meetingID: id),
+            sourceDurationMs: meeting.durationMs, sourceLocaleIdentifier: meeting.localeIdentifier)
     }
 
     /// A historical commit receipt, not a claim that this is still the current
@@ -71,12 +84,20 @@ extension AutomaticSyncRepository {
 
     public func publishTranscript(
         input: ProcessingInput, utterances: [Utterance], publicationID: String,
-        modelFingerprint: String, preprocessing: String, expectedUtterances: [Utterance]? = nil
+        modelFingerprint: String, preprocessing: String, expectedUtterances: [Utterance]? = nil,
+        speakerAnalysis: TranscriptSpeakerAnalysis? = nil
     ) async throws -> String {
-        try await publishTranscript(meetingID: input.meetingID, expectedAudioSHA256: input.audioSHA256,
+        let fingerprint: String
+        if let speakerAnalysis {
+            let analysisDigest = IncrementalSHA256.hex(SHA256.hash(data: try Wire.encode(speakerAnalysis)))
+            fingerprint = IncrementalSHA256.hex(SHA256.hash(data: try Wire.encode([modelFingerprint, analysisDigest])))
+        } else {
+            fingerprint = modelFingerprint
+        }
+        return try await publishTranscript(meetingID: input.meetingID, expectedAudioSHA256: input.audioSHA256,
             expectedRevision: input.transcriptRevision, utterances: utterances, publicationID: publicationID,
-            modelFingerprint: modelFingerprint, preprocessing: preprocessing, processingInput: input,
-            expectedUtterances: expectedUtterances)
+            modelFingerprint: fingerprint, preprocessing: preprocessing, processingInput: input,
+            expectedUtterances: expectedUtterances, speakerAnalysis: speakerAnalysis)
     }
 
     public struct TranscriptMapping: Codable, Sendable, Equatable {
@@ -107,14 +128,14 @@ extension AutomaticSyncRepository {
         try await publishTranscript(meetingID: meetingID, expectedAudioSHA256: expectedAudioSHA256,
             expectedRevision: expectedRevision, utterances: utterances, publicationID: publicationID,
             modelFingerprint: modelFingerprint, preprocessing: preprocessing, processingInput: nil,
-            expectedUtterances: expectedUtterances)
+            expectedUtterances: expectedUtterances, speakerAnalysis: nil)
     }
 
     private func publishTranscript(
         meetingID: String, expectedAudioSHA256: String, expectedRevision: String,
         utterances: [Utterance], publicationID: String,
         modelFingerprint: String, preprocessing: String, processingInput: ProcessingInput?,
-        expectedUtterances: [Utterance]?
+        expectedUtterances: [Utterance]?, speakerAnalysis: TranscriptSpeakerAnalysis?
     ) async throws -> String {
         try await database.writer.write { db in
             if let existing = try Row.fetchOne(db, sql: "SELECT * FROM automaticSyncTranscriptPublication WHERE id=?", arguments: [publicationID]) {
@@ -132,20 +153,36 @@ extension AutomaticSyncRepository {
                 return existing["outputRevision"]
             }
             if let processingInput {
-                guard try Self.captureProcessingInput(db, meetingID: meetingID) == processingInput else {
-                    throw Wire.Failure.staleRevision
+                let currentInput = try Self.captureProcessingInput(db, meetingID: meetingID)
+                if currentInput.revision != processingInput.revision
+                    || currentInput.meetingID != processingInput.meetingID
+                    || currentInput.audioSHA256 != processingInput.audioSHA256
+                    || currentInput.transcriptRevision != processingInput.transcriptRevision {
+                    guard processingInput.sourceDurationMs != nil,
+                          currentInput.meetingID == processingInput.meetingID,
+                          currentInput.audioSHA256 == processingInput.audioSHA256,
+                          currentInput.sourceDurationMs == processingInput.sourceDurationMs,
+                          currentInput.sourceLocaleIdentifier == processingInput.sourceLocaleIdentifier,
+                          let expectedUtterances,
+                          try Self.contentMatchesInput(db, meetingID: meetingID, expected: expectedUtterances,
+                                                      revision: expectedRevision) else {
+                        throw Wire.Failure.staleRevision
+                    }
                 }
             }
             let meeting = try Self.localID(db, entity: .meeting, id: meetingID)
-            guard try Self.transcriptRevision(db, meetingID: meeting) == expectedRevision else {
-                throw Wire.Failure.staleRevision
-            }
             let previous = try Utterance.filter(Utterance.Columns.meetingId == meeting).fetchAll(db)
-            if let expectedUtterances,
-               try Self.transcriptSnapshot(previous) != Self.transcriptSnapshot(expectedUtterances) {
+            let compatibleContent = try expectedUtterances.map {
+                try Self.contentMatchesInput(db, meetingID: meeting, expected: $0, revision: expectedRevision)
+            } ?? false
+            guard try Self.transcriptRevision(db, meetingID: meeting) == expectedRevision || compatibleContent else {
                 throw Wire.Failure.staleRevision
             }
-            let mappings = previous.flatMap { source in
+            if let expectedUtterances,
+               try Self.transcriptSnapshot(previous) != Self.transcriptSnapshot(expectedUtterances), !compatibleContent {
+                throw Wire.Failure.staleRevision
+            }
+            let mappings = (expectedUtterances ?? previous).flatMap { source in
                 utterances.filter { $0.startMs < source.endMs && $0.endMs > source.startMs }.map {
                     TranscriptMapping(sourceID: source.id, sourceRevision: source.revision,
                                       sourceStartMs: source.startMs, sourceEndMs: source.endMs, targetID: $0.id)
@@ -161,6 +198,12 @@ extension AutomaticSyncRepository {
                 modelFingerprint: modelFingerprint, preprocessing: preprocessing, inputRevision: expectedRevision)
             let id = try Self.registerResource(db, descriptor: descriptor)
             let revision = try Self.applyTranscript(db, payload: payload, resourceID: id, exportBiometrics: true)
+            if let speakerAnalysis {
+                try Self.applySpeakerAnalysis(db, analysis: speakerAnalysis, meetingID: meeting, resourceID: id)
+                let assigned = try Utterance.filter(Utterance.Columns.meetingId == meeting).order(Column("id")).fetchAll(db)
+                try db.execute(sql: "UPDATE automaticSyncTranscriptHead SET utterances=? WHERE meetingID=?",
+                               arguments: [try Self.transcriptSnapshot(assigned), meeting])
+            }
             try db.execute(sql: "INSERT OR IGNORE INTO automaticSyncResourcePayload VALUES(?,?)", arguments: [id, bytes])
             return revision
         }
@@ -197,15 +240,18 @@ extension AutomaticSyncRepository {
               }) else { throw Wire.Failure.invalid }
         let current = try Utterance.filter(Utterance.Columns.meetingId == meetingID).order(Column("id")).fetchAll(db)
         let currentRevision = try transcriptRevision(db, meetingID: meetingID)
+        let compatibleInput = currentRevision == payload.inputRevision ? current
+            : try inputWithCurrentIdentities(db, current: current, payload: payload)
+        let matchesInput = compatibleInput != nil
         let head = try Row.fetchOne(db, sql: "SELECT * FROM automaticSyncTranscriptHead WHERE meetingID=?", arguments: [meetingID])
         let headPath = try head.map { try JSONDecoder().decode([String].self, from: $0["path"]) } ?? []
         let previous: [Utterance]
         let parentPath: [String]
-        if currentRevision == payload.inputRevision {
-            previous = current
+        if let compatibleInput {
+            previous = compatibleInput
             if let savedPath = try Data.fetchOne(db, sql: """
                 SELECT path FROM automaticSyncTranscriptRevision WHERE meetingID=? AND revision=?
-                """, arguments: [meetingID, currentRevision]),
+                """, arguments: [meetingID, payload.inputRevision]),
                savedPath == (try Wire.encode(headPath)) {
                 parentPath = headPath
             } else {
@@ -246,11 +292,11 @@ extension AutomaticSyncRepository {
                 """, arguments: [canonicalID(utterance.id)])! else { throw Wire.Failure.invalid }
         }
         let path = parentPath + [resourceID]
-        if currentRevision != payload.inputRevision, path.first != headPath.first { throw Wire.Failure.staleRevision }
+        if !matchesInput, path.first != headPath.first { throw Wire.Failure.staleRevision }
         // Resource IDs are ASCII hashes. Compare at the first branch divergence;
         // extending a winning branch beats its ancestor, not a higher sibling.
-        let selected = currentRevision == payload.inputRevision || headPath.lexicographicallyPrecedes(path)
-        if selected, currentRevision != payload.inputRevision {
+        let selected = matchesInput || headPath.lexicographicallyPrecedes(path)
+        if selected, !matchesInput {
             guard let head, !(head["protected"] as Bool),
                   try transcriptHeadIsUnedited(db, current: current, snapshot: head["utterances"],
                                               resourceID: headPath.last!) else { throw Wire.Failure.staleRevision }
@@ -275,6 +321,9 @@ extension AutomaticSyncRepository {
                 WHERE r.entity='resource' AND r.entityID=? AND r.field='descriptor'
                 """, arguments: [resourceID])!
             let stamp = operation(descriptor).stamp
+            if matchesInput, currentRevision != payload.inputRevision {
+                try mapIdentityRefinements(db, current: current, payload: payload, resourceID: resourceID)
+            }
             for old in current {
                 try db.execute(sql: "INSERT OR IGNORE INTO automaticSyncTombstone VALUES('utterance',?)",
                                arguments: [canonicalID(old.id)])
@@ -304,8 +353,9 @@ extension AutomaticSyncRepository {
                         SELECT o.* FROM automaticSyncRegister r JOIN automaticSyncOperation o ON o.id=r.operationID
                         WHERE r.entity='utterance' AND r.entityID=? AND r.field=?
                         """, arguments: [canonicalID(utterance.id), field]) {
-                        let inferredID = try inferredIdentityOperationID(resourceID: resourceID, utteranceID: utterance.id, value: existing["value"])
-                        protected = protected || !(field == "speakerId" && existing["id"] as String == inferredID)
+                        let inferred = try isInferredIdentityOperation(existing["id"],
+                            resourceID: resourceID, utteranceID: utterance.id, value: existing["value"])
+                        protected = protected || !(field == "speakerId" && inferred)
                         continue
                     }
                     let value: String? = row[field]
@@ -360,15 +410,94 @@ extension AutomaticSyncRepository {
             guard start <= frontier else { return nil }
             frontier = max(frontier, end)
         }
+
         return frontier >= target.endMs ? identity : nil
+    }
+
+    private static func inputWithCurrentIdentities(
+        _ db: Database, current: [Utterance], payload: TranscriptPublication
+    ) throws -> [Utterance]? {
+        var sources: [String: TranscriptMapping] = [:]
+        for mapping in payload.mappings {
+            let id = canonicalID(mapping.sourceID)
+            if let previous = sources[id],
+               previous.sourceRevision != mapping.sourceRevision
+                || previous.sourceStartMs != mapping.sourceStartMs
+                || previous.sourceEndMs != mapping.sourceEndMs { return nil }
+            sources[id] = mapping
+        }
+        var input = current
+        for index in input.indices {
+            guard let source = sources[canonicalID(input[index].id)] else { continue }
+            guard source.sourceRevision > 0, input[index].revision >= source.sourceRevision,
+                  input[index].startMs == source.sourceStartMs,
+                  input[index].endMs == source.sourceEndMs else { return nil }
+            input[index].revision = source.sourceRevision
+        }
+        // Identity assignment also increments the legacy row revision. Normalize
+        // only that counter, then prove ALL non-biometric input fields still match
+        // the immutable input hash. Keep current identities for overlap inheritance.
+        return try transcriptRevision(db, utterances: input) == payload.inputRevision ? input : nil
+    }
+
+    private static func contentMatchesInput(
+        _ db: Database, meetingID: String, expected: [Utterance], revision: String
+    ) throws -> Bool {
+        let id = try localID(db, entity: .meeting, id: meetingID)
+        var current = try Utterance.filter(Utterance.Columns.meetingId == id).fetchAll(db)
+        guard current.count == expected.count,
+              Set(expected.map { canonicalID($0.id) }).count == expected.count else { return false }
+        let revisions = Dictionary(uniqueKeysWithValues: expected.map { (canonicalID($0.id), $0.revision) })
+        for index in current.indices {
+            guard let original = revisions[canonicalID(current[index].id)], current[index].revision >= original else { return false }
+            current[index].revision = original
+        }
+        return try transcriptRevision(db, utterances: current) == revision
+    }
+
+    private static func mapIdentityRefinements(
+        _ db: Database, current: [Utterance], payload: TranscriptPublication, resourceID: String
+    ) throws {
+        let rows = Dictionary(uniqueKeysWithValues: current.map { (canonicalID($0.id), $0) })
+        for target in payload.utterances {
+            var refinements: [Wire.Operation] = []
+            for mapping in payload.mappings where canonicalID(mapping.targetID) == canonicalID(target.id) {
+                guard let source = rows[canonicalID(mapping.sourceID)],
+                      source.revision > mapping.sourceRevision,
+                      let row = try Row.fetchOne(db, sql: """
+                        SELECT o.* FROM automaticSyncRegister r JOIN automaticSyncOperation o ON o.id=r.operationID
+                        WHERE r.entity='utterance' AND r.entityID=? AND r.field='speakerId'
+                        """, arguments: [canonicalID(source.id)]) else { continue }
+                refinements.append(operation(row))
+            }
+            guard let latest = refinements.max(by: { $0.stamp < $1.stamp }) else { continue }
+            let value = inheritedSpeaker(target: target, sources: current)
+            let identity = [resourceID, canonicalID(target.id), value] + refinements.map(\.id).sorted().map(Optional.some)
+            let id = "mapped-" + IncrementalSHA256.hex(SHA256.hash(data: try Wire.encode(identity)))
+            // Re-segmentation maps an existing correction, not a new model guess.
+            // Reuse its causal stamp; explicit target edits still win normally.
+            try store(db, operation: .init(
+                stamp: .init(counter: latest.stamp.counter, deviceID: latest.stamp.deviceID, operationID: id),
+                entity: .utterance, entityID: target.id, field: "speakerId", value: value, biometric: true),
+                sourcePeer: nil)
+        }
     }
 
     private static func transcriptSnapshot(_ utterances: [Utterance]) throws -> Data {
         try Wire.encode(utterances.sorted { canonicalID($0.id).utf8.lexicographicallyPrecedes(canonicalID($1.id).utf8) })
     }
 
-    private static func inferredIdentityOperationID(resourceID: String, utteranceID: String, value: String?) throws -> String {
-        "inferred-" + IncrementalSHA256.hex(SHA256.hash(data: try Wire.encode([resourceID, canonicalID(utteranceID), value])))
+    static func inferredIdentityOperationID(
+        resourceID: String, utteranceID: String, value: String?
+    ) throws -> String {
+        let key = [resourceID, canonicalID(utteranceID), value]
+        return "inferred-" + IncrementalSHA256.hex(SHA256.hash(data: try Wire.encode(key)))
+    }
+
+    private static func isInferredIdentityOperation(
+        _ operationID: String, resourceID: String, utteranceID: String, value: String?
+    ) throws -> Bool {
+        try operationID == inferredIdentityOperationID(resourceID: resourceID, utteranceID: utteranceID, value: value)
     }
 
     private static func transcriptHeadIsUnedited(_ db: Database, current: [Utterance], snapshot: Data,
@@ -383,7 +512,7 @@ extension AutomaticSyncRepository {
                 SELECT o.* FROM automaticSyncRegister r JOIN automaticSyncOperation o ON o.id=r.operationID
                 WHERE r.entity='utterance' AND r.entityID=? AND r.field='speakerId'
                 """, arguments: [canonicalID(id)]),
-               operation["id"] as String == (try inferredIdentityOperationID(resourceID: resourceID, utteranceID: id, value: operation["value"])) {
+               try isInferredIdentityOperation(operation["id"], resourceID: resourceID, utteranceID: id, value: operation["value"]) {
                 normalized[index].speakerId = previous.speakerId
             }
         }

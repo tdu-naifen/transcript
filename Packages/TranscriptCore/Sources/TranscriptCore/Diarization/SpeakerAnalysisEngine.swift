@@ -113,7 +113,7 @@ public actor SpeakerAnalysisEngine: SpeakerAnalyzing {
     }
 
     /// Existing installs may predate revision receipts; bind templates to actual bytes.
-    static func modelIdentifier(at directory: URL) throws -> String {
+    public static func modelIdentifier(at directory: URL) throws -> String {
         func collectFiles(in directory: URL, prefix: String = "") throws -> [(String, URL)] {
             var result: [(String, URL)] = []
             for child in try FileManager.default.contentsOfDirectory(

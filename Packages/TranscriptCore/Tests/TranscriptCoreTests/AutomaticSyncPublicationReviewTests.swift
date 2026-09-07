@@ -105,6 +105,98 @@ import Testing
                                           directory: directory.appendingPathComponent(UUID().uuidString))
     }
 
+    @Test(arguments: [false, true])
+    func returnedTranscriptMergesLaterIdentityAssignment(clearIdentity: Bool) async throws {
+        let fixture = try await fixture()
+        let (macDatabase, mac) = try await replica(fixture)
+        let returned = try await artifact(fixture, label: "returned-from-mac", from: mac)
+        let directory = try folder()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let replacementSpeaker = try await SpeakerRepository(fixture.db).createAnonymousSpeaker(deviceId: "phone")
+        try await UtteranceRepository(fixture.db).assignSpeaker(
+            utteranceId: fixture.original.id, speakerId: clearIdentity ? nil : replacementSpeaker.id, deviceId: "phone")
+        #expect(try await fixture.sync.transcriptRevision(meetingID: fixture.meeting.id) != fixture.revision)
+        try await install(returned, on: fixture.sync, directory: directory)
+        try await fixture.sync.publishResource(id: returned.operation.entityID)
+        let rows = try await UtteranceRepository(fixture.db).fetch(meetingId: fixture.meeting.id)
+        #expect(rows.map(\.text) == ["returned-from-mac"])
+        #expect(rows.map(\.speakerId) == [clearIdentity ? nil : replacementSpeaker.id])
+        try await fixture.sync.publishResource(id: returned.operation.entityID)
+        #expect(try await UtteranceRepository(fixture.db).fetch(meetingId: fixture.meeting.id) == rows)
+        let corrections = try await fixture.sync.pending(peerID: "peer", limit: 256)
+        try await mac.apply(corrections, from: "peer")
+        try await mac.apply(corrections, from: "peer")
+        let converged = try await UtteranceRepository(macDatabase).fetch(meetingId: fixture.meeting.id)
+        #expect(converged.map(\.id) == rows.map(\.id))
+        #expect(converged.map(\.speakerId) == rows.map(\.speakerId))
+        #expect(!((try await mac.pending(peerID: "peer", limit: 256)).contains { $0.id.hasPrefix("mapped-") }))
+    }
+
+    @Test func returnedTranscriptStillRejectsContentEditsAlongsideIdentityRefinement() async throws {
+        let fixture = try await fixture()
+        let returned = try await artifact(fixture, label: "obsolete-mac-output")
+        let directory = try folder()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try await UtteranceRepository(fixture.db).assignSpeaker(
+            utteranceId: fixture.original.id, speakerId: nil, deviceId: "phone")
+        try await fixture.db.writer.write { db in
+            try db.execute(sql: "UPDATE utterance SET text='Keep my correction', revision=revision+1 WHERE id=?",
+                           arguments: [fixture.original.id])
+        }
+        let before = try await UtteranceRepository(fixture.db).fetch(meetingId: fixture.meeting.id)
+        try await install(returned, on: fixture.sync, directory: directory)
+        await #expect(throws: Wire.Failure.staleRevision) {
+            try await fixture.sync.publishResource(id: returned.operation.entityID)
+        }
+        #expect(try await UtteranceRepository(fixture.db).fetch(meetingId: fixture.meeting.id) == before)
+    }
+
+    @Test(arguments: ["identity", "name", "text", "duration", "locale"])
+    func publisherMergesIdentityMetadataButKeepsActualModelInputFences(change: String) async throws {
+        let fixture = try await fixture()
+        let input = try await fixture.sync.captureProcessingInput(meetingID: fixture.meeting.id)
+        let expected = try await UtteranceRepository(fixture.db).fetch(meetingId: fixture.meeting.id)
+        switch change {
+        case "identity":
+            try await UtteranceRepository(fixture.db).assignSpeaker(
+                utteranceId: fixture.original.id, speakerId: nil, deviceId: "phone")
+        case "name":
+            try await SpeakerRepository(fixture.db).rename(
+                id: try #require(fixture.original.speakerId), displayName: "Keep this name", deviceId: "phone")
+        case "text":
+            try await fixture.db.writer.write {
+                try $0.execute(sql: "UPDATE utterance SET text='Keep this edit', revision=revision+1 WHERE id=?",
+                               arguments: [fixture.original.id])
+            }
+        case "duration":
+            try await fixture.db.writer.write {
+                try $0.execute(sql: "UPDATE meeting SET durationMs=1500 WHERE id=?", arguments: [fixture.meeting.id])
+            }
+        default:
+            try await fixture.db.writer.write {
+                try $0.execute(sql: "UPDATE meeting SET localeIdentifier='zh-CN' WHERE id=?", arguments: [fixture.meeting.id])
+            }
+        }
+        let output = Utterance(meetingId: fixture.meeting.id, startMs: 0, endMs: 1000, text: "Processed", originDeviceId: "mac")
+        if change == "identity" || change == "name" {
+            _ = try await fixture.sync.publishTranscript(input: input, utterances: [output], publicationID: "concurrent-\(change)",
+                modelFingerprint: "model", preprocessing: "asr16k", expectedUtterances: expected)
+            let rows = try await UtteranceRepository(fixture.db).fetch(meetingId: fixture.meeting.id)
+            #expect(rows.map(\.text) == ["Processed"])
+            if change == "identity" { #expect(rows.first?.speakerId == nil) }
+            else {
+                #expect(try await SpeakerRepository(fixture.db).fetch(id: try #require(fixture.original.speakerId))?.displayName == "Keep this name")
+            }
+        } else {
+            let before = try await UtteranceRepository(fixture.db).fetch(meetingId: fixture.meeting.id)
+            await #expect(throws: Wire.Failure.staleRevision) {
+                try await fixture.sync.publishTranscript(input: input, utterances: [output], publicationID: "concurrent-\(change)",
+                    modelFingerprint: "model", preprocessing: "asr16k", expectedUtterances: expected)
+            }
+            #expect(try await UtteranceRepository(fixture.db).fetch(meetingId: fixture.meeting.id) == before)
+        }
+    }
+
     @Test func metadataOnlyMacQAFixtureCannotEstablishAnAudioInput() async throws {
         let a = try AppDatabase.inMemory(), b = try AppDatabase.inMemory()
         let left = AutomaticSyncRepository(a), right = AutomaticSyncRepository(b)
