@@ -1,5 +1,15 @@
 # Mac UI — 本地会议处理与知识库
 
+## 2026-09-07：会议内处理与集中模型设置
+
+- 代码集成提交为 `256ee83145d74ad39096381d868baf2b879b1365`。独立最终代码 review 与本地回归通过；真机无 USB、真实声纹与完整原生交互门禁仍未通过，见 [逐项验收表](SYNC_ACCEPTANCE.md)，不能将以下实现说明当作功能可用声明。
+- 以下 2026-09-06 内容为历史边界，不再代表当前入口。侧栏仅保留 Meetings、Voiceprints、LLM Analysis（⌘1 / ⌘2 / ⌘3）。右上角连接按钮打开原生连接面板，配对确认仍会自动打开该面板，确认、拒绝、断开流程保持原实现。
+- 所有模型选择、目录、安装确认、进度、取消、错误和重试集中在 Settings 的 Transcription Models / Analysis Models；包括 ASR、diarization、speaker embedding、LLM 和 text embedding。LLM Analysis 仅保留设置入口，不再内嵌模型管理。关闭分析页不会取消 Settings 中的下载。
+- 真实会议内提供 Process、实际阶段 / 进度、取消、错误 / 重试、完成版本查看及需确认的 Reprocess。只读示例不可处理。完成稿为 ASR-only，通过完整输入版本检查后发布并回传；不把已安装的 Sortformer / CAMPPlus 冒称为已执行的说话人识别。
+- `MacProcessing` 的本机清单保存输入音频 revision、完整输入 token、处理配置标识和新自动同步的 peer / operation 来源。已授权的新自动同步在可靠提交音频后由集成层自动入队；旧 immutable-copy v2 回执、`audioVerifiedOnMacAt` 字段、元数据和资源描述符均不会授权自动处理。标题、转写更新和重连不生成重复请求。没有兼容资源时为 `waitingForConfiguration`，不是 running，也不会静默下载。
+- 未开始的请求在设置完成后恢复；已取消 / 失败 / 中断请求不会被重连偷偷重试。启动时将进行中任务持久转换为 `needsRetry`，保留原音频和历史结果。已有完成任务的配置修改不会触发隐式重处理；显式 Reprocess 创建新版本。
+- 处理清单与调度属于 Mac 本机，不是共享协议或同步回执；可靠自动音频导入来源、提交与入队间崩溃恢复、自动结果发布及跨端应用由同步集成层负责。结果生成后再次检查会议是否仍存在、输入是否仍匹配。
+
 > 更新：2026-09-06
 > 状态：设计规格 + 原生 Mac 实现。已接入固定协议的认证会议副本接收；包含备份目录、模型目录、本地转写及 LLM / embedding。真实 iPhone 双端验收由 iOS owner 统筹；双向同步、结果回传及 Mac 40 人处理不包含在本次接收协议中。入口见 [Mac copy QA](MAC_COPY_QA.md)。
 > 配套：[iOS UI](IOS_UI.md)、[工程计划](PLAN.md)、[问题清单](BUGS.md)。

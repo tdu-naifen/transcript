@@ -1,3 +1,42 @@
+automatic_bidirectional_sync_20260907:
+  authority: "Current worktree implementation entry; historical entries below do not certify this branch."
+  work_root: "/Users/tingzhen/Desktop/transcript.worktrees/automated-bidirectional-sync-implementation"
+  starting_head: "8cf3a9477c8ebf10629c55c272778d0753b8349b"
+  status: "implementation_integrated_physical_acceptance_blocked"
+  integration_commit: "256ee83145d74ad39096381d868baf2b879b1365"
+  commits:
+    live_identity_observation: "b380cf7081c29eaa59e83e2c55c4124527af0a20"
+    core_replication: "b1b8e0b939f19960fdecc8bc7b928a703a1d28ff"
+    authenticated_transport: "2151930fb1f64c6d9b8c7e0297bc988af340cb7e"
+    ios_library_observation: "d3470b6ad420e04391d0a818888905f755b554be"
+    mac_workflow_integration: "256ee83145d74ad39096381d868baf2b879b1365"
+  evidence_root: "/Users/tingzhen/.copilot/session-state/a4ab0df9-4371-44ee-be89-af180b56d832/files"
+  contract: "SYNC_ADR.md and SYNC_CONTRACT.md; independent automaticSync.v1 and automaticSyncResources.v1 capabilities."
+  immutable_boundary: "Shared/Pairing and Shared/Sync/MeetingCopyWire.swift remain unchanged."
+  verification:
+    core_final: "18 XCTest plus 204 Swift Testing tests passed; exact migration inventory assertions updated for v15."
+    mac_final: "209 signed tests, one explicit installed-model opt-in skip, zero failures."
+    ios_final: "152 tests passed, zero failures; isolated simulator only."
+    postcommit: "30 signed Mac tests passed; generic iOS device build passed without signing/installation."
+    independent_review: "All 61 changed production files equal final reviewed commit; no remaining reported code blocker."
+    production_digest: "6f612556946f13ba51f250d09b0a0c92219a6bd6190ae8419ae80f9e8d81ea75"
+    live_captured_frame_ms: "assignment 66.95, correction 66.74, rename 66.59; synthetic pipeline, not real inference or physical scan-out."
+    receipts: "build-receipts.txt and integration-production-check.log"
+  remaining:
+    - "Physical no-USB discovery, pinned reconnect, audio/text transfer and real model result loop."
+    - "Real voiceprint/artifact and natural recognition latency acceptance."
+    - "Full native keyboard, VoiceOver, localization and appearance interaction matrix."
+  isolation:
+    dedicated_simulator: "5ABE51F3-3920-4AC6-9300-32AFBB8ED918"
+    dedicated_simulator_status: "Deleted after final evidence capture; shared A565 not reset or restored."
+    deviation: "Initial live worker used shared A565 before processing the prohibition; app bundles/preferences were affected. Excluded from final acceptance; no speculative reset/restore."
+    physical_device: "No installation, trust confirmation or system-permission change performed."
+  release_claim: "NOT accepted as physically usable. USB-related failure stage remains unconfirmed."
+  acceptance_report: "SYNC_ACCEPTANCE.md"
+  retained_builds: "Evidence root builds/ contains exact Mac XCTest host and unsigned iOS device app; executable hashes verified."
+  temporary_cleanup: "Parent-only temporary DerivedData/package caches removed; evidence logs/results and build bundles retained."
+  push: "Not authorized; no push performed."
+
 ios_recovery_20260907_live_verified:
   authority: "Current entry supersedes historical running/ownership claims below."
   work_root: "/Users/tingzhen/Desktop/transcript"
