@@ -28,7 +28,7 @@ not close physical-product acceptance.
 | Mac model Settings | Processing sidebar mixed model management with work. | Settings contains ASR/diarization/embedding model controls and language-model controls; meeting views contain Process, progress, cancel, error, retry, result and Reprocess. | Model/workflow unit checks; full native interaction matrix pending. |
 | Automatic processing | Manual immutable copy did not imply processing permission. | Authorized, verified automatic-audio adoption/replay enqueues persistent jobs; legacy-v2 receipts do not. Missing models wait for configuration. | Synthetic runner + real database/file tests; real-model end-to-end gate pending. |
 | Bidirectional edits | Existing UUID was a v2 conflict, not an edit. | Atomic local capture, authenticated replication, UUID-only alias resolution, database-backed library/detail refresh. | Repository/channel and iOS observation tests; physical offline/restart UI gate pending. |
-| Voiceprints | v2 excluded global identities and vectors. | Stable IDs, current/original names, associations, real artifact bytes, namespace-aware adoption/matching; Mac global bank and rename are wired. Unknown provenance is retained and excluded from matching. | Synthetic artifact and namespace tests only; **not real-voice acceptance**. |
+| Voiceprints | v2 excluded global identities and vectors. | Stable IDs, current/original names, associations, real artifact bytes, namespace-aware adoption/matching; Mac global bank and rename are wired. Unknown provenance is retained and excluded from matching. | Real CAM++ engine smoke tests now pass on macOS and iOS Simulator (follow-up below). Actual two-product voiceprint generation/transfer and physical acceptance remain open. |
 | Connection entry | Redundant sidebar routes. | Mac retains the top-right connection sheet, pairing/rejection, trusted-device settings and recovery. | Source/build/logic checks; native keyboard/VoiceOver gate pending. |
 | Automatic reconciliation | Explicit one-way Send/Retry only. | Independently negotiated metadata/resource protocols, committed-change observation, durable operation/byte recovery, explicit peer permissions and source-preserving relay. | Real SQLite/files and authenticated-loopback component tests; physical all-library gate pending. |
 | iPhone live identity | Expanded view owned observation; collapsed model relied on later ASR/publication. | Recording model owns observation; assignment/correction/name/color do not require new ASR or a view remount. | Same-mounted-view screenshot text and separate dot-color checks with a one-second capture deadline; real inference/foreground gate pending. |
@@ -60,6 +60,82 @@ An analysis-resource library API/test is not a claim of automatic LLM publicatio
   copies while preserving independent references and global identities/voiceprints.
 
 ## Evidence ledger
+
+### 2026-09-07 voiceprint QA and reprocessing package
+
+Production source: `7dac0e34883e2d4b940693c646289435f85d4881`, including the
+AAC reprocessing input-bound repair. Real-model test revision: `dcf161e`.
+Later QA documentation/test commits do not change the packaged production source.
+`voiceprint-qa-production.sha256` records the source manifest for merge verification.
+
+The old optional real-model test only ran on iOS Simulator, used a placeholder
+model identifier without the required preprocessing namespace, and did not
+assert that identity matching succeeded. It now uses the actual artifact hash,
+the production preprocessing identifier and unchanged default matching policy
+(cosine >= 0.7, candidate margin >= 0.1, clean audio >= 2 seconds).
+Independent code review found no blocker in this test change.
+
+| Verification | Result | Evidence / scope |
+| --- | --- | --- |
+| macOS Core voiceprint selection | 75 passed: 17 XCTest + 58 Swift Testing; no skips | `voiceprint-core-mac-final.log`; real inference plus deterministic safety regressions |
+| iOS Simulator Core selection | 39 named tests passed, 42 parameterized invocations; no skips | `voiceprint-core-ios-final.log`, `.xcresult`; real CAM++ executed, not just an enabled test declaration |
+| Native iOS app | 70 passed; no skips | `voiceprint-ios-qa-tests.xcresult`, `voiceprint-ios-qa-receipt.json`; speaker observation/lifecycle, consent and reprocessing use injected identity/speech engines, not natural identification |
+| Native Mac app | Final 31 passed; no skips | `voiceprint-mac-qa-rerun2.xcresult`, `voiceprint-mac-qa-report.txt`; 11 voiceprint library, 19 sync integration, 1 bilateral-consent test, with synthetic vectors |
+| Real artifact persistence | Passed on both engine platforms | Correct identity binding, rename, database close/reopen, meeting deletion preserves global template, removal of another speaker's template causes unknown rejection |
+| Physical iPhone, natural live recognition, unplugged two-product voiceprint exchange | **Not run** | No physical install, user recordings, permission prompts or trust dialogs were operated |
+| Mac user-facing local voiceprint inference | **Not implemented by the current ASR job** | `MacCoreProcessingRunner` remains ASR-only. Installed CAM++ and a passing shared-engine test do not mean the Mac product invokes it. Voiceprints displays/renames/synchronizes stored profiles. |
+
+The isolated acoustic corpus is three existing LibriSpeech test-clean recordings
+(`1089-134686-0000`, `1089-134686-0002`, `1188-133604-0000`; Panayotov et al.,
+OpenSLR 12, CC BY 4.0), not user meetings or random vectors.
+Both platforms used the same copied CAM++ files:
+`campplus:62ce4257968340816c1404499bf07e862d6a10a2c8dc74156ed525823d8459f8:16k:192`.
+Only scores and artifact hashes are logged, not waveform data or complete vectors.
+
+| Clean speech | macOS engine | iOS Simulator engine |
+| --- | --- | --- |
+| 1 second | Needs more audio | Needs more audio |
+| 2 seconds | No match, same-speaker cosine 0.689 | No match, same-speaker cosine 0.686 |
+| 3 seconds | Matched 1089, cosine 0.761 | No match: cosine 0.757 but candidate margin < 0.1 |
+| 5 seconds | Matched 1089, cosine 0.818 | Matched 1089, cosine 0.811 |
+
+Five-second recognition is asserted against an independent utterance; the
+other enrolled speaker stays distinct, and that speaker is rejected after
+unenrollment. This small smoke corpus is **not accuracy calibration** and does
+not justify lowering thresholds for shorter audio. Runtime differences at three
+seconds are retained and reported, not hidden by changing the expected policy.
+
+Reproduction uses the existing `swift test` / `TranscriptCore` Xcode scheme.
+Provision `models/` and `audio/` under a unique fixture directory. Host command:
+
+```sh
+BACKEND_REAL_CAMPLUS=1 BACKEND_REAL_FIXTURE_DIR="$FIXTURES" \
+swift test --package-path Packages/TranscriptCore --skip-update \
+  --filter 'Voiceprint|ReprocessingVoiceprintTests|SpeakerAnalysisProvenanceTests|LiveSpeakerRepositoryTests'
+```
+
+For the dedicated iOS Simulator, copy the same fixtures into its own `data/tmp`,
+set `TEST_RUNNER_BACKEND_REAL_CAMPLUS=1` and
+`TEST_RUNNER_BACKEND_REAL_FIXTURE_DIR` to that directory, and run `xcodebuild test`
+with scheme `TranscriptCore`. The exact invocation and selected six suites are
+in `voiceprint-core-ios-final.log`. Native app commands/build hashes are in the
+platform QA receipts. Each runner uses isolated database/build directories.
+
+All attempted failures remain in the evidence: the Mac initial run was 26 passed
+and 5 fixture-access failures (Cocoa 513 / POSIX 1), followed by an aborted
+directory-setup attempt before tests. The final signed test host created its
+unique test root within its sandbox and passed 31/31 without production edits
+or permission changes. Preflight process lookup also exited 1 before any tests.
+These are not counted as skipped or erased from the record. Native iOS and both
+final real-model runs had no test failures or skips.
+
+The iPhone package is a development-signed `Payload/Transcript.app` IPA, not an
+App Store/TestFlight release. The normal Mac development package is distinct
+from the retained signed XCTest host used for QA; neither claims notarization.
+Package filenames retain production revision `7dac0e3`; later test/docs commits
+have byte-identical production inputs. The package checksums and final main
+integration revision are recorded in the session's packaging receipt after merge.
+No packaged application was installed on the user's iPhone or replaced on Mac.
 
 ### Post-merge cleanup
 
