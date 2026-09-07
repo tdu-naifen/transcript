@@ -1,0 +1,25 @@
+{
+  "repository": "https://github.com/FluidInference/FluidAudio",
+  "version": "0.15.6",
+  "revision": "4dbf4f9f9a5ff3a53ade848d7ba4e3df13db859b",
+  "license": "Apache-2.0",
+  "licenseSHA256": "c71d239df91726fc519c6eb72d318ec65820627232b2f796219e87dcf35d0ab4",
+  "retainedVerbatim": [
+    "LICENSE",
+    "CITATION.cff",
+    "ThirdPartyLicenses",
+    "Sources/FastClusterWrapper",
+    "Sources/MachTaskSelfWrapper",
+    "Sources/FluidAudio except the adapted and added files listed below"
+  ],
+  "adapted": {
+    "Package.swift": "Library-only distribution: removes development CLI/tests/dependencies, retains original runtime wrappers, resources, and pinned NemoTextProcessing binary URL/checksum.",
+    "Sources/FluidAudio/Diarizer/Offline/Core/PreparedDiarization.swift": "Retains immutable preparation configuration for same-run evidence validation.",
+    "Sources/FluidAudio/Diarizer/Offline/Core/OfflineDiarizerManager.swift": "Adds clusterWithEvidence and cancellation propagation/draining. Original cluster API, AHC/VBx algorithms, thresholds, and quality defaults are retained."
+  },
+  "added": {
+    "Sources/FluidAudio/Diarizer/Offline/Core/OfflineDiarizationEvidence.swift": "Public read-only same-invocation segmentation, extraction masks, vectors and cluster assignments; no production @testable access."
+  },
+  "modelProvenance": "Separate CC-BY-4.0 pinned model receipt/card/attribution in Packages/TranscriptCore/Sources/TranscriptCore/Resources. No model weights are vendored here.",
+  "verification": "Compared retained source directories and notices against the local checkout at the exact revision above on 2026-09-06."
+}

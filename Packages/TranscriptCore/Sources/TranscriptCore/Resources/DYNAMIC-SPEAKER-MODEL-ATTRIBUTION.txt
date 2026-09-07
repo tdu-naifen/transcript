@@ -1,0 +1,17 @@
+Public model source:
+https://huggingface.co/FluidInference/speaker-diarization-coreml
+Revision: 1ed7a662fdc7109e36d822db793ee6eebdaf8594
+
+License declared in the pinned model card and model metadata: CC-BY-4.0
+License terms: https://creativecommons.org/licenses/by/4.0/
+
+Attribution: Fluid Inference / FluidInference CoreML conversion; pyannote
+speaker-diarization-community-1; WeSpeaker; VBx.
+See dynamic-speaker-model-card.txt for the full pinned model card and original research citations.
+Model bytes are unchanged. This integration adds independent reconstruction and tests;
+it does not imply endorsement by the model authors.
+
+SDK source license and third-party notices are retained verbatim under
+Packages/FluidAudioEvidence/LICENSE and Packages/FluidAudioEvidence/ThirdPartyLicenses/.
+See Packages/FluidAudioEvidence/VENDOR-PROVENANCE.json for the pinned SDK revision
+and the complete list of locally adapted source files.

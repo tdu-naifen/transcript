@@ -68,6 +68,7 @@ public struct SpeakerAnalysisRepository: Sendable {
         meetingID: String,
         expectedUtterances: [Utterance],
         slotsByUtterance: [String: Int],
+        unknownUtteranceIDs: Set<String> = [],
         voices: [DetectedVoiceprint],
         timeline: [DiarizerSegment] = [],
         modelIdentifier: String,
@@ -82,6 +83,10 @@ public struct SpeakerAnalysisRepository: Sendable {
             }
             let current = try Utterance.filter(Utterance.Columns.meetingId == meetingID).fetchAll(db)
             guard current.sorted(by: { $0.id < $1.id }) == expectedUtterances.sorted(by: { $0.id < $1.id }) else {
+                throw VoiceprintBindingError.staleExpectation
+            }
+            guard unknownUtteranceIDs.isSubset(of: Set(current.map(\.id))),
+                  unknownUtteranceIDs.isDisjoint(with: slotsByUtterance.keys) else {
                 throw VoiceprintBindingError.staleExpectation
             }
             let links = try MeetingSpeaker.filter(Column("meetingId") == meetingID).fetchAll(db)
@@ -149,18 +154,32 @@ public struct SpeakerAnalysisRepository: Sendable {
             for var utterance in current {
                 if let id = utterance.speakerId,
                    try Speaker.fetchOne(db, key: id)?.displayName != nil { continue }
-                let identity = timeline.isEmpty
+                let unknown = unknownUtteranceIDs.contains(utterance.id)
+                if unknown && utterance.revision > 1 {
+                    let automatic = try Bool.fetchOne(db, sql: """
+                        SELECT EXISTS(SELECT 1 FROM speakerAnalysisAutomaticAssignment
+                        WHERE utteranceId = ? AND speakerId = ? AND utteranceRevision = ?)
+                        """, arguments: [utterance.id, utterance.speakerId, utterance.revision]) ?? false
+                    if !automatic { continue }
+                }
+                let identity = unknown ? nil : timeline.isEmpty
                     ? slotsByUtterance[utterance.id].flatMap { resolved[$0]?.id }
                     : SpeakerOverlapAssigner.speakerID(
                         utteranceStartMs: utterance.startMs, utteranceEndMs: utterance.endMs,
                         segments: timeline, identitiesBySlot: resolved.mapValues(\.id)
                     )
-                if let identity, identity != utterance.speakerId {
+                if (unknown || identity != nil), identity != utterance.speakerId {
                     utterance.speakerId = identity
                     utterance.revision += 1
                     utterance.updatedAt = Date()
                     utterance.originDeviceId = deviceID
                     try utterance.update(db)
+                    if let identity {
+                        try db.execute(sql: """
+                            INSERT INTO speakerAnalysisAutomaticAssignment(utteranceId, speakerId, utteranceRevision)
+                            VALUES (?, ?, ?)
+                            """, arguments: [utterance.id, identity, utterance.revision])
+                    }
                 }
             }
             let retainedIDs = Set(try Utterance.filter(Utterance.Columns.meetingId == meetingID).fetchAll(db).compactMap(\.speakerId))

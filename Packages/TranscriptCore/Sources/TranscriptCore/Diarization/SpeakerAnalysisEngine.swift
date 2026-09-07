@@ -26,52 +26,19 @@ public actor SpeakerAnalysisEngine: SpeakerAnalyzing {
     ) async throws {
         let expected = try await UtteranceRepository(database).fetch(meetingId: meetingID)
         await progress(.loadingAudio)
-        let sortformer = try await downloader.ensureSortformerInstalled()
+        let dynamicModels = try await downloader.ensureDynamicSpeakersInstalled()
         let campPlus = try await downloader.ensureCampPlusInstalled()
         let modelIdentifier = try Self.modelIdentifier(at: campPlus)
         try Task.checkCancellation()
         await progress(.detectingSpeakers)
-        let diarizer = SpeakerDiarizer(configuration: .init(mainModelPath: sortformer))
-        let reader = try RecordedAudioReader(url: audioURL)
-        let events = await diarizer.events()
-        await diarizer.run(chunks: AsyncStream(unfolding: { await reader.next() }))
-        var timeline = DiarizationTimelineAccumulator()
-        do {
-            try await withTaskCancellationHandler {
-                for await event in events {
-                    try Task.checkCancellation()
-                    switch event {
-                    case .update(let finalized, let tentative):
-                        timeline.apply(finalized: finalized, tentative: tentative)
-                    case .failed(let reason):
-                        throw MeetingReprocessingError.speakerDetectionFailed(reason)
-                    case .ready, .finished: break
-                    }
-                }
-                try Task.checkCancellation()
-                try await diarizer.finishAndWait()
-                try await reader.checkFailure()
-            } onCancel: {
-                Task { await diarizer.cancelAndWait() }
-            }
-        } catch {
-            await diarizer.cancelAndWait()
-            await diarizer.cleanup()
-            throw error
-        }
-        await diarizer.cleanup()
-        let segments = timeline.segments
-        let slots = Set(segments.map(\.speakerIndex)).sorted()
-        guard !slots.isEmpty else { throw MeetingReprocessingError.noSpeechDetected }
-        let frames = await reader.frameCount
-        let selector = VoiceprintSampleSelector(configuration: .init(minimumDuration: VoiceprintMatchPolicy().minimumCleanDuration))
+        let analysis = try await DynamicSpeakerBackend(modelDirectory: dynamicModels).analyze(audioURL: audioURL)
+        let segments = analysis.segments
+        let slots = analysis.speakerIndices
         var evidence: [Int: VoiceprintSampleEvidence] = [:]
         for slot in slots {
             do {
-                evidence[slot] = try selector.evidence(
-                    speakerIndex: slot, audioFrameCount: frames, sampleRate: 16_000,
-                    finalizedSegments: segments
-                )
+                evidence[slot] = try analysis.cleanEvidence(
+                    speakerIndex: slot, minimumDuration: VoiceprintMatchPolicy().minimumCleanDuration)
             } catch VoiceprintSampleSelectionError.insufficientCleanAudio {
                 // A real diarized turn may be too short for a reliable persistent template.
                 continue
@@ -124,15 +91,22 @@ public actor SpeakerAnalysisEngine: SpeakerAnalyzing {
             throw error
         }
         try Task.checkCancellation()
+        guard try IncrementalSHA256.hashFile(at: audioURL).sha256 == analysis.audioSHA256 else {
+            throw MeetingReprocessingError.speakerIdentificationFailed("The recorded audio changed during speaker analysis.")
+        }
         await progress(.saving)
         var assignments: [String: Int] = [:]
+        var unknown: Set<String> = []
         for utterance in expected {
-            assignments[utterance.id] = SpeakerOverlapAssigner.speakerIndex(
-                utteranceStartMs: utterance.startMs, utteranceEndMs: utterance.endMs, segments: segments
-            )
+            if let slot = analysis.speakerIndex(startMs: utterance.startMs, endMs: utterance.endMs) {
+                assignments[utterance.id] = slot
+            } else {
+                unknown.insert(utterance.id)
+            }
         }
         try await SpeakerAnalysisRepository(database).apply(
             meetingID: meetingID, expectedUtterances: expected, slotsByUtterance: assignments,
+            unknownUtteranceIDs: unknown,
             voices: voices, timeline: segments, modelIdentifier: modelIdentifier,
             deviceID: deviceID
         )

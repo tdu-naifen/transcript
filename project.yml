@@ -14,8 +14,7 @@ packages:
   TranscriptCore:
     path: Packages/TranscriptCore
   FluidAudio:
-    url: https://github.com/FluidInference/FluidAudio.git
-    from: 0.12.4
+    path: Packages/FluidAudioEvidence
 
 targets:
   Transcript:
@@ -25,6 +24,7 @@ targets:
       # Recursive: regenerate the ignored .xcodeproj after adding or removing App files.
       - path: App
       - path: Shared/Pairing
+      - path: Shared/Sync
     dependencies:
       - package: TranscriptCore
         product: TranscriptCore
