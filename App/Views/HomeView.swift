@@ -198,10 +198,13 @@ struct HomeView: View {
                 if model.hasSearchConditions { await model.resetAndSearch()?.value }
             }
             .modifier(MeetingDeletionConfirmation(meeting: $pendingDeletion) { await library.delete($0) })
-            .onChange(of: library.deletionRevision) { _, _ in
+            .onChange(of: library.contentRevision) { _, _ in
                 if model.hasSearchConditions { model.resetAndSearch() }
             }
-            .task { await library.reload() }
+            .task {
+                await library.reload()
+                if model.hasSearchConditions { model.resetAndSearch() }
+            }
             .onChange(of: model.query) { _, _ in model.filtersChanged() }
             .onChange(of: model.speakerIDs) { _, _ in model.filtersChanged() }
             .onChange(of: model.usesDateRange) { _, _ in model.filtersChanged() }

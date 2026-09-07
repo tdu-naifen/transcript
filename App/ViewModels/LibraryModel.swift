@@ -1,4 +1,5 @@
 import Foundation
+import GRDB
 import Observation
 import TranscriptCore
 
@@ -12,6 +13,7 @@ final class LibraryModel {
     private(set) var hasLoaded = false
     private(set) var deletingIDs: Set<String> = []
     private(set) var deletionRevision = 0
+    private(set) var contentRevision = 0
     private(set) var errorMessage: String?
     private(set) var errorTitleKey = "library.load_failed"
 
@@ -37,6 +39,9 @@ final class LibraryModel {
     private var reloadID = UUID()
     private(set) var nextCursor: SearchCursor?
     let database: AppDatabase
+    @ObservationIgnored private var observation: AnyDatabaseCancellable?
+    @ObservationIgnored private var databaseRefreshTask: Task<Void, Never>?
+    private var needsDatabaseRefresh = false
 
     init(services: AppServices) {
         repository = MeetingRepository(services.database)
@@ -46,17 +51,58 @@ final class LibraryModel {
         recordingSession = services.session
         recordingFinalization = services.recordingFinalization
         database = services.database
+        observation = DatabaseRegionObservation(
+            tracking: Meeting.all(), Speaker.all(), MeetingSpeaker.all(), Utterance.all()
+        ).start(in: database.writer) { [weak self] error in
+            Task { @MainActor [weak self] in
+                self?.errorTitleKey = "library.load_failed"
+                self?.errorMessage = error.localizedDescription
+            }
+        } onChange: { [weak self] _ in
+            Task { @MainActor [weak self] in self?.databaseDidChange() }
+        }
     }
 
-    func reload() async {
+    isolated deinit {
+        observation?.cancel()
+        databaseRefreshTask?.cancel()
+    }
+
+    private func databaseDidChange() {
+        contentRevision &+= 1
+        needsDatabaseRefresh = true
+        guard databaseRefreshTask == nil else { return }
+        databaseRefreshTask = Task { [weak self] in
+            guard let self else { return }
+            defer { databaseRefreshTask = nil }
+            while needsDatabaseRefresh && !Task.isCancelled {
+                needsDatabaseRefresh = false
+                await reload(preservingLoadedCount: true)
+            }
+        }
+    }
+
+    func reload(preservingLoadedCount: Bool = false) async {
         let requestID = UUID()
         reloadID = requestID
         isLoading = true
+        let desiredCount = preservingLoadedCount ? max(25, meetings.count) : 25
         defer { if reloadID == requestID { isLoading = false } }
         do {
-            let page = try await searchRepository.search(SearchQuery(limit: 25))
-            let fetched = page.results.map(\.meeting)
-            let speakersByMeeting = Dictionary(uniqueKeysWithValues: page.results.map {
+            try await AutomaticSyncRepository(database).cleanupDeletedMeetingAudio(audioDirectory: store.directory)
+            try await AutomaticSyncRepository(database).collectRevokedFiles()
+            var results: [SearchResult] = []
+            var cursor: SearchCursor?
+            var fetchedIDs: Set<String> = []
+            repeat {
+                let page = try await searchRepository.search(SearchQuery(limit: 25, cursor: cursor))
+                try Task.checkCancellation()
+                guard reloadID == requestID else { return }
+                results.append(contentsOf: page.results.filter { fetchedIDs.insert($0.meeting.id).inserted })
+                cursor = page.nextCursor
+            } while results.count < desiredCount && cursor != nil
+            let fetched = results.map(\.meeting)
+            let speakersByMeeting = Dictionary(uniqueKeysWithValues: results.map {
                 ($0.meeting.id, $0.participants.map(\.speaker))
             })
             try Task.checkCancellation()
@@ -65,7 +111,7 @@ final class LibraryModel {
                 $0.startedAt == $1.startedAt ? $0.id > $1.id : $0.startedAt > $1.startedAt
             }
             participants = speakersByMeeting
-            nextCursor = page.nextCursor
+            nextCursor = cursor
             hasLoaded = true
             errorMessage = nil
         } catch is CancellationError {
@@ -108,8 +154,8 @@ final class LibraryModel {
         return try? store.url(forFileName: fileName)
     }
 
-    /// Existing local deletion only. Never emits a cross-device delete or purges
-    /// audio independently of the meeting. Keep audio intact if the DB delete fails.
+    /// The repository atomically records deletion for authorized sync. Keep audio
+    /// intact if the database transaction fails.
     @discardableResult
     func delete(_ meeting: Meeting) async -> Bool {
         guard deletingIDs.insert(meeting.id).inserted else { return false }
@@ -142,7 +188,8 @@ final class LibraryModel {
         deletionRevision += 1
         errorMessage = nil
         do {
-            if let fileName = stored?.audioFileName { try store.remove(fileName: fileName) }
+            try await AutomaticSyncRepository(database).cleanupDeletedMeetingAudio(audioDirectory: store.directory)
+            try await AutomaticSyncRepository(database).collectRevokedFiles()
         } catch {
             errorTitleKey = "library.audio_cleanup_failed"
             errorMessage = error.localizedDescription

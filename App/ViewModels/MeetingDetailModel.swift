@@ -44,6 +44,7 @@ final class MeetingDetailModel {
     private(set) var speakerProjection = SpeakerProjection.empty
     private(set) var sessionPhase: RecordingSession.Phase = .idle
     private(set) var isCurrentRecording = false
+    private(set) var isDeleted = false
 
     private let database: AppDatabase
     private let session: RecordingSession
@@ -254,7 +255,19 @@ final class MeetingDetailModel {
     private func applyProjection(_ snapshot: SpeakerProjection) {
         speakerProjection = snapshot
         utterances = snapshot.utterances
-        if let meeting = snapshot.meeting { self.meeting = meeting }
+        guard let savedMeeting = snapshot.meeting else {
+            isDeleted = true
+            playback.stop()
+            audioURL = nil
+            playback = AudioPlaybackModel(
+                url: nil, durationMs: 0,
+                recordingIsActive: recordingIsActive, audioOwnership: audioOwnership
+            )
+            applySpeakers([])
+            return
+        }
+        isDeleted = false
+        meeting = savedMeeting
         let resolvedURL = meeting.audioFileName.map { audioStore.directory.appendingPathComponent($0) } ?? audioURL
         let playbackDuration = meeting.durationMs > 0 ? meeting.durationMs : displayDurationMs
         if resolvedURL != audioURL || playback.durationMs != playbackDuration {

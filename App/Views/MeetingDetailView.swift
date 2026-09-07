@@ -185,6 +185,9 @@ struct MeetingDetailView: View {
         }
         .speakerRenameFailureAlert(model: model, enabled: !isInsightsPresented)
         .task { await model.observe() }
+        .onChange(of: model.isDeleted) { _, deleted in
+            if deleted { dismiss() }
+        }
         .task { await model.observeRecordingState() }
         .onDisappear {
             model.playback.stop()

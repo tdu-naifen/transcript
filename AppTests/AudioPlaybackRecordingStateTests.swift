@@ -176,8 +176,12 @@ final class AudioPlaybackRecordingStateTests: XCTestCase {
 
     func testInitialSeekConsumedWhileCapturingDoesNotJumpOnLaterReload() async throws {
         let fixture = try makeRecorder()
+        let meeting = Meeting(
+            title: "Saved", startedAt: Date(), durationMs: 4_000, state: .recorded, originDeviceId: "test"
+        )
+        try await MeetingRepository(fixture.services.database).insert(meeting)
         let detail = MeetingDetailModel(
-            meeting: Meeting(title: "Saved", startedAt: Date(), durationMs: 4_000, originDeviceId: "test"),
+            meeting: meeting,
             audioURL: fixture.url, services: fixture.services, initialSeekMs: 1_000
         )
         await fixture.recorder.toggleRecording()
