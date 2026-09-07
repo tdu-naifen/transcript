@@ -26,7 +26,7 @@ struct MacConnectionView: View {
                 VStack(spacing: 23) {
                     HStack(spacing: 25) {
                         MacPhoneConnectionIcon(
-                            isConnected: service.pairing.connectedPeer != nil,
+                            isConnected: service.pairing.isConnected,
                             isWorking: workspace.meetingCopy.progress != nil || service.pairing.state == .negotiating,
                             size: 52
                         )
@@ -43,8 +43,8 @@ struct MacConnectionView: View {
                         .textSelection(.enabled)
                     controls
                     MacStatusLabel(
-                        title: service.pairing.connectedPeer == nil ? "Not connected" : "Authenticated connection",
-                        color: service.pairing.connectedPeer == nil ? .red : .green
+                        title: service.pairing.isConnected ? "Authenticated connection" : "Not connected",
+                        color: service.pairing.isConnected ? .green : .red
                     )
                     Text(workspace.meetingCopy.canReceive
                          ? "Meeting receiving is enabled. Send or retry explicitly from your iPhone."
@@ -210,7 +210,7 @@ struct MacConnectionView: View {
                 Text("Verifying encrypted connection…")
                 Button("Cancel") { service.pairing.disconnect() }
             }
-        } else if let peer = service.pairing.connectedPeer {
+        } else if service.pairing.isConnected, let peer = service.pairing.connectedPeer {
             MacInfoCard {
                 Label("Connected to \(peer.name)", systemImage: "checkmark.shield").font(.headline)
                 Text("Identity verified · \(peer.fingerprint)").font(.caption).foregroundStyle(.secondary)
@@ -252,7 +252,7 @@ struct MacConnectionView: View {
     }
 
     private var statusTitle: LocalizedStringKey {
-        if service.pairing.state == .connected, service.pairing.connectedPeer != nil {
+        if service.pairing.isConnected {
             return "Connected to your iPhone"
         }
         switch service.state {

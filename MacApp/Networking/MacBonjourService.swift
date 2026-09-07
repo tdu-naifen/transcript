@@ -52,6 +52,7 @@ final class MacBonjourService {
     private(set) var advertisedName: String?
     private(set) var isEnabled = false
     private(set) var advertisesMeetingCopy = false
+    private(set) var isSuspended = false
 
     let connectionExplanation = String(
         localized: "bonjour.connectionExplanation",
@@ -124,9 +125,18 @@ final class MacBonjourService {
             NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.didWakeNotification)
         ].map { publisher in
             publisher.sink { [weak self] _ in
-                Task { @MainActor [weak self] in self?.recoverIfNeeded() }
+                Task { @MainActor [weak self] in
+                    if self?.isSuspended == true { self?.resumeAfterWake() }
+                    else { self?.recoverIfNeeded() }
+                }
             }
         }
+        lifecycleObservers.append(
+            NSWorkspace.shared.notificationCenter.publisher(for: NSWorkspace.willSleepNotification)
+                .sink { [weak self] _ in
+                    Task { @MainActor [weak self] in self?.suspendForSleep() }
+                }
+        )
         let shouldRestore = preferences?.object(forKey: Self.enabledKey) as? Bool
             ?? !pairing.peers.isEmpty
         logger.info("Restoring discovery: enabled=\(shouldRestore), trusted device count=\(self.pairing.peers.count)")
@@ -154,6 +164,7 @@ final class MacBonjourService {
     }
 
     private func startListener(allowNewPairing: Bool = false) {
+        guard !isSuspended else { return }
         guard listener == nil else { return }
         recoveryTask?.cancel()
         recoveryTask = nil
@@ -204,6 +215,21 @@ final class MacBonjourService {
         logger.info("Bonjour advertisement stopped.")
     }
 
+    func suspendForSleep() {
+        isSuspended = true
+        recoveryTask?.cancel()
+        recoveryTask = nil
+        invalidateListener()
+        if !localNetworkDenied { state = .idle }
+    }
+
+    func resumeAfterWake() {
+        guard isSuspended else { return }
+        isSuspended = false
+        guard isEnabled, !localNetworkDenied else { return }
+        startListener()
+    }
+
     /// An explicit retry replaces the listener and invalidates all previous callbacks.
     func retry() {
         stop()
@@ -211,7 +237,7 @@ final class MacBonjourService {
     }
 
     func recoverIfNeeded() {
-        guard isEnabled, !localNetworkDenied else { return }
+        guard isEnabled, !isSuspended, !localNetworkDenied else { return }
         switch state {
         case .failed, .waiting:
             recoveryTask?.cancel()

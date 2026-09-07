@@ -22,6 +22,8 @@ enum MacAuthenticatedConnectionError: String, LocalizedError {
 @MainActor
 @Observable
 final class MacPairingServer {
+    // The frozen v1 iPhone sends a heartbeat every 30 seconds.
+    static let defaultIdleTimeout: Duration = .seconds(45)
     typealias MeetingCopySessionFactory = @MainActor (MacPairedDevice, Data) -> MacMeetingCopySession?
     enum State: Equatable {
         case idle, negotiating, awaitingConfirmation, connected
@@ -55,7 +57,7 @@ final class MacPairingServer {
         store: any MacPairingIdentityStoring = MacPairingKeychainStore(),
         handshakeTimeout: Duration = .seconds(10),
         confirmationTimeout: Duration = .seconds(60),
-        idleTimeout: Duration = .seconds(120)
+        idleTimeout: Duration = MacPairingServer.defaultIdleTimeout
     ) {
         self.name = name
         self.store = store
@@ -70,6 +72,8 @@ final class MacPairingServer {
         enableTask?.cancel()
         session?.close()
     }
+
+    var isConnected: Bool { state == .connected && connectedPeer != nil }
 
     func enablePairing() {
         guard session == nil else { return }
@@ -222,6 +226,25 @@ private final class MacPairingSession {
 
     func start() {
         logger.info("Incoming connection accepted; awaiting identity verification.")
+        transport.connection.stateUpdateHandler = { [weak self] state in
+            Task { @MainActor [weak self] in
+                guard let self, !self.ended else { return }
+                switch state {
+                case .failed, .cancelled, .waiting:
+                    if self.authenticated { self.finish(MacAuthenticatedConnectionError.closed) }
+                    else { self.finish(MacPairingError.unavailable) }
+                default:
+                    break
+                }
+            }
+        }
+        transport.connection.viabilityUpdateHandler = { [weak self] viable in
+            guard !viable else { return }
+            Task { @MainActor [weak self] in
+                guard let self, self.authenticated, !self.ended else { return }
+                self.finish(MacAuthenticatedConnectionError.closed)
+            }
+        }
         transport.start()
         setDeadline(handshakeTimeout)
         work = Task { [weak self] in
@@ -268,6 +291,8 @@ private final class MacPairingSession {
         readyRead?.cancel()
         approvalWaiter?.resume(returning: false)
         approvalWaiter = nil
+        transport.connection.stateUpdateHandler = nil
+        transport.connection.viabilityUpdateHandler = nil
         transport.cancel()
         cipher = nil
         onEnd(error)

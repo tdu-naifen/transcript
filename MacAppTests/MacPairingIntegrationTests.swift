@@ -7,6 +7,61 @@ import XCTest
 
 @MainActor
 final class MacPairingIntegrationTests: XCTestCase {
+    func testProductionHeartbeatDeadlineAllowsLegacyCadenceButBoundsStaleStatus() {
+        XCTAssertGreaterThan(MacPairingServer.defaultIdleTimeout, .seconds(30))
+        XCTAssertLessThanOrEqual(MacPairingServer.defaultIdleTimeout, .seconds(45))
+    }
+
+    func testSleepClearsOnlineStateAndPinnedClientCanReconnectAfterWake() async throws {
+        let harness = try await PairingHarness()
+        defer { harness.stop() }
+        let first = try await harness.client()
+        defer { first.close() }
+        try await pair(first, harness)
+        XCTAssertTrue(harness.server.isConnected)
+        let identity = first.identity
+        let pin = try XCTUnwrap(first.serverIdentity)
+        let listener = PairingRecoveryListener()
+        let service = MacBonjourService(serviceName: "Office Mac", pairing: harness.server) { _ in listener }
+        service.start()
+        defer { service.stop() }
+        service.suspendForSleep()
+        XCTAssertFalse(harness.server.isConnected)
+        XCTAssertNil(harness.server.connectedPeer)
+        XCTAssertEqual(harness.store.savedPeers.count, 1)
+        service.resumeAfterWake()
+        XCTAssertFalse(harness.server.isConnected, "Waking/discovery is not a live connection")
+        XCTAssertFalse(harness.server.allowsNewPairing)
+        let resumed = try await harness.client(identity: identity)
+        defer { resumed.close() }
+        try await resumed.handshake(reconnect: true, pin: pin)
+        try await resumed.send("resume")
+        try await resumed.finish()
+        try await waitUntil { harness.server.isConnected }
+        try await resumed.send("ping")
+        let pong = try await resumed.receive()
+        XCTAssertEqual(pong.type, "pong")
+        XCTAssertNil(harness.server.confirmation)
+    }
+
+    func testHeartbeatsRefreshOnlineStateAndSilenceExpiresIt() async throws {
+        let harness = try await PairingHarness(idleTimeout: .milliseconds(400))
+        defer { harness.stop() }
+        let client = try await harness.client()
+        defer { client.close() }
+        try await pair(client, harness)
+        for _ in 0..<4 {
+            try await Task.sleep(for: .milliseconds(150))
+            try await client.send("ping")
+            let pong = try await client.receive()
+            XCTAssertEqual(pong.type, "pong")
+            XCTAssertTrue(harness.server.isConnected)
+        }
+        try await waitUntil { !harness.server.isConnected }
+        XCTAssertNil(harness.server.connectedPeer)
+        XCTAssertEqual(harness.store.savedPeers.count, 1)
+    }
+
     func testUnsupportedPostPairingRequestReportsCapabilityFailureWithoutLosingTrust() async throws {
         let harness = try await PairingHarness()
         defer { harness.stop() }
