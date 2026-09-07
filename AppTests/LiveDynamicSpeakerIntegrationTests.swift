@@ -24,13 +24,44 @@ final class LiveDynamicSpeakerIntegrationTests: XCTestCase {
         return (services, meeting)
     }
 
-    private func pipeline(_ services: AppServices, _ meeting: Meeting, gate: AppLiveGate? = nil) -> LiveDynamicSpeakers {
+    private func pipeline(_ services: AppServices, _ meeting: Meeting, gate: AppLiveGate? = nil,
+                          minimumVoiceFrames: Int = 0) -> LiveDynamicSpeakers {
         LiveDynamicSpeakers(
             database: services.database, meetingID: meeting.id, deviceID: "test",
             admission: .init(acquire: { await RecordingAnalyzerSlots.shared.acquireIfAvailable() },
                              release: { await RecordingAnalyzerSlots.shared.release($0) }),
             prepareAssets: { .init(dynamic: URL(filePath: "."), camp: URL(filePath: "."), modelIdentifier: "app-CAM-fixture") },
-            makeRuntime: { _ in AppLiveRuntime(gate: gate) })
+            makeRuntime: { _ in AppLiveRuntime(gate: gate, minimumVoiceFrames: minimumVoiceFrames) })
+    }
+
+    func testGrowingCleanEvidenceUpdatesExistingObservedRowWithoutNewASR() async throws {
+        let (services, meeting) = try await fixture()
+        let live = pipeline(services, meeting, minimumVoiceFrames: 64_000)
+        let model = TranscriptionModel(services: services, makeTranscriber: { AppLiveSpeech() },
+                                       makeLiveSpeakers: { _ in live })
+        let audio = AsyncStream<AudioChunk>.makeStream()
+        let speakers = AsyncStream<AudioChunk>.makeStream()
+        try await model.prepare()
+        try model.start(meetingId: meeting.id, chunks: audio.stream, diarizationChunks: speakers.stream)
+        audio.continuation.yield(.init(index: 0, startFrame: 0, sampleRate: 16_000, samples: [1], isFinal: false))
+        try await eventually { model.lines.count == 1 && model.speakerProjection.utterances.count == 1 }
+        let row = try XCTUnwrap(model.lines.first)
+        let originalLines = model.lines
+        await live.ingest(.init(index: 0, startFrame: 0, sampleRate: 16_000,
+                                samples: Array(repeating: 1, count: 160_000), isFinal: false))
+        await live.waitForIdle()
+        XCTAssertNil(model.speaker(for: row))
+        let started = ContinuousClock.now
+        await live.ingest(.init(index: 1, startFrame: 160_000, sampleRate: 16_000,
+                                samples: Array(repeating: 1, count: 32_000), isFinal: false))
+        await live.waitForIdle()
+        try await eventually(within: .seconds(1)) { model.speaker(for: row) != nil }
+        XCTAssertLessThan(started.duration(to: .now), .seconds(1))
+        XCTAssertEqual(model.lines, originalLines)
+        print("LIVE_APP growing_evidence_to_existing_row_ms=\(LiveSpeakerTiming.milliseconds(from: started, to: .now))")
+        audio.continuation.finish()
+        speakers.continuation.finish()
+        await model.discard()
     }
 
     func testActualTranscriptionModelStreamsDynamicEvidenceAndSharesPersistedRenameWithDetail() async throws {
@@ -537,7 +568,11 @@ private actor AppLiveGate {
 
 private actor AppLiveRuntime: LiveSpeakerInferring {
     let gate: AppLiveGate?
-    init(gate: AppLiveGate?) { self.gate = gate }
+    let minimumVoiceFrames: Int
+    init(gate: AppLiveGate?, minimumVoiceFrames: Int = 0) {
+        self.gate = gate
+        self.minimumVoiceFrames = minimumVoiceFrames
+    }
     func extract(_ samples: [Float]) async -> CompletedWindowEvidence {
         if let gate { await gate.hold() }
         return CompletedWindowEvidence(
@@ -554,8 +589,9 @@ private actor AppLiveRuntime: LiveSpeakerInferring {
     func cluster(_ rows: [CompletedWindowEvidence.Row]) -> EvidenceCohortResult {
         .init(runID: UUID(), rowIDs: rows.map(\.id), assignments: Array(repeating: 0, count: rows.count))
     }
-    func voiceprint(_ samples: [Float], ordinal: Int, generation: Int, version: Int) -> [Float] {
-        [1] + Array(repeating: 0, count: 191)
+    func voiceprint(_ samples: [Float], ordinal: Int, generation: Int, version: Int) -> [Float]? {
+        guard samples.count >= minimumVoiceFrames else { return nil }
+        return [1] + Array(repeating: 0, count: 191)
     }
     func close() {}
 }

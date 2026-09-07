@@ -30,6 +30,30 @@ enum LiveSpeakerFixture {
 }
 
 final class LiveSpeakerEvidenceTests: XCTestCase {
+    func testProvisionalAnchorOnlyDefersToSoleCAMBoundTrackInCurrentCluster() throws {
+        var registry = LiveIdentityRegistry()
+        let firstRows = LiveSpeakerFixture.window(voice: 0).rows
+        let first = try registry.resolve(rows: firstRows, result: .init(
+            runID: UUID(), rowIDs: firstRows.map(\.id), assignments: [0]))
+        let secondRows = LiveSpeakerFixture.window(voice: 1).rows
+        let secondCohort = registry.cohort(adding: secondRows)
+        let second = try registry.resolve(rows: secondRows, result: .init(
+            runID: UUID(), rowIDs: secondCohort.map(\.id), assignments: [0, 1]))
+        let firstID = try XCTUnwrap(first[0])
+        let secondID = try XCTUnwrap(second[0])
+        let returning = LiveSpeakerFixture.window().rows
+        let cohort = registry.cohort(adding: returning)
+        let merged = EvidenceCohortResult(runID: UUID(), rowIDs: cohort.map(\.id),
+                                         assignments: Array(repeating: 0, count: cohort.count))
+        var noQualifiedTrack = registry
+        XCTAssertTrue(try noQualifiedTrack.resolve(rows: returning, result: merged).isEmpty)
+        var competingQualifiedTracks = registry
+        XCTAssertTrue(try competingQualifiedTracks.resolve(rows: returning, result: merged,
+                                                           bound: [firstID, secondID]).isEmpty)
+        XCTAssertEqual(try registry.resolve(rows: returning, result: merged, bound: [firstID])[0], firstID)
+        XCTAssertEqual(registry.identities.map(\.id), [firstID, secondID], "No rewriting historical evidence IDs.")
+    }
+
     func testFiveThenFortyThenFirstReturnsWithoutSlotInheritanceOrIDRecycling() throws {
         var registry = LiveIdentityRegistry()
         var ids: [String] = []

@@ -125,7 +125,7 @@ struct LiveIdentityRegistry: Sendable {
         return anchors + recent.flatMap { $0 }.filter { !anchorIDs.contains($0.id) } + rows
     }
 
-    mutating func resolve(rows: [CompletedWindowEvidence.Row], result: EvidenceCohortResult) throws -> [Int: String] {
+    mutating func resolve(rows: [CompletedWindowEvidence.Row], result: EvidenceCohortResult, bound: Set<String> = []) throws -> [Int: String] {
         let cohort = cohort(adding: rows)
         guard result.rowIDs == cohort.map(\.id), result.assignments.count == cohort.count,
               Set(result.rowIDs).count == cohort.count,
@@ -147,8 +147,16 @@ struct LiveIdentityRegistry: Sendable {
         for cluster in groups.keys.sorted() {
             guard !conflicting.contains(cluster) else { continue }
             guard let indices = groups[cluster], indices.count == 1, let index = indices.first else { continue }
-            let existing = anchorsByCluster[cluster] ?? []
-            guard existing.count <= 1 else { continue } // Never merge settled identities.
+            var existing = anchorsByCluster[cluster] ?? []
+            if existing.count > 1 {
+                // Short transition evidence can create an unbound track before AHC
+                // has enough context to recognize the return. It must not veto the
+                // sole CAM-bound track forever. Neither anchors nor past spans are
+                // merged, and competing bound identities still require abstention.
+                let settled = existing.intersection(bound)
+                guard settled.count == 1 else { continue }
+                existing = settled
+            }
             let identity: String
             if let id = existing.first {
                 identity = id

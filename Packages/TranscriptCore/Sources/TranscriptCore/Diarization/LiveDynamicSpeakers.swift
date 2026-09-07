@@ -25,7 +25,7 @@ struct LiveSpeakerAssets: Sendable {
 protocol LiveSpeakerInferring: Sendable {
     func extract(_ samples: [Float]) async throws -> CompletedWindowEvidence
     func cluster(_ rows: [CompletedWindowEvidence.Row]) async throws -> EvidenceCohortResult
-    func voiceprint(_ samples: [Float], ordinal: Int, generation: Int, version: Int) async throws -> [Float]
+    func voiceprint(_ samples: [Float], ordinal: Int, generation: Int, version: Int) async throws -> [Float]?
     func close() async
 }
 
@@ -67,7 +67,7 @@ actor LiveSpeakerNativeRuntime: LiveSpeakerInferring {
         guard let manager else { throw CancellationError() }
         return try manager.clusterEvidenceRows(rows)
     }
-    func voiceprint(_ samples: [Float], ordinal: Int, generation: Int, version: Int) async throws -> [Float] {
+    func voiceprint(_ samples: [Float], ordinal: Int, generation: Int, version: Int) async throws -> [Float]? {
         guard try SpeakerAnalysisEngine.modelIdentifier(at: assets.camp) == assets.modelIdentifier else {
             throw VoiceprintProcessorError.invalidEmbedding
         }
@@ -81,6 +81,7 @@ actor LiveSpeakerNativeRuntime: LiveSpeakerInferring {
         ))
         do {
             let result = try await handle.value()
+            if case .needsMoreAudio = result.outcome { return nil }
             guard result.evidence.cleanFrameCount >= 32_000, let vector = result.embedding, vector.count == 192 else {
                 throw VoiceprintProcessorError.invalidEmbedding
             }
@@ -254,7 +255,11 @@ public actor LiveDynamicSpeakers {
     private func runLatest(generation: Int) async {
         if assets == nil {
             continuation.yield(.preparingModels)
-            do { assets = try await prepareAssets() }
+            let started = ContinuousClock.now
+            do {
+                assets = try await prepareAssets()
+                LiveSpeakerTiming.record(.modelPreparation, since: started)
+            }
             catch {
                 if authorization.generation == generation {
                     blockedGeneration = generation
@@ -283,7 +288,9 @@ public actor LiveDynamicSpeakers {
             guard authorization.generation == generation else { throw CancellationError() }
             let sourceRevision = inputRevision
             continuation.yield(.identifying)
+            let loadingStarted = ContinuousClock.now
             let runtime = try await makeRuntime(assets)
+            LiveSpeakerTiming.record(.runtimeLoading, since: loadingStarted)
             do {
                 try await analyze(window, runtime: runtime, assets: assets, generation: generation, sourceRevision: sourceRevision)
                 await runtime.close()
@@ -314,38 +321,54 @@ public actor LiveDynamicSpeakers {
         guard authorization.generation == generation, inputRevision == sourceRevision else { throw CancellationError() }
         let recognitionStarted = ContinuousClock.now
         let evidence = try await runtime.extract(window.samples)
+        LiveSpeakerTiming.record(.windowExtraction, since: recognitionStarted)
         let validated = try LiveWindowEvidence(start: window.start, evidence: evidence)
+        let clusteringStarted = ContinuousClock.now
         let clustered = try await runtime.cluster(registry.cohort(adding: validated.rows))
+        LiveSpeakerTiming.record(.cohortClustering, since: clusteringStarted)
         try Task.checkCancellation()
         guard authorization.generation == generation, inputRevision == sourceRevision else { throw CancellationError() }
         var nextRegistry = registry
         var nextAssembler = assembler
-        let identities = try nextRegistry.resolve(rows: validated.rows, result: clustered)
+        let identities = try nextRegistry.resolve(rows: validated.rows, result: clustered, bound: bound)
         let spans = try nextAssembler.append(start: window.start, mask: validated.mask, identities: identities)
         var samplesByIdentity = pendingCAM
         pendingCAM.removeAll()
-        collectCAM(spans: spans, window: window, pending: &samplesByIdentity)
+        let changed = collectCAM(spans: spans, window: window, pending: &samplesByIdentity)
         var voices: [LiveSpeakerVoice] = []
-        for identity in nextRegistry.identities where (samplesByIdentity[identity.id]?.count ?? 0) >= 32_000 {
-            let samples = samplesByIdentity.removeValue(forKey: identity.id)!
+        for identity in nextRegistry.identities where changed.contains(identity.id) && (samplesByIdentity[identity.id]?.count ?? 0) >= 32_000 {
+            let samples = samplesByIdentity[identity.id]!
+            let started = ContinuousClock.now
             let vector = try await runtime.voiceprint(
                 samples, ordinal: identity.ordinal, generation: generation, version: Int(window.start / 32_000))
+            LiveSpeakerTiming.record(.voiceprintInference, since: started)
+            guard let vector else { continue }
             voices.append(.init(identityID: identity.id, embedding: vector, cleanFrameCount: samples.count))
+        }
+        if voices.isEmpty, bound.isEmpty || nextRegistry.identities.contains(where: { !bound.contains($0.id) }) {
+            LiveSpeakerTiming.record(.cleanAudioWaiting, since: recognitionStarted)
         }
         try Task.checkCancellation()
         guard inputRevision == sourceRevision else { throw CancellationError() }
-        LiveSpeakerTiming.record(.recognitionAccepted, since: recognitionStarted)
         do {
             let published = try await repository.publish(
                 generation: generation, identities: nextRegistry.identities.map { .init(id: $0.id, ordinal: $0.ordinal) },
                 spans: spans, voices: voices, modelIdentifier: assets.modelIdentifier)
+            if !published.bound.subtracting(bound).isEmpty {
+                LiveSpeakerTiming.record(.recognitionAccepted, since: recognitionStarted)
+            }
+            if voices.contains(where: { !published.bound.contains($0.identityID) }) {
+                LiveSpeakerTiming.record(.identityUnresolved, since: recognitionStarted)
+            }
             registry = nextRegistry
             assembler = nextAssembler
             // User-deleted bindings must not be automatically resurrected.
             bound.formUnion(published.bound)
             bindingCapacityLimited = bindingCapacityLimited || published.capacityLimited
             if authorization.generation == generation, inputRevision == sourceRevision {
-                pendingCAM = samplesByIdentity
+                // A margin rejection is not a binding. Grow its verified sample on
+                // the next evidence event instead of repeatedly testing isolated 2s.
+                pendingCAM = samplesByIdentity.filter { !bound.contains($0.key) }
             } else {
                 assembler.invalidateCoverage()
             }
@@ -360,23 +383,30 @@ public actor LiveDynamicSpeakers {
                            ? .capacityReached : bound.isEmpty ? .waitingForContext : .published)
     }
 
-    private func collectCAM(spans: [LiveSpeakerSpan], window: (start: Int64, samples: [Float]), pending: inout [String: [Float]]) {
+    private func collectCAM(spans: [LiveSpeakerSpan], window: (start: Int64, samples: [Float]), pending: inout [String: [Float]]) -> Set<String> {
         let scale = LiveSpeakerLimits.ticksPerSample
-        guard !bindingCapacityLimited else { pending.removeAll(); return }
+        guard !bindingCapacityLimited else { pending.removeAll(); return [] }
+        var changed: Set<String> = []
         let observed = Set(spans.filter { !$0.unknown }.compactMap(\.identityID))
-        pending = pending.filter { observed.contains($0.key) }
         for span in spans {
             guard !span.unknown, let id = span.identityID, !bound.contains(id),
                   span.startTick >= window.start * scale else { continue }
             if pending[id] == nil {
+                if pending.count >= 2, let inactive = pending.keys.sorted().first(where: { !observed.contains($0) }) {
+                    pending.removeValue(forKey: inactive)
+                }
                 guard pending.count < 2 else { continue }
                 pending[id] = []
             }
             let lower = Int((span.startTick + scale - 1) / scale - window.start)
             let upper = Int(span.endTick / scale - window.start)
             guard lower >= 0, upper <= window.samples.count, upper > lower else { continue }
-            let available = 80_000 - (pending[id]?.count ?? 0)
-            if available > 0 { pending[id]?.append(contentsOf: window.samples[lower..<min(upper, lower + available)]) }
+            pending[id]?.append(contentsOf: window.samples[lower..<upper])
+            if let count = pending[id]?.count, count > 80_000 {
+                pending[id]?.removeFirst(count - 80_000)
+            }
+            changed.insert(id)
         }
+        return changed
     }
 }

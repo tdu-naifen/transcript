@@ -135,7 +135,9 @@ final class LiveSpeakerCPUConfigurationTests: XCTestCase {
     private func publicSamples() async throws -> [Float] {
         let root = URL(filePath: #filePath).deletingLastPathComponent().deletingLastPathComponent()
             .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()
-        let reader = try RecordedAudioReader(url: root.appending(path: "Audio/acceptance/librispeech-two-voices-alternating.wav"))
+        let fixture = ProcessInfo.processInfo.environment["TRANSCRIPT_LIVE_LATENCY_FIXTURE"].map { URL(filePath: $0) }
+            ?? root.appending(path: "Audio/acceptance/librispeech-two-voices-alternating.wav")
+        let reader = try RecordedAudioReader(url: fixture)
         var samples: [Float] = []
         while samples.count < 64_000, let chunk = await reader.next() { samples.append(contentsOf: chunk.samples) }
         try await reader.checkFailure()
@@ -188,7 +190,7 @@ private actor LiveCAMCPUControlledRuntime: LiveSpeakerInferring {
     func cluster(_ rows: [CompletedWindowEvidence.Row]) -> EvidenceCohortResult {
         .init(runID: UUID(), rowIDs: rows.map(\.id), assignments: Array(repeating: 0, count: rows.count))
     }
-    func voiceprint(_ samples: [Float], ordinal: Int, generation: Int, version: Int) async throws -> [Float] {
+    func voiceprint(_ samples: [Float], ordinal: Int, generation: Int, version: Int) async throws -> [Float]? {
         let handle = try await processor.submit(.init(
             meetingId: "CPU-test", speakerSlot: ordinal, generation: generation, evidenceVersion: version,
             audio: samples, sampleRate: 16_000,

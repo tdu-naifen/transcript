@@ -4,6 +4,13 @@ import OSLog
 /// Timing-only diagnostics: the closed stage vocabulary cannot carry user data.
 public enum LiveSpeakerTiming {
     public enum Stage: String, Sendable {
+        case modelPreparation
+        case runtimeLoading
+        case windowExtraction
+        case cohortClustering
+        case voiceprintInference
+        case cleanAudioWaiting
+        case identityUnresolved
         case recognitionAccepted
         case identityBinding
         case transactionCommit

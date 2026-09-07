@@ -51,7 +51,7 @@ actor LiveFixtureRuntime: LiveSpeakerInferring {
         .init(runID: UUID(), rowIDs: rows.map(\.id),
               assignments: rows.map { $0.embedding256.firstIndex(of: 1)! })
     }
-    func voiceprint(_ samples: [Float], ordinal: Int, generation: Int, version: Int) -> [Float] {
+    func voiceprint(_ samples: [Float], ordinal: Int, generation: Int, version: Int) -> [Float]? {
         (0..<192).map { $0 == Int(samples.first ?? 0) ? 1 : 0 }
     }
     func close() {}
