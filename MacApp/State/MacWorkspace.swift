@@ -6,6 +6,8 @@ import TranscriptCore
 enum MacSection: String, CaseIterable, Identifiable {
     case meetings, voiceprints, analysis
 
+    static let allCases: [MacSection] = [.meetings, .voiceprints]
+
     var id: String { rawValue }
 
     var title: LocalizedStringKey {
@@ -84,11 +86,15 @@ final class MacWorkspace {
         }
         #if DEBUG
         if let id = Self.testRunID {
-            let root = ProcessInfo.processInfo.environment["TRANSCRIPT_TEST_ROOT"].map {
-                URL(fileURLWithPath: $0, isDirectory: true)
-            } ?? FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
-            self.library = MacLibraryModel(directory: root
-                .appendingPathComponent("TranscriptMacUITests-\(id.uuidString)", isDirectory: true))
+            let root = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("TranscriptMacUITests-\(id.uuidString)", isDirectory: true)
+            do {
+                try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+                setenv("TRANSCRIPT_TEST_ROOT", root.path, 1)
+            } catch {
+                fatalError("Unable to create isolated Mac test storage: \(error)")
+            }
+            self.library = MacLibraryModel(directory: root.appendingPathComponent("Library", isDirectory: true))
         } else {
             self.library = MacLibraryModel()
         }

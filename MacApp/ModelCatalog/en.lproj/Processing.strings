@@ -156,3 +156,16 @@
 "Processing was interrupted. Retry checks the current input before publishing; original audio is unchanged." = "Processing was interrupted. Retry checks the current input before publishing; original audio is unchanged.";
 "The transcript changed while processing. This result was retained but cannot overwrite newer edits. Reprocess to use the current version." = "The transcript changed while processing. This result was retained but cannot overwrite newer edits. Reprocess to use the current version.";
 "Unable to publish the transcript. No newer edits were overwritten. Retry publication from the meeting." = "Unable to publish the transcript. No newer edits were overwritten. Retry publication from the meeting.";
+"Downloaded · speaker runtime available" = "Downloaded · speaker runtime available";
+"Supported: timed transcription with speaker analysis." = "Supported: timed transcription with speaker analysis.";
+"Four speaker slots, not 40+ distinct speakers. Used by Mac processing and reprocessing." = "Four speaker slots, not 40+ distinct speakers. Used by Mac processing and reprocessing.";
+"CAM++ voiceprints use actual model-byte provenance, 16 kHz mono preprocessing, and 192-dimensional embeddings for identity matching." = "CAM++ voiceprints use actual model-byte provenance, 16 kHz mono preprocessing, and 192-dimensional embeddings for identity matching.";
+"Install or locate compatible Nemotron, Sortformer, and CAM++ models in Settings." = "Install or locate compatible Nemotron, Sortformer, and CAM++ models in Settings.";
+"Run Nemotron transcription, Sortformer speaker separation, and CAM++ voice identification on this Mac. Library publication checks the source version before saving text and speaker evidence." = "Run Nemotron transcription, Sortformer speaker separation, and CAM++ voice identification on this Mac. Library publication checks the source version before saving text and speaker evidence.";
+"Sortformer supports at most 4 speaker slots per recording. CAM++ identity matching does not remove this limit." = "Sortformer supports at most 4 speaker slots per recording. CAM++ identity matching does not remove this limit.";
+"Original audio is never replaced. Transcription, diarization, and embedding models must all be configured in Settings." = "Original audio is never replaced. Transcription, diarization, and embedding models must all be configured in Settings.";
+"Language, audio hash, all three model file hashes, and the source transcript revision are frozen per job. Publication rejects newer edits. Voice matching uses compatible embeddings, never display names." = "Language, audio hash, all three model file hashes, and the source transcript revision are frozen per job. Publication rejects newer edits. Voice matching uses compatible embeddings, never display names.";
+"Speaker evidence unavailable" = "Speaker evidence unavailable";
+"Transcription and speaker evidence" = "Transcription and speaker evidence";
+"detectingSpeakers" = "Separating speakers";
+"identifyingSpeakers" = "Matching voiceprints";

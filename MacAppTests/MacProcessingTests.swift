@@ -5,6 +5,22 @@ import XCTest
 @testable import TranscriptMac
 
 enum MacProcessingTestFixtures {
+    @MainActor
+    static func installModels(_ bundle: ASRModelBundle, catalog: MacModelCatalog) throws {
+        try catalog.useManagedASR(bundle)
+        let root = bundle.directory.deletingLastPathComponent()
+        for category in [MacModelCategory.diarization, .speakerEmbedding] {
+            let directory = root.appendingPathComponent("fixture-\(category.rawValue)")
+            let names = category == .diarization ? [""] : ["CamPlusPreprocessor.mlmodelc", "CamPlusPlus.mlmodelc"]
+            for name in names {
+                let compiled = name.isEmpty ? directory : directory.appendingPathComponent(name)
+                try FileManager.default.createDirectory(at: compiled, withIntermediateDirectories: true)
+                try Data("fixture only, never inference".utf8).write(to: compiled.appendingPathComponent("coremldata.bin"))
+            }
+            try catalog.useManagedModel(category: category, at: directory)
+        }
+    }
+
     static func root() throws -> URL {
         let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TRANSCRIPT_TEST_ROOT"]
                        ?? FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path)
@@ -72,7 +88,7 @@ private actor FixtureASRRunner: MacProcessingRunning {
     func run(meetingID: String, audioURL: URL, deviceID: String, models: [MacFrozenModel], language: String,
              progress: @escaping @Sendable (MeetingReprocessingProgress) async -> Void) async throws -> [ASRSegment] {
         calls += 1
-        XCTAssertEqual(models.count, 1)
+        XCTAssertEqual(models.count, 3)
         XCTAssertEqual(models.first?.adapter, .nemotronMultilingual)
         await progress(.init(stage: .transcribing, fractionCompleted: 0.5))
         switch outcome {
@@ -121,6 +137,55 @@ private extension MacProcessingModel {
 
 @MainActor
 final class MacProcessingTests: XCTestCase {
+    func testManualProcessingDefaultsToFencedLibraryPublication() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
+        let model = MacProcessingModel(runner: FixtureASRRunner())
+        model.configure(context: context)
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
+        model.start(meetingID: meeting.id)
+        await model.waitForCurrentJob()
+        let job = try XCTUnwrap(model.jobs.first)
+        XCTAssertEqual(job.destination, .library)
+        XCTAssertEqual(job.state, .published, job.error ?? "")
+        XCTAssertNotNil(job.processingInput)
+        XCTAssertNotNil(job.outputTranscriptRevision)
+        let saved = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
+        XCTAssertEqual(saved.utterances.map(\.text), ["New ASR text"])
+    }
+
+    func testMissingSpeakerModelsWaitDurablyAndConfigurationTracksAllModels() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
+        let runner = FixtureASRRunner()
+        let model = MacProcessingModel(runner: runner)
+        model.configure(context: context)
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
+        let configuredID = model.configurationID
+        let missing = try XCTUnwrap(model.catalog.selected(.speakerEmbedding)?.resolvedURL())
+        try FileManager.default.removeItem(at: missing)
+        XCTAssertFalse(model.canRun)
+        model.start(meetingID: meeting.id, destination: .library)
+        XCTAssertEqual(model.jobs.first?.state, .waitingForConfiguration)
+        XCTAssertNil(model.activeJobID)
+        let calls = await runner.calls
+        XCTAssertEqual(calls, 0)
+        model.cancel(jobID: try XCTUnwrap(model.jobs.first?.id))
+        let reopened = MacProcessingModel(runner: FixtureASRRunner())
+        reopened.configure(context: context)
+        XCTAssertEqual(reopened.jobs.first?.state, .cancelled)
+        let alternate = root.appendingPathComponent("alternate-embedding")
+        for name in ["CamPlusPreprocessor.mlmodelc", "CamPlusPlus.mlmodelc"] {
+            let folder = alternate.appendingPathComponent(name)
+            try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            try Data("fixture".utf8).write(to: folder.appendingPathComponent("coremldata.bin"))
+        }
+        try model.catalog.locate(alternate, cardID: "campplus-coreml")
+        XCTAssertNotEqual(configuredID, model.configurationID)
+    }
+
     // Hypothesis: deletion removes only owned job artifacts, including after an offline restart.
     func testStartupRemovesDeletedMeetingJobFoldersButPreservesOtherOwners() async throws {
         let root = try MacProcessingTestFixtures.root()
@@ -169,7 +234,7 @@ final class MacProcessingTests: XCTestCase {
         let runner = DeletionDrainRunner()
         let model = MacProcessingModel(runner: runner)
         model.configure(context: context)
-        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
         model.start(meetingID: meeting.id)
         for _ in 0..<400 {
             if await runner.started { break }
@@ -252,7 +317,7 @@ final class MacProcessingTests: XCTestCase {
         let model = MacProcessingModel(runner: FixtureASRRunner())
         model.configure(context: context)
         let missing = try MacProcessingTestFixtures.asr(in: root)
-        try model.catalog.useManagedASR(missing)
+        try MacProcessingTestFixtures.installModels(missing, catalog: model.catalog)
         try FileManager.default.removeItem(at: missing.directory)
         await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: "audio-revision")
         await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: "audio-revision")
@@ -279,7 +344,7 @@ final class MacProcessingTests: XCTestCase {
         let model = MacProcessingModel(runner: runner)
         model.configure(context: context)
         let bundle = try MacProcessingTestFixtures.asr(in: root)
-        try model.catalog.useManagedASR(bundle)
+        try MacProcessingTestFixtures.installModels(bundle, catalog: model.catalog)
         try FileManager.default.removeItem(at: bundle.directory)
         model.start(meetingID: meeting.id)
         model.start(meetingID: meeting.id)
@@ -298,7 +363,7 @@ final class MacProcessingTests: XCTestCase {
         let runner = FixtureASRRunner()
         let model = MacProcessingModel(runner: runner)
         model.configure(context: context)
-        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
         await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: "audio-revision")
         await model.waitForCurrentJob()
         try await context.database.writer.write { db in
@@ -329,11 +394,11 @@ final class MacProcessingTests: XCTestCase {
         let model = MacProcessingModel(runner: runner)
         model.configure(context: context)
         let missing = try MacProcessingTestFixtures.asr(in: root)
-        try model.catalog.useManagedASR(missing)
+        try MacProcessingTestFixtures.installModels(missing, catalog: model.catalog)
         try FileManager.default.removeItem(at: missing.directory)
         await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: "audio-revision")
         let id = try XCTUnwrap(model.jobs.first?.id)
-        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
         model.resumeQueuedJobs()
         await model.waitForCurrentJob()
         XCTAssertEqual(model.jobs.first?.id, id)
@@ -352,7 +417,7 @@ final class MacProcessingTests: XCTestCase {
         let runner = FixtureASRRunner()
         let model = MacProcessingModel(runner: runner)
         model.configure(context: context)
-        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
         XCTAssertTrue(model.jobs.isEmpty)
         let hash = try IncrementalSHA256.hashFile(at: context.audioFiles.url(forFileName: "fixture.m4a")).sha256
         try await context.database.writer.write { db in
@@ -379,7 +444,7 @@ final class MacProcessingTests: XCTestCase {
         let runner = FixtureASRRunner()
         let model = MacProcessingModel(runner: runner)
         model.configure(context: context)
-        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
         let store = try MacProcessingStore(libraryDirectory: root)
         let job = MacProcessingJob(
             id: UUID(), meetingID: meeting.id, createdAt: Date(), state: .running,
@@ -414,7 +479,7 @@ final class MacProcessingTests: XCTestCase {
             })
             let model = MacProcessingModel(runner: runner)
             model.configure(context: context)
-            try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+            try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
             await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: try XCTUnwrap(meeting.audioSHA256))
             await model.waitForCurrentJob()
             let saved = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
@@ -433,7 +498,7 @@ final class MacProcessingTests: XCTestCase {
         let model = MacProcessingModel(runner: runner)
         model.configure(context: context)
         let bundle = try MacProcessingTestFixtures.asr(in: root)
-        try model.catalog.useManagedASR(bundle)
+        try MacProcessingTestFixtures.installModels(bundle, catalog: model.catalog)
         await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: try XCTUnwrap(meeting.audioSHA256))
         await model.waitForCurrentJob()
         var job = try XCTUnwrap(model.jobs.first)
@@ -455,7 +520,7 @@ final class MacProcessingTests: XCTestCase {
         XCTAssertEqual(calls, 1)
     }
 
-    func testAutomaticPublicationCannotOverwriteNewerSpeakerAssignment() async throws {
+    func testAutomaticPublicationPreservesNewerSpeakerAssignmentWithoutDiscardingASR() async throws {
         let root = try MacProcessingTestFixtures.root()
         defer { try? FileManager.default.removeItem(at: root) }
         let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
@@ -471,13 +536,13 @@ final class MacProcessingTests: XCTestCase {
         })
         let model = MacProcessingModel(runner: runner)
         model.configure(context: context)
-        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
         await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: try XCTUnwrap(meeting.audioSHA256))
         await model.waitForCurrentJob()
-        XCTAssertEqual(model.jobs.first?.state, .stale)
+        XCTAssertEqual(model.jobs.first?.state, .published)
         let saved = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
         XCTAssertEqual(saved.utterances.first?.speakerId, speaker.id)
-        XCTAssertEqual(saved.utterances.first?.text, "Original edited text")
+        XCTAssertEqual(saved.utterances.first?.text, "New ASR text")
     }
 
     func testAutomaticPublicationHonorsAudioPurgeAfterInputCapture() async throws {
@@ -491,16 +556,43 @@ final class MacProcessingTests: XCTestCase {
                     arguments: [Date(), Date(), meeting.id]
                 )
             }
+
         })
         let model = MacProcessingModel(runner: runner)
         model.configure(context: context)
-        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
         await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: try XCTUnwrap(meeting.audioSHA256))
         await model.waitForCurrentJob()
         XCTAssertNotNil(model.jobs.first?.processingInput)
         XCTAssertEqual(model.jobs.first?.state, .stale, model.jobs.first?.error ?? "No failure detail")
         let saved = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
         XCTAssertEqual(saved.utterances.first?.text, "Original edited text")
+    }
+
+    func testAutomaticPublicationPreservesNewerSpeakerClearWithoutDiscardingASR() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root, speakerCount: 1)
+        try await context.database.writer.write { db in
+            let speaker = try XCTUnwrap(Speaker.fetchOne(db))
+            try db.execute(sql: "UPDATE utterance SET speakerId = ? WHERE meetingId = ?",
+                           arguments: [speaker.id, meeting.id])
+        }
+        let runner = FixtureASRRunner(beforeResult: {
+            try await context.database.writer.write { db in
+                try db.execute(sql: "UPDATE utterance SET speakerId = NULL WHERE meetingId = ?",
+                               arguments: [meeting.id])
+            }
+        })
+        let model = MacProcessingModel(runner: runner)
+        model.configure(context: context)
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
+        model.start(meetingID: meeting.id)
+        await model.waitForCurrentJob()
+        XCTAssertEqual(model.jobs.first?.state, .published, model.jobs.first?.error ?? "")
+        let saved = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
+        XCTAssertNil(saved.utterances.first?.speakerId)
+        XCTAssertEqual(saved.utterances.first?.text, "New ASR text")
     }
 
     func testStartupReplayProcessesOnlyDurablyAdoptedAutomaticAudio() async throws {
@@ -542,7 +634,7 @@ final class MacProcessingTests: XCTestCase {
             }
         }
         model.configure(context: context)
-        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
         for _ in 0..<400 where model.jobs.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
         await model.waitForCurrentJob()
         XCTAssertEqual(model.jobs.count, 1)
@@ -561,9 +653,9 @@ final class MacProcessingTests: XCTestCase {
         let before = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
         let model = MacProcessingModel(runner: FixtureASRRunner())
         model.configure(context: context)
-        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
         XCTAssertTrue(model.canRun)
-        model.start(meetingID: meeting.id)
+        model.start(meetingID: meeting.id, destination: .localVersion)
         await model.waitForCurrentJob()
         let job = try XCTUnwrap(model.jobs.first)
         XCTAssertEqual(job.state, .readyForReview)
@@ -571,7 +663,7 @@ final class MacProcessingTests: XCTestCase {
         XCTAssertEqual(job.proposal?.utterances.map(\.text), ["New ASR text"])
         XCTAssertTrue(try XCTUnwrap(job.proposal).utterances.allSatisfy { $0.speakerId == nil })
         XCTAssertEqual(job.proposal?.links.count, 0)
-        XCTAssertEqual(job.models.map(\.category), [.asr])
+        XCTAssertEqual(job.models.map(\.category), MacModelCategory.allCases)
         XCTAssertFalse(job.enrollsGlobalVoiceprints)
         XCTAssertFalse(FileManager.default.fileExists(atPath: try MacProcessingStore(libraryDirectory: root).audio(job.id).path))
         model.keepLocalVersion(jobID: job.id)
@@ -595,7 +687,7 @@ final class MacProcessingTests: XCTestCase {
             let before = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
             let model = MacProcessingModel(runner: FixtureASRRunner(outcome))
             model.configure(context: context)
-            try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+            try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
             model.start(meetingID: meeting.id)
             await model.waitForCurrentJob()
             XCTAssertEqual(model.jobs.first?.state, .failed)
@@ -614,7 +706,7 @@ final class MacProcessingTests: XCTestCase {
         let runner = FixtureASRRunner(.waitForCancellation)
         let model = MacProcessingModel(runner: runner)
         model.configure(context: context)
-        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
         model.start(meetingID: meeting.id)
         let firstID = try XCTUnwrap(model.activeJobID)
         for _ in 0..<1_000 {
@@ -691,8 +783,8 @@ final class MacProcessingTests: XCTestCase {
         let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
         let model = MacProcessingModel(runner: FixtureASRRunner())
         model.configure(context: context)
-        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
-        model.start(meetingID: meeting.id)
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
+        model.start(meetingID: meeting.id, destination: .localVersion)
         await model.waitForCurrentJob()
         let first = try XCTUnwrap(model.jobs.first)
         try await context.database.writer.write { db in
@@ -701,7 +793,7 @@ final class MacProcessingTests: XCTestCase {
         }
         let edited = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
         model.keepLocalVersion(jobID: first.id)
-        model.start(meetingID: meeting.id)
+        model.start(meetingID: meeting.id, destination: .localVersion)
         await model.waitForCurrentJob()
         XCTAssertEqual(model.jobs.count, 2)
         XCTAssertEqual(model.jobs.first { $0.id == first.id }?.state, .savedLocally)
@@ -717,7 +809,7 @@ final class MacProcessingTests: XCTestCase {
         let runner = FixtureASRRunner()
         let model = MacProcessingModel(runner: runner)
         model.configure(context: context)
-        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
         try await context.database.writer.write { db in
             try db.execute(sql: "UPDATE meeting SET state = 'recording' WHERE id = ?", arguments: [meeting.id])
         }
@@ -775,7 +867,7 @@ final class MacProcessingTests: XCTestCase {
         let (context, _) = try await MacProcessingTestFixtures.context(in: root)
         let model = MacProcessingModel(runner: FixtureASRRunner())
         model.configure(context: context)
-        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        try MacProcessingTestFixtures.installModels(MacProcessingTestFixtures.asr(in: root), catalog: model.catalog)
         model.start(meetingID: "missing")
         await model.waitForCurrentJob()
         XCTAssertTrue(model.jobs.isEmpty)

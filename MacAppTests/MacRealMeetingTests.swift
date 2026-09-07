@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import GRDB
 import TranscriptCore
 import XCTest
 @testable import TranscriptMac
@@ -7,6 +8,110 @@ import XCTest
 /// Opt-in, hardware-backed test. All inputs and outputs must be explicitly located.
 @MainActor
 final class MacRealMeetingTests: XCTestCase {
+    func testPublicFixtureProductRunnerProducesRealSpeakerEvidenceWithoutPrepublicationWrites() async throws {
+        guard ProcessInfo.processInfo.environment["RUN_MAC_SPEAKER_ACCEPTANCE"] == "1" else {
+            throw XCTSkip("Opt-in signed-host test requires bundled public MacSpeakerFixtures.")
+        }
+        let fixtures = try XCTUnwrap(Bundle.main.resourceURL).appendingPathComponent("MacSpeakerFixtures")
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let audio = fixtures.appendingPathComponent("librispeech-two-voices-alternating.m4a")
+        let context = MacLibraryContext(database: try AppDatabase.onDisk(directory: root), directory: root,
+            audioFiles: AudioFileStore(directory: root.appendingPathComponent("Audio")), deviceID: "mac-smoke")
+        let audioDirectory = root.appendingPathComponent("Audio")
+        try FileManager.default.createDirectory(at: audioDirectory, withIntermediateDirectories: true)
+        let original = audioDirectory.appendingPathComponent("public.m4a")
+        try FileManager.default.copyItem(at: audio, to: original)
+        let digest = try IncrementalSHA256.hashFile(at: original)
+        let meeting = Meeting(title: "Public two-voice fixture", startedAt: Date(), durationMs: 52_250,
+            audioFileName: "public.m4a", audioSHA256: digest.sha256, audioByteCount: digest.byteCount,
+            state: .recorded, originDeviceId: context.deviceID)
+        try await MeetingRepository(context.database).insert(meeting)
+        let processing = MacProcessingModel()
+        processing.configure(context: context)
+        let locations: [MacModelCategory: String] = [
+            .asr: "nemotron-asr/multilingual/2240ms",
+            .diarization: "sortformer-diarization/v3/palettized/Sortformer_v2.1.mlmodelc",
+            .speakerEmbedding: "campplus-embedder"
+        ]
+        for category in MacModelCategory.allCases {
+            try processing.catalog.useManagedModel(category: category,
+                at: fixtures.appendingPathComponent(try XCTUnwrap(locations[category])))
+        }
+        let before = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
+        XCTAssertTrue(processing.canRun)
+        processing.start(meetingID: meeting.id, destination: .localVersion)
+        await processing.waitForCurrentJob()
+        let job = try XCTUnwrap(processing.jobs.first)
+        XCTAssertEqual(job.state, .readyForReview, job.error ?? processing.errorMessage ?? "")
+        let proposal = try XCTUnwrap(job.proposal, job.error ?? "")
+        XCTAssertFalse(proposal.utterances.isEmpty)
+        let evidence = try XCTUnwrap(proposal.speakerAnalysis)
+        XCTAssertGreaterThanOrEqual(evidence.voices.count, 2)
+        XCTAssertFalse(evidence.timeline.isEmpty)
+        XCTAssertEqual(evidence.preprocessing, VoiceprintPreprocessing.campPlus)
+        XCTAssertEqual(evidence.modelIdentifier,
+            try SpeakerAnalysisEngine.modelIdentifier(at: fixtures.appendingPathComponent("campplus-embedder")))
+        let vectors = evidence.voices.compactMap(\.embedding)
+        XCTAssertGreaterThanOrEqual(vectors.count, 2)
+        for vector in vectors {
+            XCTAssertEqual(vector.count, 192)
+            XCTAssertTrue(vector.allSatisfy(\.isFinite))
+            XCTAssertNotNil(FloatVector.normalized(vector))
+        }
+        let after = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
+        XCTAssertEqual(after, before, "Inference must not publish or overwrite edits.")
+        let embeddings = try await context.database.reader.read { db in try SpeakerEmbedding.fetchCount(db) }
+        XCTAssertEqual(embeddings, 0, "Evidence enrollment belongs to atomic publication, not inference.")
+        XCTAssertEqual(try IncrementalSHA256.hashFile(at: original).sha256, digest.sha256)
+        let artifacts = URL(fileURLWithPath: try XCTUnwrap(ProcessInfo.processInfo.environment["TRANSCRIPT_TEST_ROOT"]))
+            .appendingPathComponent("speaker-acceptance-job.json")
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+        try encoder.encode(job).write(to: artifacts, options: .atomic)
+        print("MAC_SPEAKER_ACCEPTANCE_ARTIFACT=\(artifacts.path)")
+
+        processing.start(meetingID: meeting.id)
+        await processing.waitForCurrentJob()
+        let published = try XCTUnwrap(processing.jobs.first)
+        XCTAssertEqual(published.state, .published, published.error ?? "")
+        let first = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
+        let identities = Set(first.utterances.compactMap(\.speakerId))
+        XCTAssertGreaterThanOrEqual(identities.count, 2, "Actual model evidence must produce stable library identities.")
+        let templates = try await context.database.reader.read { db in try SpeakerEmbedding.fetchAll(db) }
+        XCTAssertGreaterThanOrEqual(templates.count, 2)
+        XCTAssertTrue(templates.allSatisfy {
+            $0.dimension == 192 && $0.modelIdentifier == evidence.modelIdentifier
+                && $0.preprocessing == evidence.preprocessing
+        })
+        processing.start(meetingID: meeting.id, destination: .library)
+        await processing.waitForCurrentJob()
+        let reprocessed = try XCTUnwrap(processing.jobs.first)
+        XCTAssertEqual(reprocessed.state, .published, reprocessed.error ?? "")
+        let second = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
+        XCTAssertEqual(Set(second.utterances.compactMap(\.speakerId)), identities)
+        let updatedTemplates = try await context.database.reader.read { db in try SpeakerEmbedding.fetchAll(db) }
+        XCTAssertEqual(Set(updatedTemplates.map(\.id)), Set(templates.map(\.id)))
+        XCTAssertEqual(try IncrementalSHA256.hashFile(at: original).sha256, digest.sha256)
+        try encoder.encode(reprocessed).write(to: artifacts.deletingLastPathComponent()
+            .appendingPathComponent("speaker-acceptance-published-job.json"), options: .atomic)
+        var interrupted = reprocessed
+        interrupted.state = .publishing
+        try MacProcessingStore(libraryDirectory: root).save(interrupted)
+        let recovered = MacProcessingModel()
+        recovered.configure(context: context)
+        await recovered.waitForCurrentJob()
+        XCTAssertEqual(recovered.jobs.first(where: { $0.id == interrupted.id })?.state, .published,
+                       recovered.errorMessage ?? "Publication receipt recovery failed")
+        let recoveredSnapshot = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
+        XCTAssertEqual(recoveredSnapshot, second)
+        try await MeetingRepository(context.database).delete(id: meeting.id)
+        let survivingTemplates = try await context.database.reader.read { db in try SpeakerEmbedding.fetchAll(db) }
+        XCTAssertEqual(Set(survivingTemplates.map(\.id)), Set(templates.map(\.id)))
+        let survivingSpeakers = try await SpeakerRepository(context.database).fetchAll()
+        XCTAssertTrue(identities.isSubset(of: Set(survivingSpeakers.map(\.id))))
+    }
+
     func testPublicMeetingRealASRAndGroundedAnswer() async throws {
         let environment = ProcessInfo.processInfo.environment
         guard environment["RUN_MAC_REAL_MEETING"] == "1" else {
@@ -54,7 +159,7 @@ final class MacRealMeetingTests: XCTestCase {
             processing.catalog.language = "en-US"
             XCTAssertTrue(processing.canRun, processing.errorMessage ?? "Processing is not ready")
             stage = "real Nemotron ASR"
-            processing.start(meetingID: meeting.id)
+            processing.start(meetingID: meeting.id, destination: .localVersion)
             await processing.waitForCurrentJob()
             let job = try XCTUnwrap(processing.jobs.first, processing.errorMessage ?? "No job was created")
             let encoder = JSONEncoder()

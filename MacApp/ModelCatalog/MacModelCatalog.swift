@@ -115,14 +115,14 @@ struct MacModelCard: Codable, Equatable, Identifiable, Sendable {
         guard isInstalled() else { return "Not installed" }
         return adapter == .nemotronMultilingual
             ? "Downloaded · ASR runtime available"
-            : "Downloaded · not used by Mac ASR"
+            : "Downloaded · speaker runtime available"
     }
 
     var runtimeDescription: String {
         switch adapter {
-        case .nemotronMultilingual: "Supported: ASR-only local transcript versions."
-        case .sortformer: "Four speaker slots, not 40+ distinct speakers. Not used by Mac ASR reprocessing."
-        case .campPlus: "Same pinned CAMPPlus model as iPhone. Embeddings are not diarization; not run or enrolled by Mac ASR reprocessing."
+        case .nemotronMultilingual: "Supported: timed transcription with speaker analysis."
+        case .sortformer: "Four speaker slots, not 40+ distinct speakers. Used by Mac processing and reprocessing."
+        case .campPlus: "CAM++ voiceprints use actual model-byte provenance, 16 kHz mono preprocessing, and 192-dimensional embeddings for identity matching."
         case .cardOnly: "Metadata only. This repository needs an implemented, validated runtime adapter."
         }
     }

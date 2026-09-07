@@ -12,7 +12,7 @@ final class MacModelCatalogTests: XCTestCase {
                "preparing", "running", "cancelling", "needsRetry", "cancelled", "failed",
                "readyForReview", "savedLocally", "stale", "loadingAudio", "transcribing", "saving",
                "Install built-in models…", "Download built-in model files?", "Download selected models",
-               "Downloaded · ASR runtime available", "Downloaded · not used by Mac ASR",
+               "Downloaded · ASR runtime available", "Downloaded · speaker runtime available",
                "Queued", "Downloading", "Verifying model files", "Downloaded and validated",
                "Download failed", "Download cancelled", "Retry unfinished downloads", "Cancelling download…"]
             + ["Integrity check failed · unavailable"]

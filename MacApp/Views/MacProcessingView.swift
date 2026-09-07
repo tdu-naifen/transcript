@@ -21,9 +21,9 @@ struct MacProcessingView: View {
                     .font(.caption2.weight(.semibold)).tracking(2).foregroundStyle(.secondary)
                 Text(processingText(meetingID == nil ? "Transcription models" : "Processing & results")).font(.title.bold())
                     .accessibilityIdentifier("macProcessingTitle")
-                Text(processingText("Run Nemotron 3.5 Streaming Multilingual 0.6B ASR on this Mac. Library publication checks the source version before saving timed text. Results have unassigned speakers; global voiceprints are never changed."))
+                Text(processingText("Run Nemotron transcription, Sortformer speaker separation, and CAM++ voice identification on this Mac. Library publication checks the source version before saving text and speaker evidence."))
                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                Label(processingText("40+ speaker diarization is not supported. Sortformer has only 4 speaker slots; CAMPPlus embeddings do not remove that limit. This workflow runs ASR only, not speaker separation or identification."),
+                Label(processingText("Sortformer supports at most 4 speaker slots per recording. CAM++ identity matching does not remove this limit."),
                       systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
                 if let error = model.errorMessage {
@@ -47,7 +47,7 @@ struct MacProcessingView: View {
                     }
                 }
                 }
-                Text(processingText("Original audio is never replaced. All model resources, including optional diarization and embedding dependencies, are managed in Settings."))
+                Text(processingText("Original audio is never replaced. Transcription, diarization, and embedding models must all be configured in Settings."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding(36)
@@ -93,7 +93,7 @@ struct MacProcessingView: View {
                 Text(processingText("Chinese")).tag("zh-CN")
             }
             .disabled(model.isBusy)
-            Text(processingText("Processing produces timed ASR text without inferred speaker labels. Language, audio hash, model file hashes, and the source transcript revision are frozen per job. Publication rejects newer edits. Diarization and embedding selections below are not executed."))
+            Text(processingText("Language, audio hash, all three model file hashes, and the source transcript revision are frozen per job. Publication rejects newer edits. Voice matching uses compatible embeddings, never display names."))
                 .font(.callout).foregroundStyle(.secondary)
         }
     }
@@ -214,7 +214,7 @@ struct MacProcessingView: View {
                         .font(.caption.monospaced()).textSelection(.enabled)
                 }
             }
-            Text(processingText("Downloading Sortformer and CAMPPlus does not enable diarization on this Mac. Sortformer has 4 speaker slots; CAMPPlus embeddings do not increase that limit. This workflow still runs ASR only."))
+            Text(processingText("Processing requires Nemotron, Sortformer, and CAM++. Sortformer has 4 speaker slots; CAM++ voice matching does not increase that limit."))
                 .foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true)
                 .accessibilityIdentifier("macModelRuntimeWarning")
             Text(processingText("Selected models, located folders, language, and recordings remain unchanged."))
@@ -291,7 +291,7 @@ struct MacProcessingView: View {
             if let error = job.error { Text(verbatim: error).foregroundStyle(.orange).textSelection(.enabled) }
             if let proposal = job.proposal {
                 Text("\(processingText("Proposed segments")): \(proposal.utterances.count)")
-                Text(processingText("ASR only · speaker labels unassigned"))
+                Text(processingText(proposal.speakerAnalysis == nil ? "Speaker evidence unavailable" : "Transcription and speaker evidence"))
                     .font(.caption).foregroundStyle(.secondary)
                 DisclosureGroup(processingText("Review transcript proposal")) {
                     ForEach(proposal.utterances.sorted { $0.startMs < $1.startMs }) { utterance in
@@ -335,12 +335,12 @@ struct MacProcessingView: View {
             }
             if [.readyForReview, .savedLocally].contains(job.state),
                job.previous?.utterances.isEmpty == true {
-                Button(processingText("Use transcript in library & RAG")) {
+                Button(processingText("Use transcript in library")) {
                     Task {
                         if await model.useInLibrary(jobID: job.id) {
                             await workspace.library.load()
-                            workspace.analysisMeetingID = job.meetingID
-                            workspace.section = .analysis
+                            workspace.selectedMeetingID = job.meetingID
+                            workspace.section = .meetings
                         }
                     }
                 }

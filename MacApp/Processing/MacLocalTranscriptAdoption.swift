@@ -1,4 +1,5 @@
 import Foundation
+import CryptoKit
 import GRDB
 import TranscriptCore
 
@@ -67,13 +68,16 @@ enum MacAutomaticTranscriptPublication {
               let revision = job.sourceTranscriptRevision, let audio = job.audioSHA256,
               !job.models.isEmpty, proposal.meeting.id == job.meetingID,
               !proposal.utterances.isEmpty else { throw MacProcessingError.invalidManifest }
-        let fingerprint = job.models.map(\.localContentSHA256).joined(separator: ":")
+        let fingerprint = job.models.count == 1 ? job.models[0].localContentSHA256 :
+            SHA256.hash(data: Data(job.models.map(\.localContentSHA256).joined(separator: ":").utf8))
+                .map { String(format: "%02x", $0) }.joined()
         let repository = AutomaticSyncRepository(context.database)
         if let input = job.processingInput {
             return try await repository.publishTranscript(
                 input: input, utterances: proposal.utterances, publicationID: job.id.uuidString,
                 modelFingerprint: fingerprint, preprocessing: "nemotron-asr-16khz-mono-v1-\(job.language)",
-                expectedUtterances: previous.utterances
+                expectedUtterances: previous.utterances,
+                speakerAnalysis: proposal.speakerAnalysis
             )
         }
         guard try await repository.transcriptPublication(publicationID: job.id.uuidString) != nil else {

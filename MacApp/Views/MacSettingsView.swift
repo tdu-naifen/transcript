@@ -4,7 +4,6 @@ struct MacSettingsView: View {
     @Environment(MacWorkspace.self) private var workspace
     @Environment(\.colorScheme) private var scheme
     @AppStorage("mac.appearance") private var appearance = MacAppearance.system
-    @State private var modelAvailability = MacAnalysisAvailability.checking
 
     var body: some View {
         TabView {
@@ -13,9 +12,6 @@ struct MacSettingsView: View {
             }
             Tab("Transcription Models", systemImage: "waveform") {
                 MacProcessingView()
-            }
-            Tab("Analysis Models", systemImage: "cpu") {
-                ScrollView { MacAnalysisView(settingsOnly: true) }
             }
             Tab("Backups", systemImage: "externaldrive.badge.timemachine") {
                 ScrollView {
@@ -28,7 +24,6 @@ struct MacSettingsView: View {
         }
         .frame(width: 720, height: 680)
         .navigationTitle("Settings")
-        .task { modelAvailability = await MacFoundationModelsBackend().availability() }
     }
 
     private var generalSettings: some View {
@@ -43,10 +38,9 @@ struct MacSettingsView: View {
                 Text("Appearance")
             }
             Section("Models") {
-                Text("Manage transcription, diarization, speaker embedding, language, and text embedding models in the model tabs in Settings.")
+                Text("Manage transcription, diarization, speaker embedding models, and transcription language in Transcription Models.")
                     .font(.caption).foregroundStyle(.secondary)
-                LabeledContent("Apple Intelligence", value: modelAvailability.message)
-                Text("Apple Intelligence is only required for the Apple language model. MLX models use separately downloaded weights on Apple silicon. Importing and listening do not require an AI model.")
+                Text("Importing and listening do not require an AI model.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section("Storage & Privacy") {

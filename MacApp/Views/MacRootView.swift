@@ -17,10 +17,7 @@ struct MacRootView: View {
                 switch workspace.section ?? .meetings {
                 case .meetings: MacMeetingsView()
                 case .voiceprints: MacVoiceprintsView()
-                case .analysis:
-                    MacAnalysisView(meetingID: workspace.analysisMeetingID) { citation in
-                        workspace.openReference(meetingID: citation.meetingID, utteranceID: citation.utteranceID)
-                    }
+                case .analysis: MacMeetingsView()
                 }
             }
             .background(Color(nsColor: .textBackgroundColor))

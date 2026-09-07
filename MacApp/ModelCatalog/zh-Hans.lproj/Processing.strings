@@ -156,3 +156,16 @@
 "Processing was interrupted. Retry checks the current input before publishing; original audio is unchanged." = "处理已中断。重试时会核对当前输入后再发布，原始音频保持不变。";
 "The transcript changed while processing. This result was retained but cannot overwrite newer edits. Reprocess to use the current version." = "处理期间转写已发生变化。结果已保留，但不会覆盖更新的编辑。请重新处理以使用当前版本。";
 "Unable to publish the transcript. No newer edits were overwritten. Retry publication from the meeting." = "无法发布转写，未覆盖任何更新的编辑。请在会议中重试发布。";
+"Downloaded · speaker runtime available" = "已下载 · 说话人识别可用";
+"Supported: timed transcription with speaker analysis." = "支持带时间坐标的转录和说话人分析。";
+"Four speaker slots, not 40+ distinct speakers. Used by Mac processing and reprocessing." = "仅有 4 个说话人槽位，不支持 40 位以上说话人。用于 Mac 处理和重新处理。";
+"CAM++ voiceprints use actual model-byte provenance, 16 kHz mono preprocessing, and 192-dimensional embeddings for identity matching." = "CAM++ 声纹使用实际模型文件来源、16 kHz 单声道预处理和 192 维向量进行身份匹配。";
+"Install or locate compatible Nemotron, Sortformer, and CAM++ models in Settings." = "请在设置中安装或选择兼容的 Nemotron、Sortformer 和 CAM++ 模型。";
+"Run Nemotron transcription, Sortformer speaker separation, and CAM++ voice identification on this Mac. Library publication checks the source version before saving text and speaker evidence." = "在此 Mac 上运行 Nemotron 转录、Sortformer 说话人分离和 CAM++ 声纹识别。发布到资料库前会检查源版本，再保存文字和说话人证据。";
+"Sortformer supports at most 4 speaker slots per recording. CAM++ identity matching does not remove this limit." = "Sortformer 每段录音最多支持 4 个说话人槽位，CAM++ 身份匹配不会消除这一限制。";
+"Original audio is never replaced. Transcription, diarization, and embedding models must all be configured in Settings." = "原始音频永不替换。请在设置中配置转录、说话人分离和声纹嵌入模型。";
+"Language, audio hash, all three model file hashes, and the source transcript revision are frozen per job. Publication rejects newer edits. Voice matching uses compatible embeddings, never display names." = "每个任务固定语言、音频哈希、三个模型文件哈希和源转录版本。发布不会覆盖更新的编辑。声纹匹配使用兼容向量，不依赖显示名称。";
+"Speaker evidence unavailable" = "说话人证据不可用";
+"Transcription and speaker evidence" = "转录与说话人证据";
+"detectingSpeakers" = "正在区分说话人";
+"identifyingSpeakers" = "正在匹配声纹";

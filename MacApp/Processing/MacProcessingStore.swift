@@ -17,7 +17,7 @@ enum MacProcessingError: Error, LocalizedError {
         case .missingAudio: processingText("The original meeting audio is unavailable.")
         case .audioChanged: processingText("The audio no longer matches this job. Run a new job.")
         case .recordingInProgress: processingText("Wait until recording finishes before creating a local ASR version.")
-        case .missingModels: processingText("Install or locate the compatible Nemotron Core ML ASR model first.")
+        case .missingModels: processingText("Install or locate compatible Nemotron, Sortformer, and CAM++ models in Settings.")
         case .unsupportedModel: processingText("This model is card-only and requires a runtime adapter. No fallback model was used.")
         case .modelAccessExpired: processingText("Model folder access expired. Choose the folder again.")
         case .modelChanged: processingText("Model files changed during processing. No result was saved.")
@@ -34,6 +34,7 @@ struct MacTranscriptSnapshot: Codable, Equatable, Sendable {
     var utterances: [Utterance]
     var links: [MeetingSpeaker]
     var speakers: [Speaker]
+    var speakerAnalysis: MacSpeakerAnalysisProposal? = nil
 
     static func read(_ db: Database, meetingID: String) throws -> Self {
         guard let meeting = try Meeting.fetchOne(db, key: meetingID) else {
@@ -113,7 +114,7 @@ struct MacProcessingJob: Codable, Identifiable, Sendable {
     var sourceTranscriptRevision: String?
     var processingInput: AutomaticSyncRepository.ProcessingInput?
     var outputTranscriptRevision: String?
-    // This pipeline produces evidence only; it never enrolls global voiceprints.
+    // Only fenced library publication may enroll evidence; inference never does.
     var enrollsGlobalVoiceprints = false
 }
 
@@ -196,13 +197,122 @@ struct MacProcessingStore: Sendable {
 
 }
 
+typealias MacSpeakerAnalysisProposal = TranscriptSpeakerAnalysis
+
+struct MacProcessingResult: Sendable {
+    let segments: [ASRSegment]
+    var speakerAnalysis: MacSpeakerAnalysisProposal? = nil
+}
+
 protocol MacProcessingRunning: Sendable {
     func run(meetingID: String, audioURL: URL, deviceID: String,
              models: [MacFrozenModel], language: String,
              progress: @escaping @Sendable (MeetingReprocessingProgress) async -> Void) async throws -> [ASRSegment]
+    func analyze(meetingID: String, audioURL: URL, deviceID: String,
+                 models: [MacFrozenModel], language: String,
+                 progress: @escaping @Sendable (MeetingReprocessingProgress) async -> Void) async throws -> MacProcessingResult
+}
+
+extension MacProcessingRunning {
+    func analyze(meetingID: String, audioURL: URL, deviceID: String,
+                 models: [MacFrozenModel], language: String,
+                 progress: @escaping @Sendable (MeetingReprocessingProgress) async -> Void) async throws -> MacProcessingResult {
+        try await MacProcessingResult(segments: run(meetingID: meetingID, audioURL: audioURL,
+            deviceID: deviceID, models: models, language: language, progress: progress))
+    }
 }
 
 struct MacCoreProcessingRunner: MacProcessingRunning {
+    func analyze(meetingID: String, audioURL: URL, deviceID: String,
+                 models: [MacFrozenModel], language: String,
+                 progress: @escaping @Sendable (MeetingReprocessingProgress) async -> Void) async throws -> MacProcessingResult {
+        guard models.count == 3,
+              let asr = models.first(where: { $0.category == .asr && $0.adapter == .nemotronMultilingual }),
+              let diarization = models.first(where: { $0.category == .diarization && $0.adapter == .sortformer }),
+              let embedding = models.first(where: { $0.category == .speakerEmbedding && $0.adapter == .campPlus }) else {
+            throw MacProcessingError.missingModels
+        }
+        let segments = try await run(meetingID: meetingID, audioURL: audioURL, deviceID: deviceID,
+            models: [asr], language: language) { update in
+                await progress(.init(stage: update.stage, fractionCompleted: update.fractionCompleted * 0.5))
+            }
+        try Task.checkCancellation()
+        let samples = try AudioFileLoader.load16kMono(url: audioURL)
+        let diarizer = SpeakerDiarizer(configuration: .init(mainModelPath: try diarization.resolvedURL()))
+        let events = await diarizer.events()
+        await progress(.init(stage: .detectingSpeakers, fractionCompleted: 0.52))
+        await diarizer.run(chunks: AsyncStream<AudioChunk>(unfolding: Self.chunkIterator(samples)))
+        let timeline: [DiarizerSegment]
+        do {
+            timeline = try await withTaskCancellationHandler {
+                var finalized: [DiarizerSegment] = []
+                var tentative: [DiarizerSegment] = []
+                for await event in events {
+                    try Task.checkCancellation()
+                    switch event {
+                    case .update(let final, let pending):
+                        finalized.append(contentsOf: final)
+                        tentative = pending
+                    case .failed(let message): throw MeetingReprocessingError.speakerDetectionFailed(message)
+                    default: break
+                    }
+                }
+                try Task.checkCancellation()
+                return finalized + tentative
+            } onCancel: { Task { await diarizer.cancelAndWait() } }
+        } catch {
+            await diarizer.cancelAndWait()
+            throw error
+        }
+        guard !timeline.isEmpty else {
+            throw MeetingReprocessingError.speakerDetectionFailed("No speaker segments were produced.")
+        }
+        let modelURL = try embedding.resolvedURL()
+        let identifier = try SpeakerAnalysisEngine.modelIdentifier(at: modelURL)
+        let processor = VoiceprintProcessor(modelDirectory: modelURL)
+        var voices: [MacSpeakerAnalysisProposal.Voice] = []
+        do {
+            let slots = Set(timeline.map(\.speakerIndex)).sorted()
+            for (index, slot) in slots.enumerated() {
+                try Task.checkCancellation()
+                await progress(.init(stage: .identifyingSpeakers,
+                    fractionCompleted: 0.8 + 0.15 * Double(index) / Double(slots.count)))
+                let selected: VoiceprintSelectedSample
+                do {
+                    selected = try VoiceprintSampleSelector().select(speakerIndex: slot,
+                        audio: samples, sampleRate: 16_000, finalizedSegments: timeline)
+                } catch VoiceprintSampleSelectionError.insufficientCleanAudio {
+                    voices.append(.init(slot: slot, embedding: nil, cleanDuration: 0))
+                    continue
+                }
+                let handle = try await processor.submit(.init(meetingId: meetingID, speakerSlot: slot,
+                    generation: 1, audio: selected.samples, sampleRate: 16_000,
+                    finalizedSegments: [.init(speakerIndex: slot, startFrame: 0,
+                        endFrame: selected.samples.count, frameDurationSeconds: 1 / 16_000)]))
+                let result = try await withTaskCancellationHandler {
+                    if Task.isCancelled { await handle.cancelAndWait(); throw CancellationError() }
+                    return try await handle.value()
+                } onCancel: { Task { await handle.cancelAndWait() } }
+                guard let vector = result.embedding, vector.count == 192,
+                      FloatVector.normalized(vector) != nil else {
+                    throw VoiceprintBindingError.invalidEmbedding
+                }
+                voices.append(.init(slot: slot, embedding: vector, cleanDuration: result.evidence.cleanDuration))
+            }
+            await processor.shutdownAndDrain()
+        } catch {
+            await processor.shutdownAndDrain()
+            throw error
+        }
+        try Task.checkCancellation()
+        return .init(segments: segments, speakerAnalysis: .init(
+            modelIdentifier: identifier, preprocessing: VoiceprintPreprocessing.campPlus,
+            voices: voices, timeline: timeline.map {
+                .init(slot: $0.speakerIndex, startFrame: $0.startFrame, endFrame: $0.endFrame,
+                      frameDurationSeconds: $0.frameDurationSeconds)
+            }))
+    }
+
     func run(meetingID: String, audioURL: URL, deviceID: String,
              models: [MacFrozenModel], language: String,
              progress: @escaping @Sendable (MeetingReprocessingProgress) async -> Void) async throws -> [ASRSegment] {
@@ -260,6 +370,7 @@ struct MacCoreProcessingRunner: MacProcessingRunning {
         let source = MacASRChunkSource(samples: samples)
         return { await source.next() }
     }
+
 }
 
 private actor MacASRCancellation {
@@ -311,6 +422,7 @@ actor MacProcessingWorker {
                 .captureProcessingInput(meetingID: meetingID)
             job.processingInput = input
             job.sourceTranscriptRevision = input.transcriptRevision
+            job.enrollsGlobalVoiceprints = true
         }
         let snapshot = try await context.database.reader.read { db in
             try MacTranscriptSnapshot.read(db, meetingID: meetingID)
@@ -373,9 +485,10 @@ actor MacProcessingWorker {
                 throw MacProcessingError.modelChanged
             }
         }
-        let segments = try await runner.run(meetingID: job.meetingID, audioURL: store.audio(job.id),
+        let result = try await runner.analyze(meetingID: job.meetingID, audioURL: store.audio(job.id),
                                            deviceID: context.deviceID, models: job.models,
                                            language: job.language, progress: progress)
+        let segments = result.segments
         try Task.checkCancellation()
         let current = try await context.database.reader.read { db in
             guard let meeting = try Meeting.fetchOne(db, key: job.meetingID) else {
@@ -384,7 +497,9 @@ actor MacProcessingWorker {
             return meeting
         }
         guard current.audioFileName == previous.meeting.audioFileName,
-              current.audioSHA256 == nil || current.audioSHA256 == job.audioSHA256 else {
+              current.audioSHA256 == nil || current.audioSHA256 == job.audioSHA256,
+              let originalName = current.audioFileName,
+              try IncrementalSHA256.hashFile(at: context.audioFiles.url(forFileName: originalName)).sha256 == expectedHash else {
             throw MacProcessingError.audioChanged
         }
         for model in job.models {
@@ -404,7 +519,8 @@ actor MacProcessingWorker {
                       text: segment.text, localeIdentifier: segment.localeIdentifier,
                       engine: .nemotron, originDeviceId: context.deviceID)
         }
-        return MacTranscriptSnapshot(meeting: meeting, utterances: utterances, links: [], speakers: [])
+        return MacTranscriptSnapshot(meeting: meeting, utterances: utterances, links: [], speakers: [],
+                                     speakerAnalysis: result.speakerAnalysis)
     }
 
     static func hashModel(at root: URL) throws -> String {

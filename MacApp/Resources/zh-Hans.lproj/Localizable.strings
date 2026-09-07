@@ -300,3 +300,7 @@
 "Pairing timed out. Keep both devices open and try again." = "配对超时。请保持两台设备开启后重试。";
 "Enable pairing on this Mac, then try again." = "请先在这台 Mac 上开启配对，然后重试。";
 "Secure identity storage is unavailable. No new device was trusted." = "安全身份存储不可用。未信任任何新设备。";
+"Your original recording and transcript are preserved." = "原始录音和转录均已保留。";
+"Manage transcription, diarization, speaker embedding models, and transcription language in Transcription Models." = "在“转录模型”中管理转录、说话人分离、声纹嵌入模型和转录语言。";
+"Importing and listening do not require an AI model." = "导入和播放不需要 AI 模型。";
+"Changes are saved locally and sent to authorized connected devices when automatic sync is enabled." = "更改会保存到本机，并在启用自动同步时发送给已授权且连接的设备。";

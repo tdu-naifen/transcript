@@ -190,14 +190,17 @@ final class MacProcessingModel {
     private var resourcesReady: Bool {
         isConfigured && ["auto", "en-US", "zh-CN"].contains(catalog.language)
             && catalog.selected(.asr)?.adapter == .nemotronMultilingual
-            && catalog.selected(.asr)?.isInstalled() == true
+            && catalog.selected(.diarization)?.adapter == .sortformer
+            && catalog.selected(.speakerEmbedding)?.adapter == .campPlus
+            && MacModelCategory.allCases.allSatisfy { catalog.selected($0)?.isInstalled() == true }
     }
 
     var configurationID: String {
-        let card = catalog.selected(.asr)
-        let fields = [catalog.language, card?.id ?? "", card?.revision ?? "",
-                      card?.adapter.rawValue ?? "", card?.localPath ?? "",
-                      card?.bookmark?.base64EncodedString() ?? ""]
+        let fields = [catalog.language] + MacModelCategory.allCases.flatMap { category in
+            let card = catalog.selected(category)
+            return [card?.id ?? "", card?.revision ?? "", card?.adapter.rawValue ?? "",
+                    card?.localPath ?? "", card?.bookmark?.base64EncodedString() ?? ""]
+        }
         let bytes = (try? JSONEncoder().encode(fields)) ?? Data()
         return SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
     }
@@ -345,7 +348,7 @@ final class MacProcessingModel {
         }
     }
 
-    func start(meetingID: String, destination: MacProcessingJob.Destination = .localVersion) {
+    func start(meetingID: String, destination: MacProcessingJob.Destination = .library) {
         guard !isBusy else { report(MacProcessingError.alreadyRunning); return }
         guard context != nil, let store, isConfigured else { report(MacProcessingError.notConfigured); return }
         if jobs.contains(where: {
@@ -377,8 +380,8 @@ final class MacProcessingModel {
     }
 
     private func execute(job: MacProcessingJob) {
-        guard let context, let store, let asr = catalog.selected(.asr) else { return }
-        let cards = [asr]
+        guard let context, let store, resourcesReady else { return }
+        let cards = MacModelCategory.allCases.compactMap { catalog.selected($0) }
         activeJobID = job.id
         errorMessage = nil
         activeTask = Task {

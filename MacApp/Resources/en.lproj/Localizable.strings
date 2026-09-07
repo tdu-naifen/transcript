@@ -29,3 +29,7 @@
 "Leave the name empty to use the originally assigned animal name. The stable identity and color do not change." = "Leave the name empty to use the originally assigned animal name. The stable identity and color do not change.";
 "Use a speaker name of 200 characters or fewer." = "Use a speaker name of 200 characters or fewer.";
 "Unable to rename this speaker. Refresh the library and try again." = "Unable to rename this speaker. Refresh the library and try again.";
+"Your original recording and transcript are preserved." = "Your original recording and transcript are preserved.";
+"Manage transcription, diarization, speaker embedding models, and transcription language in Transcription Models." = "Manage transcription, diarization, speaker embedding models, and transcription language in Transcription Models.";
+"Importing and listening do not require an AI model." = "Importing and listening do not require an AI model.";
+"Changes are saved locally and sent to authorized connected devices when automatic sync is enabled." = "Changes are saved locally and sent to authorized connected devices when automatic sync is enabled.";

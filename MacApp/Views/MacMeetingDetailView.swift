@@ -47,14 +47,7 @@ struct MacMeetingDetailView: View {
                     ContentUnavailableView {
                         Label("Your original words come first.", systemImage: "text.quote")
                     } description: {
-                        Text("Open LLM Analysis to summarize saved transcript excerpts with references. Your original recording is never changed.")
-                    } actions: {
-                        Button("Summarize in LLM Analysis") {
-                            workspace.analysisMeetingID = item.id
-                            workspace.section = .analysis
-                        }
-                        .buttonStyle(MacBrandButtonStyle())
-                        .disabled(isSample || item.utterances.isEmpty)
+                        Text("Your original recording and transcript are preserved.")
                     }
                 }
             }
@@ -101,7 +94,7 @@ struct MacMeetingDetailView: View {
                 if titleDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     Text("Enter a meeting title.").font(.caption).foregroundStyle(.red)
                 }
-                Text("This changes the local copy only. Device sync is not available yet.")
+                Text("Changes are saved locally and sent to authorized connected devices when automatic sync is enabled.")
                     .font(.caption).foregroundStyle(.secondary)
                 HStack {
                     Spacer()

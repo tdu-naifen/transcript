@@ -42,6 +42,7 @@ final class MacThemeTests: XCTestCase {
     }
 
     func testNavigationAndDeviceSymbolsExist() {
+        XCTAssertEqual(MacSection.allCases, [.meetings, .voiceprints])
         for symbol in MacSection.allCases.map(\.symbol) + ["iphone", "desktopcomputer", "person.wave.2", "lock.shield"] {
             XCTAssertNotNil(NSImage(systemSymbolName: symbol, accessibilityDescription: nil), symbol)
         }
