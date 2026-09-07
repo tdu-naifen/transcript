@@ -103,19 +103,25 @@ import Testing
 @Suite(.serialized) struct VoiceprintRuntimeTests {
     @Test(.enabled(if: ProcessInfo.processInfo.environment["BACKEND_REAL_CAMPLUS"] != nil))
     func realCAMPlusColdWarmAndSpeakerComparisons() async throws {
-        #if !targetEnvironment(simulator) || !os(iOS)
-        throw RealVoiceprintFixtureError("Real voiceprint acceptance requires an iOS Simulator")
+        #if !os(macOS) && !targetEnvironment(simulator)
+        throw RealVoiceprintFixtureError("This isolated smoke test requires macOS or an iOS Simulator")
         #else
+        #if os(macOS)
+        let platform = "macos"
+        #else
+        let platform = "ios-simulator"
+        #endif
         let environment = ProcessInfo.processInfo.environment
         guard environment["BACKEND_REAL_CAMPLUS"] == "1",
               let path = environment["BACKEND_REAL_FIXTURE_DIR"], !path.isEmpty else {
-            throw RealVoiceprintFixtureError("Use BACKEND_REAL_CAMPLUS=1 with run-simulator-tests.sh to provision fixtures")
+            throw RealVoiceprintFixtureError("Set BACKEND_REAL_CAMPLUS=1 and BACKEND_REAL_FIXTURE_DIR to isolated models/audio fixtures")
         }
         let root = URL(fileURLWithPath: path, isDirectory: true)
         let models = root.appendingPathComponent("models", isDirectory: true)
         guard CampPlusModels.modelsExist(at: models) else {
             throw RealVoiceprintFixtureError("Requested real CAM++ models are missing from \(models.path)")
         }
+        let modelIdentifier = try SpeakerAnalysisEngine.modelIdentifier(at: models)
         let names = ["1089-134686-0000", "1089-134686-0002", "1188-133604-0000"]
         let audio = try names.map { name in
             let samples = try AudioConverter(sampleRate: 16_000).resampleAudioFile(
@@ -179,7 +185,10 @@ import Testing
                 generation += 1
                 let sameScore = FloatVector.cosineSimilarity(enrollment, same)
                 let differentScore = FloatVector.cosineSimilarity(enrollment, different)
-                let database = try AppDatabase.inMemory()
+                let databaseRoot = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("voiceprint-runtime-\(UUID().uuidString)")
+                defer { try? FileManager.default.removeItem(at: databaseRoot) }
+                let database = try AppDatabase.onDisk(directory: databaseRoot)
                 let repository = SpeakerRepository(database)
                 for (id, vector) in [("1089", enrollment), ("1188", different)] {
                     try await repository.upsert(Speaker(
@@ -187,16 +196,61 @@ import Testing
                     ))
                     try await repository.addEmbedding(SpeakerEmbedding(
                         speakerId: id, floats: vector, originDeviceId: testiPhoneId,
-                        modelIdentifier: "local-campplus-acceptance"
+                        modelIdentifier: modelIdentifier, preprocessing: VoiceprintPreprocessing.campPlus
                     ))
                 }
                 let matcher = VoiceprintMatcher(
-                    speakers: repository, modelIdentifier: "local-campplus-acceptance"
+                    speakers: repository, modelIdentifier: modelIdentifier
                 )
                 let decision = try await matcher.match(embedding: same, cleanDuration: Double(duration))
+                if duration == 1 {
+                    guard case .needsMoreAudio = decision else {
+                        Issue.record("One second must not assign a persistent identity")
+                        throw RealVoiceprintFixtureError("Minimum clean audio policy was bypassed")
+                    }
+                }
+                if duration == 5 {
+                    guard case .matched(speakerId: "1089", evidence: let evidence) = decision else {
+                        Issue.record("Independent same-speaker speech did not match under the unchanged default policy: \(decision)")
+                        throw RealVoiceprintFixtureError("Real same-speaker recognition failed")
+                    }
+                    let meeting = makeTestMeeting()
+                    try await MeetingRepository(database).insert(meeting)
+                    let binder = VoiceprintBinder(speakers: repository)
+                    let expectation = try await binder.expectation(meetingId: meeting.id, speakerIndex: 0)
+                    try await binder.bindIdentity(
+                        speakerId: "1089", evidence: evidence, meetingId: meeting.id, speakerIndex: 0,
+                        expectation: expectation, deviceId: testiPhoneId
+                    )
+                    try await repository.rename(id: "1089", displayName: "Renamed fixture", deviceId: testiPhoneId)
+                    #expect(try await repository.speakers(inMeeting: meeting.id).map(\.speaker.id) == ["1089"])
+                    try await MeetingRepository(database).delete(id: meeting.id)
+                    try database.writer.close()
+                    let reopened = try AppDatabase.onDisk(directory: databaseRoot)
+                    let persisted = SpeakerRepository(reopened)
+                    #expect(try await persisted.fetch(id: "1089")?.resolvedName == "Renamed fixture")
+                    #expect(try await persisted.embeddings(forSpeaker: "1089").count == 1)
+                    let reopenedMatcher = VoiceprintMatcher(speakers: persisted, modelIdentifier: modelIdentifier)
+                    let afterRestart = try await reopenedMatcher.match(embedding: same, cleanDuration: 5)
+                    guard case .matched(speakerId: "1089", evidence: _) = afterRestart else {
+                        throw RealVoiceprintFixtureError("Persisted real template did not match after reopen")
+                    }
+                    let other = try await reopenedMatcher.match(embedding: different, cleanDuration: 5)
+                    guard case .matched(speakerId: "1188", evidence: _) = other else {
+                        throw RealVoiceprintFixtureError("Different real speaker was not kept separate")
+                    }
+                    try await persisted.deleteEmbeddings(forSpeaker: "1188", modelIdentifier: modelIdentifier)
+                    let unknown = try await reopenedMatcher.match(embedding: different, cleanDuration: 5)
+                    guard case .noMatch = unknown else {
+                        throw RealVoiceprintFixtureError("Unenrolled real speaker was assigned another identity")
+                    }
+                    try reopened.writer.close()
+                } else {
+                    try database.writer.close()
+                }
                 let memoryDelta = memoryBefore.flatMap { before in memoryAfter.map { $0 - before } }
                 let sorted = warm.sorted()
-                print("BENCHMARK name=real-camplus platform=ios-simulator seconds=\(duration) cold_processor_load_infer_seconds=\(seconds(cold)) warm_p50_seconds=\(seconds(sorted[1])) warm_p95_seconds=\(seconds(sorted[2])) model_memory_delta_bytes=\(memoryDelta.map(String.init) ?? "unavailable") peak_bytes=\(MemoryFootprint.peak().map(String.init) ?? "unavailable") same_speaker_cosine=\(sameScore) different_speaker_cosine=\(differentScore) query=\(names[1]) enrollment=\(names[0]) different=\(names[2]) decision=\(decision)")
+                print("BENCHMARK name=real-camplus platform=\(platform) seconds=\(duration) cold_processor_load_infer_seconds=\(seconds(cold)) warm_p50_seconds=\(seconds(sorted[1])) warm_p95_seconds=\(seconds(sorted[2])) model_memory_delta_bytes=\(memoryDelta.map(String.init) ?? "unavailable") peak_bytes=\(MemoryFootprint.peak().map(String.init) ?? "unavailable") same_speaker_cosine=\(sameScore) different_speaker_cosine=\(differentScore) query=\(names[1]) enrollment=\(names[0]) different=\(names[2]) decision=\(decision)")
                 if duration == 5 { #expect(sameScore > differentScore) }
                 await processor.shutdownAndDrain()
             } catch {
@@ -207,10 +261,10 @@ import Testing
         heartbeat.cancel()
         let (ticks, gap) = await heartbeat.value
         #expect(ticks > 0)
-        print("BENCHMARK name=real-camplus-heartbeat platform=ios-simulator main_actor_ticks=\(ticks) maximum_gap_seconds=\(seconds(gap))")
+        print("BENCHMARK name=real-camplus-heartbeat platform=\(platform) main_actor_ticks=\(ticks) maximum_gap_seconds=\(seconds(gap))")
         // Inspect after timing so this extra metadata load does not warm the first processor.
         try inspectModelBounds(models)
-        print("BENCHMARK name=real-camplus-complete platform=ios-simulator durations=1,2,3,5 fixtures=3 speakers=2 inference=real-camplus calibration=false")
+        print("BENCHMARK name=real-camplus-complete platform=\(platform) durations=1,2,3,5 fixtures=3 speakers=2 inference=real-camplus calibration=false model=\(modelIdentifier)")
         #endif
     }
 
