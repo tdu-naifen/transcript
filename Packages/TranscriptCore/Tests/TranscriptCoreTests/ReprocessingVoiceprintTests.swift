@@ -9,9 +9,13 @@ import Testing
         private var isReleased = false
         private var entered = false
         private var waiters: [CheckedContinuation<Void, Never>] = []
+        private var entryWaiters: [CheckedContinuation<Void, Never>] = []
 
         func wait() async {
             entered = true
+            let observers = entryWaiters
+            entryWaiters.removeAll()
+            for observer in observers { observer.resume() }
             guard !isReleased else { return }
             await withCheckedContinuation { waiters.append($0) }
         }
@@ -24,6 +28,11 @@ import Testing
         }
 
         func hasEntered() -> Bool { entered }
+
+        func waitUntilEntered() async {
+            guard !entered else { return }
+            await withCheckedContinuation { entryWaiters.append($0) }
+        }
     }
 
     actor Registry {
@@ -63,7 +72,8 @@ import Testing
         #expect(draft.existingSpeakerId == known.id)
         #expect(draft.wasVoiceprintMatch)
 
-        let meeting = makeTestMeeting(id: "matched-reprocessing")
+        var meeting = makeTestMeeting(id: "matched-reprocessing")
+        meeting.durationMs = 1000
         try await MeetingRepository(database).insert(meeting)
         try await MeetingReprocessingRepository(database).replace(
             meetingId: meeting.id,
@@ -171,6 +181,8 @@ import Testing
     @Test func cancellationAfterSubmitReturnsCancelsAndWaitsForThatPhysicalJob() async throws {
         let admission = Gate()
         let physical = Gate()
+        let activeCheck = Gate()
+        let unregistered = Gate()
         let registry = Registry()
         let processor = VoiceprintProcessor(
             inference: VoiceprintInference(
@@ -203,19 +215,24 @@ import Testing
                 processor: processor,
                 request: request,
                 register: { handle in await registry.insert(handle.id) },
-                unregister: { id in await registry.remove(id) },
+                unregister: { id in
+                    await registry.remove(id)
+                    await unregistered.release()
+                },
                 ensureActive: {
-                    while !(await physical.hasEntered()) { await Task.yield() }
+                    await physical.waitUntilEntered()
+                    await activeCheck.wait()
                     throw CancellationError()
                 }
             )
         }
-        while !(await admission.hasEntered()) { await Task.yield() }
+        await admission.waitUntilEntered()
         await admission.release()
-        while !(await physical.hasEntered()) { await Task.yield() }
+        await activeCheck.waitUntilEntered()
         #expect(await registry.isEmpty() == false)
-        await Task.yield()
         #expect(operation.isCancelled == false)
+        await activeCheck.release()
+        await unregistered.wait()
         await physical.release()
         await #expect(throws: CancellationError.self) { try await operation.value }
         #expect(await registry.isEmpty())

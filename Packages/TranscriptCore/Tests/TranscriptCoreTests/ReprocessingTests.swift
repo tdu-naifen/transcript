@@ -1,9 +1,79 @@
 import Foundation
+import CoreMedia
 import FluidAudio
 import Testing
 @testable import TranscriptCore
 
 @Suite struct ReprocessingTests {
+    @Test func invalidReplacementTimingPreservesPublishedRowsAndMetadata() async throws {
+        for engine in [TranscriptionEngine.appleSpeech, .nemotron] {
+            for (start, end) in [(0, 1050), (-1, 900), (900, 899)] {
+                let database = try AppDatabase.inMemory()
+                let meeting = Meeting(title: "Keep original", startedAt: Date(), durationMs: 1000,
+                    audioFileName: "original.m4a", audioSHA256: "original-hash", audioByteCount: 4000,
+                    state: .recorded, originDeviceId: "test")
+                try await MeetingRepository(database).insert(meeting)
+                let speaker = try await SpeakerRepository(database).createAnonymousSpeaker(deviceId: "test")
+                try await SpeakerRepository(database).assignDisplayIndex(
+                    meetingId: meeting.id, speakerId: speaker.id, displayIndex: 0, deviceId: "test"
+                )
+                try await UtteranceRepository(database).append(Utterance(
+                    meetingId: meeting.id, startMs: 0, endMs: 900, text: "Preserved user edit",
+                    speakerId: speaker.id, revision: 4, originDeviceId: "test"
+                ))
+                let original = try await UtteranceRepository(database).fetch(meetingId: meeting.id)
+                let originalMeeting = try await MeetingRepository(database).fetch(id: meeting.id)
+                let originalLinks = try await database.reader.read { try MeetingSpeaker.fetchAll($0) }
+                let originalSpeakers = try await database.reader.read { try Speaker.fetchAll($0) }
+                if end == 1050 {
+                    // Synthetic decoded input is longer than the persisted capture duration.
+                    let range = CMTimeRange(start: .zero, duration: CMTime(value: 1050, timescale: 1000))
+                    let acceptedByInput = try TranscriptAudioTimeline.bounds(for: range, finalInputEndMs: 1100)
+                    #expect(acceptedByInput.endMs == 1050)
+                }
+                await #expect(throws: MeetingReprocessingTimingError.self) {
+                    try await MeetingReprocessingRepository(database).replace(
+                        meetingId: meeting.id,
+                        utterances: [.init(startMs: start, endMs: end, text: "Invalid replacement", speakerIndex: 0)],
+                        speakers: [.init(speakerIndex: 0)], deviceId: "retry", engine: engine,
+                        expectedSnapshot: .init(audioSHA256: meeting.audioSHA256, utterances: original)
+                    )
+                }
+                #expect(try await UtteranceRepository(database).fetch(meetingId: meeting.id) == original)
+                #expect(try await MeetingRepository(database).fetch(id: meeting.id) == originalMeeting)
+                #expect(try await database.reader.read { try MeetingSpeaker.fetchAll($0) } == originalLinks)
+                #expect(try await database.reader.read { try Speaker.fetchAll($0) } == originalSpeakers)
+            }
+        }
+    }
+
+    @Test func explicitValidReplacementCanReplaceLegacyOverrunAtExactSavedBoundary() async throws {
+        for engine in [TranscriptionEngine.appleSpeech, .nemotron] {
+            let database = try AppDatabase.inMemory()
+            let meeting = Meeting(title: "Legacy timing", startedAt: Date(), durationMs: 1000,
+                                  state: .recorded, originDeviceId: "test")
+            try await MeetingRepository(database).insert(meeting)
+            try await UtteranceRepository(database).append(Utterance(
+                meetingId: meeting.id, startMs: 0, endMs: 1200, text: "Legacy overrun", originDeviceId: "test"
+            ))
+            let original = try await UtteranceRepository(database).fetch(meetingId: meeting.id)
+            let repository = MeetingReprocessingRepository(database)
+            await #expect(throws: MeetingReprocessingTimingError.self) {
+                try await repository.replace(meetingId: meeting.id,
+                    utterances: [.init(startMs: 0, endMs: 1050, text: "Still outside")],
+                    speakers: [], deviceId: "test", engine: engine)
+            }
+            #expect(try await UtteranceRepository(database).fetch(meetingId: meeting.id) == original)
+            _ = try await repository.replace(meetingId: meeting.id,
+                utterances: [.init(startMs: 0, endMs: 1000, text: "Valid explicit replacement")],
+                speakers: [], deviceId: "test", engine: engine)
+            let replacement = try await UtteranceRepository(database).fetch(meetingId: meeting.id)
+            #expect(replacement.map(\.endMs) == [1000])
+            #expect(replacement.map(\.engine) == [engine])
+            #expect(try await MeetingRepository(database).fetch(id: meeting.id)?.durationMs == 1000)
+        }
+    }
+
     @Test func staleRetrySnapshotCannotReplaceConcurrentEditsOrChangedAudio() async throws {
         let database = try AppDatabase.inMemory()
         let meeting = Meeting(
@@ -116,7 +186,8 @@ import Testing
         let speakers = SpeakerRepository(database)
         let utterances = UtteranceRepository(database)
         let repository = MeetingReprocessingRepository(database)
-        let meeting = makeTestMeeting(id: "rollback-meeting", title: "Keep me")
+        var meeting = makeTestMeeting(id: "rollback-meeting", title: "Keep me")
+        meeting.durationMs = 1000
         try await meetings.insert(meeting)
         let oldSpeaker = Speaker(
             id: "old-speaker",
@@ -142,7 +213,7 @@ import Testing
         )
         try await utterances.append(oldUtterance)
 
-        await #expect(throws: (any Error).self) {
+        await #expect(throws: RepositoryError.notFound(table: Speaker.databaseTableName, id: "missing-speaker")) {
             try await repository.replace(
                 meetingId: meeting.id,
                 utterances: [ReprocessedUtteranceDraft(

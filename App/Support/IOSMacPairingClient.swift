@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Network
+import OSLog
 
 @MainActor
 final class IOSMacPairingClient {
@@ -73,6 +74,10 @@ final class IOSMacPairingClient {
         }
 
         func cancel(transferError: MeetingCopyProblem) {
+            transport.connection.stateUpdateHandler = nil
+            transport.connection.viabilityUpdateHandler = nil
+            transport.connection.pathUpdateHandler = nil
+            transport.connection.betterPathUpdateHandler = nil
             transport.cancel()
             reader?.cancel()
             deadline?.cancel()
@@ -90,6 +95,7 @@ final class IOSMacPairingClient {
     private let store: any MacPairingIdentityStoring
     private let name: String
     private let timeouts: Timeouts
+    private let makeConnection: @MainActor (NWEndpoint, NWParameters) -> NWConnection
     private var session: Session?
     private(set) var pairedPeer: MacPairedDevice?
     private(set) var state: State = .idle
@@ -99,10 +105,16 @@ final class IOSMacPairingClient {
     var transferSessionID: UUID? { supportsMeetingTransfer ? session?.id : nil }
     var canProbeMeetingTransfer: Bool { session?.connected == true && session?.probeAllowed == true }
 
-    init(store: any MacPairingIdentityStoring, name: String = "iPhone", timeouts: Timeouts = .init()) {
+    init(
+        store: any MacPairingIdentityStoring, name: String = "iPhone", timeouts: Timeouts = .init(),
+        makeConnection: @escaping @MainActor (NWEndpoint, NWParameters) -> NWConnection = {
+            NWConnection(to: $0, using: $1)
+        }
+    ) {
         self.store = store
         self.name = name
         self.timeouts = timeouts
+        self.makeConnection = makeConnection
     }
 
     func restoreTrust() throws {
@@ -131,11 +143,13 @@ final class IOSMacPairingClient {
             let parameters = NWParameters.tcp
             parameters.includePeerToPeer = true
             let next = Session(
-                transport: MacPairingTransport(NWConnection(to: endpoint, using: parameters)),
+                transport: MacPairingTransport(makeConnection(endpoint, parameters)),
                 expectedPeer: pairedPeer
             )
             session = next
             next.probeAllowed = allowMeetingCopyProbe
+            MacNetworkDiagnostics.endpoint(endpoint, event: "connect", generation: next.id)
+            observeNetwork(for: next)
             next.transport.start()
             armDeadline(timeouts.initial, for: next)
             next.reader = Task { [weak self, weak next] in
@@ -146,6 +160,38 @@ final class IOSMacPairingClient {
             publish(.connecting)
         } catch {
             publish(.failed(message: message(for: error)))
+        }
+    }
+
+    private func observeNetwork(for current: Session) {
+        let observe: @Sendable (String, Bool, Bool) -> Void = { [weak self, weak current] event, invalid, onlyIfAuthenticated in
+            Task { @MainActor in
+                guard let self, let current, self.session === current else { return }
+                MacNetworkDiagnostics.path(current.transport.connection.currentPath, event: event, generation: current.id)
+                guard invalid,
+                      !onlyIfAuthenticated || current.connected else { return }
+                self.fail(MeetingCopyProblem(code: .network), session: current)
+            }
+        }
+        let connection = current.transport.connection
+        connection.stateUpdateHandler = { state in
+            switch state {
+            case .waiting(let error): observe("waiting-\(MacNetworkDiagnostics.errorCode(error))", true, false)
+            case .failed(let error): observe("failed-\(MacNetworkDiagnostics.errorCode(error))", true, false)
+            case .cancelled: observe("cancelled", true, false)
+            case .ready: observe("transport-ready", false, false)
+            default: break
+            }
+        }
+        connection.viabilityUpdateHandler = { viable in
+            observe(viable ? "viable" : "not-viable", !viable, true)
+        }
+        connection.pathUpdateHandler = { path in
+            observe("connection-path-\(path.status)", path.status != .satisfied, true)
+        }
+        connection.betterPathUpdateHandler = { available in
+            // This is an optimization hint, not evidence the current route failed.
+            observe(available ? "better-path-available" : "no-better-path", false, true)
         }
     }
 
@@ -320,6 +366,7 @@ final class IOSMacPairingClient {
         try await enqueue(MacPairingMessage(type: "ready"), on: current).value
         try requireCurrent(current)
         current.connected = true
+        MacNetworkDiagnostics.path(current.transport.connection.currentPath, event: "authenticated", generation: current.id)
         armDeadline(timeouts.idle, for: current)
         startHeartbeat(for: current)
         publish(.connected(peer))
@@ -463,6 +510,9 @@ final class IOSMacPairingClient {
     private func stopSession(transferError: MeetingCopyProblem = .init(code: .network)) {
         let previous = session
         session = nil
+        if let previous {
+            MacNetworkDiagnostics.path(previous.transport.connection.currentPath, event: "session-revoked", generation: previous.id)
+        }
         previous?.cancel(transferError: transferError)
         onTransferReadiness?(false)
     }

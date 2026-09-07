@@ -63,6 +63,7 @@ public struct MeetingReprocessingSnapshot: Sendable {
 }
 
 public enum MeetingReprocessingSnapshotError: Error { case changed }
+public enum MeetingReprocessingTimingError: Error, Sendable { case invalidRange }
 
 public struct MeetingReprocessingRepository: Sendable {
     private let database: AppDatabase
@@ -98,6 +99,9 @@ public struct MeetingReprocessingRepository: Sendable {
                     throw MeetingReprocessingSnapshotError.changed
                 }
             }
+            guard meeting.durationMs >= 0, drafts.allSatisfy({
+                $0.startMs >= 0 && $0.endMs >= $0.startMs && $0.endMs <= meeting.durationMs
+            }) else { throw MeetingReprocessingTimingError.invalidRange }
 
             var draftsByIndex: [Int: ReprocessedSpeakerDraft] = [:]
             for draft in speakerDrafts {
@@ -168,7 +172,7 @@ public struct MeetingReprocessingRepository: Sendable {
                     id: draft.id,
                     meetingId: meetingId,
                     startMs: draft.startMs,
-                    endMs: max(draft.startMs, draft.endMs),
+                    endMs: draft.endMs,
                     text: draft.text,
                     speakerId: draft.speakerIndex.flatMap { speakerIdsByIndex[$0] },
                     localeIdentifier: draft.localeIdentifier,

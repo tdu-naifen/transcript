@@ -93,6 +93,261 @@ final class MacConnectionRecoveryTests: XCTestCase {
         XCTAssertEqual(store.saveCalls, 0)
     }
 
+    func testObservedNetworkLossRevokesReadinessAndDiscoversFreshPinnedEndpoint() async throws {
+        for event in ["viability", "waiting", "failed", "cancelled", "path"] {
+            let identity = Curve25519.Signing.PrivateKey()
+            var waitingForReply = false
+            let first = try PairingTCPFixture(identity: identity) { peer in
+                _ = try await peer.handshake(reconnect: true)
+                try await peer.expect("resume")
+                try await peer.send(.init(type: "ready"))
+                try await peer.expect("ready")
+                while true {
+                    let inner: MacPairingMessage
+                    do { inner = try await peer.receive() } catch { return }
+                    if inner.type == "ping" { try await peer.send(.init(type: "pong")); continue }
+                    let request = try MeetingCopyWire.message(inner)
+                    if request.type == .finalize {
+                        waitingForReply = true
+                        try await peer.waitForClose()
+                        return
+                    }
+                    XCTAssertEqual(request.type, .capabilities)
+                    var response = MeetingCopyWire.Message(.accepted, requestID: request.requestID)
+                    response.capability = MeetingCopyWire.capability
+                    try await peer.send(MeetingCopyWire.inner(response))
+                }
+            }
+            let second = try PairingTCPFixture(identity: identity) { peer in
+                try await self.acceptReconnect(peer, onHeartbeat: {}, onApplicationMessage: {})
+            }
+            let discovery = RecoveryDiscoveryProbe(endpoint: try await first.start(), hint: true)
+            let store = PairingStoreProbe()
+            store.saved = [first.pin()]
+            var connections: [NWConnection] = []
+            let client = IOSMacPairingClient(
+                store: store, timeouts: .init(initial: 1, approval: 1, idle: 60, heartbeat: 30, pong: 5),
+                makeConnection: { endpoint, parameters in
+                    let connection = NWConnection(to: endpoint, using: parameters)
+                    connections.append(connection)
+                    return connection
+                }
+            )
+            let model = MacConnectionModel(discovery: discovery, recoveryTiming: timing)
+            model.enablePairing(using: client)
+            defer { model.suspendConnection(); first.stop(); second.stop() }
+            model.resumeConnection()
+            try await pairingEventually { model.isConnected }
+            try await client.negotiateMeetingCopy()
+            XCTAssertTrue(model.supportsMeetingTransfer)
+            var pendingRequest = MeetingCopyWire.Message(.finalize)
+            pendingRequest.operation = .init(
+                id: UUID().uuidString.lowercased(), meetingID: UUID().uuidString.lowercased(),
+                manifestSHA256: MeetingCopyWire.hash(Data())
+            )
+            let pendingReply = Task { try await client.exchange(pendingRequest) }
+            defer { pendingReply.cancel() }
+            try await pairingEventually { waitingForReply }
+            let original = try XCTUnwrap(connections.first)
+            let staleViability = try XCTUnwrap(original.viabilityUpdateHandler)
+            let staleBetterPath = try XCTUnwrap(original.betterPathUpdateHandler)
+            let staleState = try XCTUnwrap(original.stateUpdateHandler)
+            let stalePath = try XCTUnwrap(original.pathUpdateHandler)
+            var observedRevocation = false
+            let applyState = client.onUpdate
+            client.onUpdate = { state in
+                applyState?(state)
+                if case .failed = state {
+                    observedRevocation = !model.isConnected && !model.supportsMeetingTransfer
+                        && !client.canProbeMeetingTransfer && client.transferSessionID == nil
+                }
+            }
+            discovery.endpointToPublish = try await second.start()
+            discovery.device.meetingCopyProbeHint = false
+            for _ in 0..<2 {
+                switch event {
+                case "waiting": staleState(.waiting(.posix(.ENETDOWN)))
+                case "failed": staleState(.failed(.posix(.ENETDOWN)))
+                case "cancelled": staleState(.cancelled)
+                case "path":
+                    let unavailablePath = NWPathMonitor().currentPath
+                    XCTAssertNotEqual(unavailablePath.status, .satisfied)
+                    stalePath(unavailablePath)
+                default: staleViability(false)
+                }
+            }
+            try await pairingEventually { observedRevocation && model.isConnected && second.acceptedCount == 1 }
+            switch await pendingReply.result {
+            case .success: XCTFail("Network loss cannot confirm an outstanding finalize request")
+            case .failure(let error): XCTAssertEqual(MeetingCopyProblem(error).code, .network)
+            }
+            XCTAssertEqual(first.acceptedCount, 1)
+            XCTAssertEqual(discovery.starts, 2)
+            XCTAssertEqual(connections.count, 2)
+            XCTAssertFalse(client.canProbeMeetingTransfer, "The fresh endpoint's current TXT replaces old readiness")
+            XCTAssertFalse(model.supportsMeetingTransfer)
+            XCTAssertEqual(store.saveCalls, 0)
+            XCTAssertTrue(model.jobs.isEmpty)
+            XCTAssertNil(original.stateUpdateHandler)
+            XCTAssertNil(original.viabilityUpdateHandler)
+            XCTAssertNil(original.pathUpdateHandler)
+            XCTAssertNil(original.betterPathUpdateHandler)
+            staleViability(false)
+            staleBetterPath(true)
+            staleState(.failed(.posix(.ENETDOWN)))
+            stalePath(NWPathMonitor().currentPath)
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertTrue(model.isConnected, "Old-generation path callbacks cannot tear down the new connection")
+            XCTAssertEqual(discovery.starts, 2)
+            model.suspendConnection()
+            staleBetterPath(true)
+            try await Task.sleep(for: .milliseconds(100))
+            XCTAssertFalse(model.isConnected)
+            XCTAssertEqual(discovery.starts, 2, "Background cannot revive network recovery")
+            XCTAssertEqual(store.saved.count, 1)
+        }
+    }
+
+    func testHealthyTransferSurvivesBetterPathAndDiscoveryChurn() async throws {
+        var requests = 0
+        var releaseReply = false
+        let server = try PairingTCPFixture { peer in
+            _ = try await peer.handshake(reconnect: true)
+            try await peer.expect("resume")
+            try await peer.send(.init(type: "ready"))
+            try await peer.expect("ready")
+            while true {
+                let inner: MacPairingMessage
+                do { inner = try await peer.receive() } catch { return }
+                if inner.type == "ping" { try await peer.send(.init(type: "pong")); continue }
+                let request = try MeetingCopyWire.message(inner)
+                requests += 1
+                let response: MeetingCopyWire.Message
+                if request.type == .chunk {
+                    XCTAssertEqual(requests, 2)
+                    try await pairingEventually { releaseReply }
+                    let bytes = try XCTUnwrap(request.bytes)
+                    var ack = MeetingCopyWire.Message(.ack, requestID: request.requestID)
+                    ack.operation = request.operation
+                    ack.asset = request.asset
+                    ack.prefix = .init(asset: .init(length: UInt64(bytes.count), sha256: MeetingCopyWire.hash(bytes)),
+                                       offset: UInt64(bytes.count), prefixSHA256: MeetingCopyWire.hash(bytes))
+                    response = ack
+                } else {
+                    XCTAssertEqual(request.type, .capabilities)
+                    var accepted = MeetingCopyWire.Message(.accepted, requestID: request.requestID)
+                    accepted.capability = MeetingCopyWire.capability
+                    response = accepted
+                }
+                try await peer.send(MeetingCopyWire.inner(response))
+            }
+        }
+        let discovery = RecoveryDiscoveryProbe(endpoint: try await server.start(), hint: true)
+        let store = PairingStoreProbe()
+        store.saved = [server.pin()]
+        var connections: [NWConnection] = []
+        let client = IOSMacPairingClient(
+            store: store, timeouts: .init(initial: 1, approval: 1, idle: 60, heartbeat: 30, pong: 5),
+            makeConnection: { endpoint, parameters in
+                let connection = NWConnection(to: endpoint, using: parameters)
+                connections.append(connection)
+                return connection
+            }
+        )
+        let model = MacConnectionModel(discovery: discovery, recoveryTiming: timing)
+        model.enablePairing(using: client)
+        defer { model.suspendConnection(); server.stop() }
+        model.resumeConnection()
+        try await pairingEventually { model.isConnected }
+        try await client.negotiateMeetingCopy()
+        let sessionID = try XCTUnwrap(client.transferSessionID)
+        let connection = try XCTUnwrap(connections.first)
+        var request = MeetingCopyWire.Message(.chunk)
+        request.operation = .init(id: UUID().uuidString.lowercased(), meetingID: UUID().uuidString.lowercased(),
+                                  manifestSHA256: MeetingCopyWire.hash(Data()))
+        request.asset = .audio
+        request.offset = 0
+        request.bytes = Data([0, 1, 2])
+        request.sha256 = MeetingCopyWire.hash(try XCTUnwrap(request.bytes))
+        let pendingReply = Task { try await client.exchange(request) }
+        defer { pendingReply.cancel() }
+        try await pairingEventually { requests == 2 }
+        connection.betterPathUpdateHandler?(true)
+        connection.viabilityUpdateHandler?(true)
+        connection.stateUpdateHandler?(.ready)
+        let path = try XCTUnwrap(connection.currentPath)
+        XCTAssertEqual(path.status, .satisfied)
+        connection.pathUpdateHandler?(path)
+        discovery.onNetworkChange?()
+        discovery.publishesDevices = false
+        discovery.publish()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertTrue(model.isConnected)
+        XCTAssertTrue(model.supportsMeetingTransfer)
+        XCTAssertEqual(client.transferSessionID, sessionID)
+        XCTAssertEqual(discovery.starts, 1)
+        discovery.publishesDevices = true
+        discovery.publish()
+        discovery.onUpdate?(.failed("Browser unavailable"))
+        XCTAssertTrue(model.isConnected, "A browser failure is not a socket failure")
+        releaseReply = true
+        _ = try await pendingReply.value
+        XCTAssertEqual(requests, 2)
+        XCTAssertEqual(connections.count, 1)
+        XCTAssertEqual(store.saveCalls, 0)
+    }
+
+    func testNetworkChangeRestartsExhaustedSearchButCannotOverrideStopOrBackground() async throws {
+        var applicationMessages = 0
+        let server = try PairingTCPFixture { peer in
+            try await self.acceptReconnect(peer, onHeartbeat: {}, onApplicationMessage: { applicationMessages += 1 })
+        }
+        let discovery = RecoveryDiscoveryProbe(endpoint: try await server.start(), hint: true)
+        discovery.publishesDevices = false
+        let store = PairingStoreProbe()
+        store.saved = [server.pin()]
+        let client = IOSMacPairingClient(store: store, timeouts: timeouts)
+        let model = MacConnectionModel(
+            discovery: discovery, recoveryTiming: .init(discoveryWindow: 0.1, backoff: [0])
+        )
+        model.enablePairing(using: client)
+        defer { model.suspendConnection(); server.stop() }
+        model.resumeConnection()
+        try await pairingEventually { model.discoveryTimedOut }
+        let oldNetworkCallback = try XCTUnwrap(discovery.onNetworkChange)
+        discovery.publishesDevices = true
+        oldNetworkCallback()
+        oldNetworkCallback()
+        try await pairingEventually { model.isConnected }
+        XCTAssertEqual(discovery.starts, 2)
+        XCTAssertEqual(server.acceptedCount, 1)
+        XCTAssertFalse(model.supportsMeetingTransfer)
+        XCTAssertEqual(applicationMessages, 0)
+        XCTAssertEqual(store.saveCalls, 0)
+        await model.perform(.cancelPairing)
+        oldNetworkCallback()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(discovery.starts, 2)
+        model.suspendConnection()
+        XCTAssertNil(discovery.onNetworkChange)
+        oldNetworkCallback()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(discovery.starts, 2)
+        XCTAssertFalse(model.isConnected)
+        discovery.publishesDevices = false
+        model.resumeConnection()
+        try await pairingEventually { model.discoveryTimedOut }
+        XCTAssertEqual(discovery.starts, 3)
+        discovery.publishesDevices = true
+        oldNetworkCallback()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertEqual(discovery.starts, 3, "A previous monitor generation cannot restart a new foreground search")
+        XCTAssertFalse(model.isConnected)
+        discovery.onNetworkChange?()
+        try await pairingEventually { model.isConnected }
+        XCTAssertEqual(discovery.starts, 4)
+    }
+
     func testReceivingHintRefreshRevokesReadinessAndNeverAutomaticallyProbes() async throws {
         var probes = 0
         let server = try PairingTCPFixture { peer in
@@ -493,6 +748,15 @@ final class MacConnectionRecoveryTests: XCTestCase {
         XCTAssertEqual(connectionLosses, lossesBeforeDismissal, "Dismissal must not disconnect the authenticated transport")
         XCTAssertEqual(server.acceptedCount, 2)
         XCTAssertEqual(discovery.starts, 2)
+        NotificationCenter.default.post(name: UIApplication.protectedDataWillBecomeUnavailableNotification, object: nil)
+        try await gate("protected-data-unavailable") { !model.isConnected }
+        XCTAssertFalse(client.canProbeMeetingTransfer)
+        XCTAssertNil(client.transferSessionID)
+        NotificationCenter.default.post(name: UIApplication.protectedDataDidBecomeAvailableNotification, object: nil)
+        try await gate("protected-data-available") { model.isConnected && server.acceptedCount == 3 }
+        XCTAssertEqual(discovery.starts, 3)
+        XCTAssertFalse(model.supportsMeetingTransfer)
+        XCTAssertEqual(store.saveCalls, 0)
     }
 
     func testBackgroundCancelsOutstandingActionAndRejectsNewActions() async throws {
@@ -666,6 +930,7 @@ private struct RecoveryCoverHarness: View {
 @MainActor
 private final class RecoveryDiscoveryProbe: MacDiscovering {
     var onUpdate: (@MainActor (MacDiscoveryUpdate) -> Void)?
+    var onNetworkChange: (@MainActor () -> Void)?
     var device: MacConnectionModel.Device
     var endpointToPublish: NWEndpoint
     var publishesDevices = true
@@ -691,4 +956,6 @@ private final class RecoveryDiscoveryProbe: MacDiscovering {
 
     func publish() { if active { onUpdate?(.devices(publishesDevices ? [device] : [])) } }
     func stop() { active = false }
+    func startMonitoringNetwork(onChange: @escaping @MainActor () -> Void) { onNetworkChange = onChange }
+    func stopMonitoringNetwork() { onNetworkChange = nil }
 }

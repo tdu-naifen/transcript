@@ -1,6 +1,7 @@
 import Foundation
 import Network
 import Observation
+import OSLog
 import TranscriptCore
 
 /// App presentation only. A long-lived service must publish verified snapshots and
@@ -133,6 +134,8 @@ final class MacConnectionModel {
     @ObservationIgnored private var recoveryTask: Task<Void, Never>?
     @ObservationIgnored private var recoveryGeneration = UUID()
     @ObservationIgnored private var discoveryGeneration = UUID()
+    @ObservationIgnored private var networkGeneration = UUID()
+    @ObservationIgnored private var monitoringNetwork = false
     @ObservationIgnored private var browsing = false
     @ObservationIgnored private var foreground = true
     @ObservationIgnored private var didResume = false
@@ -172,7 +175,10 @@ final class MacConnectionModel {
             try client.restoreTrust()
             trustedDevice = client.pairedPeer.map(Self.device)
             connection = trustedDevice.map(Connection.offline) ?? .unpaired
-            if didResume { beginRecovery() }
+            if didResume {
+                monitorNetwork()
+                beginRecovery(source: "trust-restored")
+            }
         } catch {
             connection = .failed(reason: Self.text(error.localizedDescription))
         }
@@ -277,7 +283,7 @@ final class MacConnectionModel {
             localNetworkDenied = false
             stopBrowsing()
             client.disconnect()
-            if trustedDevice != nil { beginRecovery() }
+            if trustedDevice != nil { beginRecovery(source: "explicit-retry") }
             else { startDiscovery() }
         case .unpair:
             recoveryAllowed = false
@@ -311,7 +317,7 @@ final class MacConnectionModel {
             connection = peer.map { .offline(Self.device($0)) } ?? .unpaired
         case .failed(let message):
             connection = .failed(reason: Self.text(message))
-            beginRecovery()
+            beginRecovery(source: "session-failed")
         }
     }
 
@@ -337,6 +343,9 @@ final class MacConnectionModel {
     func suspendConnection() {
         foreground = false
         didResume = false
+        networkGeneration = UUID()
+        monitoringNetwork = false
+        discovery?.stopMonitoringNetwork()
         cancelRecovery()
         cancelAction()
         stopBrowsing()
@@ -353,7 +362,18 @@ final class MacConnectionModel {
         foreground = true
         recoveryAllowed = true
         localNetworkDenied = false
-        beginRecovery()
+        monitorNetwork()
+        beginRecovery(source: "foreground-or-unlock")
+    }
+
+    private func monitorNetwork() {
+        guard !monitoringNetwork, discovery != nil else { return }
+        monitoringNetwork = true
+        let generation = networkGeneration
+        discovery?.startMonitoringNetwork { [weak self] in
+            guard let self, self.networkGeneration == generation else { return }
+            self.beginRecovery(source: "network-change")
+        }
     }
 
     private func cancelAction() {
@@ -368,12 +388,13 @@ final class MacConnectionModel {
         recoveryTask = nil
     }
 
-    private func beginRecovery() {
+    private func beginRecovery(source: String = "discovery-change") {
         guard foreground, recoveryAllowed, !localNetworkDenied, trustedDevice != nil,
               let client = pairingClient, let pin = client.pairedPeer,
               discovery != nil, recoveryTask == nil, !isConnected else { return }
         let generation = UUID()
         recoveryGeneration = generation
+        MacNetworkDiagnostics.logger.info("event=recovery-start source=\(source, privacy: .public) generation=\(generation.uuidString, privacy: .public)")
         recoveryTask = Task { [weak self] in
             guard let self else { return }
             var lastFailure: String?
@@ -418,6 +439,7 @@ final class MacConnectionModel {
                            let endpoint = self.discovery?.endpoint(for: candidate.id) {
                             attempted.insert(candidate.id)
                             self.selectedCandidate = candidate
+                            MacNetworkDiagnostics.endpoint(endpoint, event: "recovery-candidate", generation: generation)
                             client.connect(to: endpoint, allowMeetingCopyProbe: candidate.meetingCopyProbeHint, requiredPeer: pin)
                         }
                         try await Task.sleep(for: .milliseconds(50))
@@ -648,9 +670,13 @@ final class MacConnectionModel {
                     pairingClient?.updateMeetingCopyProbeHint(current.meetingCopyProbeHint)
                     if let client = pairingClient, case .disconnected = client.state { beginRecovery() }
                 } else {
-                    self.selectedCandidate = nil
-                    pairingClient?.disconnect()
-                    beginRecovery()
+                    // A disappearing advertisement is not a failed authenticated
+                    // socket. Keep its selection so a returning TXT record refreshes it.
+                    if !isConnected {
+                        self.selectedCandidate = nil
+                        pairingClient?.disconnect()
+                        beginRecovery()
+                    }
                 }
             }
         case .permissionDenied:
@@ -662,6 +688,7 @@ final class MacConnectionModel {
             connection = .failed(reason: Self.text("Local network access is off. Enable Local Network for Transcript in Settings, then try again."))
         case .failed(let message):
             stopBrowsing()
+            guard !isConnected else { return }
             pairingClient?.disconnect()
             connection = .failed(reason: message)
             beginRecovery()

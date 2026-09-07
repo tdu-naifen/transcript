@@ -8,6 +8,12 @@ enum MeetingReprocessingConflict: Error {
     case mixedLanguages
 }
 
+struct MeetingReprocessingTimingFailure: LocalizedError {
+    static let messageKey = "The replacement transcript has invalid times or extends beyond this meeting's saved recording duration. Your previous transcript, speaker assignments and original audio were kept. Keep this meeting and report it for repair before reprocessing again."
+    let message: String
+    var errorDescription: String? { message }
+}
+
 actor MeetingReprocessingCoordinator {
     private let database: AppDatabase
     private let deviceId: String
@@ -131,16 +137,26 @@ actor MeetingReprocessingCoordinator {
                 identifiedSpeakerCount: 0, usedVoiceprintIdentification: false
             )
         } catch {
+            let reportedError: any Error
+            if error is MeetingReprocessingTimingError {
+                reportedError = await MainActor.run {
+                    MeetingReprocessingTimingFailure(message: LocalizationManager.shared.text(
+                        MeetingReprocessingTimingFailure.messageKey, table: "MeetingCopy"
+                    ))
+                }
+            } else {
+                reportedError = error
+            }
             await reprocessor.cancelAndWait()
             await RecordingAnalyzerSlots.shared.release(slot)
             _ = try? await recordingSession.publish(reservation, as: .recorded)
             try? await RecordingProcessingRepository(database).update(
-                meetingId: meetingId, state: .needsRetry, error: error.localizedDescription
+                meetingId: meetingId, state: .needsRetry, error: reportedError.localizedDescription
             )
             if case AppleLiveTranscriber.Failure.resourcesNotReady = error {
                 await resources?.prepare(locale: retryLocale)
             }
-            throw error
+            throw reportedError
         }
     }
 

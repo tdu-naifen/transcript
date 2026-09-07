@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreMedia
+import CryptoKit
 import Speech
 import Synchronization
 import TranscriptCore
@@ -46,13 +47,20 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
         }
     }
 
+    struct InvalidTiming: LocalizedError {
+        var errorDescription: String? {
+            String(localized: "Apple transcription returned a time range outside its audio input. The recording is preserved; report this meeting for repair.", table: "MeetingCopy")
+        }
+    }
+
     private var analyzer: SpeechAnalyzer?
     private var speech: SpeechTranscriber?
     private var format: AVAudioFormat?
     private var locale: Locale?
     private var task: Task<Void, Never>?
     private var terminalFailure: (any Error)?
-    private var originMs = 0
+    private var origin = CMTime.zero
+    private var inputEndMs = 0
     private let streamID = UUID().uuidString
     private let stream: AsyncStream<ASRTranscriptEvent>
     private let continuation: AsyncStream<ASRTranscriptEvent>.Continuation
@@ -143,19 +151,23 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
 
     func transcribeFile(_ url: URL, meetingID: String) async throws -> [ASRSegment] {
         guard let analyzer, let speech, let locale else { throw Failure.unavailable }
+        let file = try AVAudioFile(forReading: url)
+        let durationMs = try Self.milliseconds(Double(file.length) / file.processingFormat.sampleRate)
         let collector = Task {
             var segments: [ASRSegment] = []
             for try await result in speech.results where result.isFinal {
                 try Task.checkCancellation()
                 let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
                 if !text.isEmpty {
-                    segments.append(Self.segment(text: text, range: result.range, isFinal: true, meetingID: meetingID, locale: locale.identifier))
+                    segments.append(try Self.segment(
+                        text: text, range: result.range, isFinal: true, meetingID: meetingID,
+                        locale: locale.identifier, inputEndMs: durationMs
+                    ))
                 }
             }
             return segments
         }
         do {
-            let file = try AVAudioFile(forReading: url)
             if let end = try await analyzer.analyzeSequence(from: file) {
                 try await analyzer.finalizeAndFinish(through: end)
             } else {
@@ -199,11 +211,11 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
         let collector = Task {
             for try await result in speech.results {
                 try Task.checkCancellation()
-                let segment = Self.segment(
+                let segment = try Self.segment(
                     text: String(result.text.characters),
                     range: result.range, isFinal: result.isFinal,
                     meetingID: meetingID, locale: locale.identifier,
-                    offsetMs: originMs, streamID: streamID
+                    streamID: streamID, origin: origin, inputEndMs: inputEndMs
                 )
                 if result.isFinal, !segment.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     do { try await store.append(segment) }
@@ -220,9 +232,10 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
             for await chunk in chunks {
                 try Task.checkCancellation()
                 if !hasOrigin {
-                    originMs = chunk.startMs
+                    origin = CMTime(value: Int64(chunk.startFrame), timescale: Int32(AudioCaptureFormat.sampleRate))
                     hasOrigin = true
                 }
+                inputEndMs = try Self.milliseconds(Double(chunk.startFrame + chunk.frameCount) / chunk.sampleRate)
                 if let buffer = try converter.convert(chunk) {
                     try inputQueue.append(AnalyzerInput(buffer: buffer))
                 }
@@ -243,6 +256,7 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
             let result = await collector.result
             if !Task.isCancelled {
                 if case .failure(let storage as StorageFailure) = result { fail(storage) }
+                else if case .failure(let timing as InvalidTiming) = result { fail(timing) }
                 else { fail(error) }
             }
         }
@@ -250,20 +264,44 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
 
     private func fail(_ error: any Error) {
         RecordingDiagnostics.log(error)
-        terminalFailure = (error as? StorageFailure)?.underlying ?? RecordingSpeechUnavailable()
-        continuation.yield(.failed(RecordingLanguageText.speechFailure))
+        if let timing = error as? InvalidTiming {
+            terminalFailure = timing
+            continuation.yield(.failed(timing.localizedDescription))
+        } else {
+            terminalFailure = (error as? StorageFailure)?.underlying ?? RecordingSpeechUnavailable()
+            continuation.yield(.failed(RecordingLanguageText.speechFailure))
+        }
     }
 
     nonisolated static func segment(
         text: String, range: CMTimeRange, isFinal: Bool, meetingID: String, locale: String,
-        offsetMs: Int = 0, streamID: String? = nil
-    ) -> ASRSegment {
-        let start = offsetMs + max(0, Int((range.start.seconds * 1_000).rounded()))
-        let end = max(start, offsetMs + Int((CMTimeRangeGetEnd(range).seconds * 1_000).rounded()))
+        offsetMs: Int = 0, streamID: String? = nil, origin: CMTime? = nil, inputEndMs: Int? = nil
+    ) throws -> ASRSegment {
+        let origin = origin ?? CMTime(value: Int64(offsetMs), timescale: 1000)
+        let bounds: (startMs: Int, endMs: Int)
+        do {
+            bounds = try TranscriptAudioTimeline.bounds(
+                for: range, origin: origin, finalInputEndMs: isFinal ? inputEndMs : nil
+            )
+        } catch { throw InvalidTiming() }
+        let (start, end) = bounds
+        // Stable through volatile/final updates, unique across analyzer runs, and a
+        // UUID at the producer (never rename previously published rows on export).
+        let key = "transcript.apple.segment.v1|\(meetingID)|\(streamID ?? "")|\(start)"
+        var bytes = Array(SHA256.hash(data: Data(key.utf8)).prefix(16))
+        bytes[6] = (bytes[6] & 0x0f) | 0x80
+        bytes[8] = (bytes[8] & 0x3f) | 0x80
+        let id = UUID(uuid: (bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+                             bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14], bytes[15]))
         return ASRSegment(
-            id: "\(meetingID)-apple-\(streamID.map { "\($0)-" } ?? "")\(start)", text: text, startMs: start, endMs: end,
+            id: id.uuidString.lowercased(), text: text, startMs: start, endMs: end,
             localeIdentifier: locale, isFinal: isFinal
         )
+    }
+
+    nonisolated private static func milliseconds(_ seconds: Double) throws -> Int {
+        do { return try TranscriptAudioTimeline.milliseconds(seconds) }
+        catch { throw InvalidTiming() }
     }
 }
 

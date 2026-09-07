@@ -17,6 +17,8 @@ struct MacSubmissionView: View {
     @State private var isEnqueueing = false
     @State private var didEnqueue = false
     @State private var submissionError: String?
+    @State private var legacyPreview: MeetingCopySender.LegacyPreview?
+    @State private var showingLegacyPreview = false
     @State private var contentHeight: CGFloat = 0
     @State private var viewportHeight: CGFloat = 0
 
@@ -69,6 +71,23 @@ struct MacSubmissionView: View {
         .background(blue.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar, .tabBar)
         .interactiveDismissDisabled(isEnqueueing)
+        .alert(MacConnectionModel.text("Review compatible copy"), isPresented: $showingLegacyPreview) {
+            if let preview = legacyPreview {
+                Button(MacConnectionModel.text("Send compatible copy")) {
+                    preview.confirm()
+                    legacyPreview = nil
+                    performSubmission(confirming: preview)
+                }
+                Button(MacConnectionModel.text("Cancel copy"), role: .cancel) {
+                    preview.cancel()
+                    legacyPreview = nil
+                }
+            }
+        } message: {
+            Text(MacConnectionModel.text("Only transcript identifiers will change in the Mac copy. Your original identifiers, text, times, source, revision and audio on iPhone will not change. Nothing has been queued or sent.")
+                 + "\n" + MacConnectionModel.text("Identifiers to convert") + ": \(legacyPreview?.identifierCount ?? 0)")
+        }
+        .onDisappear { legacyPreview?.cancel() }
     }
 
     private var card: some View {
@@ -190,8 +209,14 @@ struct MacSubmissionView: View {
     }
 
     private func submit() {
-        guard !isEnqueueing, !didEnqueue else { return }
-        guard blockReason == nil, let onEnqueue else { return }
+        performSubmission()
+    }
+
+    private func performSubmission(confirming preview: MeetingCopySender.LegacyPreview? = nil) {
+        guard !isEnqueueing, !didEnqueue, blockReason == nil, let onEnqueue else {
+            preview?.cancel()
+            return
+        }
         isEnqueueing = true
         submissionError = nil
         Task { @MainActor in
@@ -202,8 +227,15 @@ struct MacSubmissionView: View {
                 dismiss()
             } catch {
                 isEnqueueing = false
-                submissionError = MacConnectionModel.text("Could not confirm that the task was saved. Check task status before trying again.")
-                    + "\n" + MacConnectionModel.text(error.localizedDescription)
+                preview?.cancel()
+                let problem = MeetingCopyProblem(error)
+                if let requested = problem.legacyPreview {
+                    legacyPreview = requested
+                    showingLegacyPreview = true
+                } else {
+                    submissionError = MacConnectionModel.text(problem.statusKey)
+                        + "\n" + MacConnectionModel.text(problem.messageKey)
+                }
             }
         }
     }

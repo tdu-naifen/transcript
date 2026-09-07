@@ -185,7 +185,7 @@ final class AppleSpeechIntegrationTests: XCTestCase {
     func testAppleReprocessingReplacesOnlyAfterSuccessAndPreservesOldResultOnFailure() async throws {
         let db = try AppDatabase.inMemory()
         let services = try AppServices(database: db)
-        let meeting = Meeting(title: "Reprocess", startedAt: Date(), originDeviceId: "test")
+        let meeting = Meeting(title: "Reprocess", startedAt: Date(), durationMs: 1000, originDeviceId: "test")
         try await MeetingRepository(db).insert(meeting)
         let repository = UtteranceRepository(db)
         try await repository.append([Utterance(meetingId: meeting.id, startMs: 0, endMs: 1000, text: "Original", originDeviceId: "test")])
@@ -207,6 +207,48 @@ final class AppleSpeechIntegrationTests: XCTestCase {
         let updated = try await repository.fetch(meetingId: meeting.id)
         XCTAssertEqual(updated.map(\.text), ["Apple result"])
         XCTAssertEqual(updated.first?.engine, .appleSpeech)
+    }
+
+    func testAppleFileRetryRejectsPersistedDurationOverrunAndLocalizesPreservedDataFailure() async throws {
+        let localization = LocalizationManager.shared
+        let originalLanguage = localization.language
+        defer { localization.language = originalLanguage }
+        for language in [AppLanguage.en, .zhHans] {
+            localization.language = language
+            let database = try AppDatabase.inMemory()
+            let services = try AppServices(database: database)
+            let meeting = Meeting(title: "Synthetic saved boundary", startedAt: Date(), durationMs: 1000,
+                                  state: .recorded, originDeviceId: "test")
+            try await MeetingRepository(database).insert(meeting)
+            try await RecordingProcessingRepository(database).begin(meetingId: meeting.id, localeIdentifier: "en-US")
+            let repository = UtteranceRepository(database)
+            try await repository.append(Utterance(meetingId: meeting.id, startMs: 0, endMs: 900,
+                text: "Preserved edit", revision: 3, originDeviceId: "test"))
+            let original = try await repository.fetch(meetingId: meeting.id)
+            let originalMeeting = try await MeetingRepository(database).fetch(id: meeting.id)
+            let coordinator = MeetingReprocessingCoordinator(
+                database: database, deviceId: "test", recordingSession: services.session,
+                makeTranscriber: { FileSpeechProbe(fails: false, endMs: 1050) }
+            )
+            let message = localization.text(MeetingReprocessingTimingFailure.messageKey, table: "MeetingCopy")
+            if language == .zhHans { XCTAssertNotEqual(message, MeetingReprocessingTimingFailure.messageKey) }
+            do {
+                _ = try await coordinator.run(meetingId: meeting.id, audioURL: URL(fileURLWithPath: "/unused"),
+                                              language: .auto, progress: { _ in })
+                XCTFail("File output must also fit the saved meeting duration")
+            } catch let failure as MeetingReprocessingTimingFailure {
+                XCTAssertEqual(failure.localizedDescription, message)
+            }
+            let after = try await repository.fetch(meetingId: meeting.id)
+            let afterMeeting = try await MeetingRepository(database).fetch(id: meeting.id)
+            XCTAssertEqual(after, original)
+            XCTAssertEqual(afterMeeting, originalMeeting)
+            let job = try await RecordingProcessingRepository(database).fetch(meetingId: meeting.id)
+            XCTAssertEqual(job?.state, .needsRetry)
+            XCTAssertEqual(job?.error, message)
+            let reserved = await services.session.isProcessing(meetingId: meeting.id)
+            XCTAssertFalse(reserved)
+        }
     }
 
     func testLatestLanguageDoesNotWaitForObsoleteInstallationOrAcceptItsCompletion() async {
@@ -832,7 +874,7 @@ final class AppleSpeechIntegrationTests: XCTestCase {
         let lastID = try XCTUnwrap(ids.last)
         let retry = MeetingReprocessingCoordinator(
             database: database, deviceId: services.deviceId, recordingSession: services.session,
-            makeTranscriber: { FileSpeechProbe(fails: false) }
+            makeTranscriber: { FileSpeechProbe(fails: false, endMs: 100) }
         )
         _ = try await retry.run(
             meetingId: lastID, audioURL: store.url(for: lastID), language: .auto, progress: { _ in }
@@ -859,7 +901,7 @@ final class AppleSpeechIntegrationTests: XCTestCase {
     func testRetryKeepsRecordedLocaleAndRefusesMixedLanguageReplacement() async throws {
         let database = try AppDatabase.inMemory()
         let services = try AppServices(database: database)
-        let meeting = Meeting(title: "Retry", startedAt: Date(), state: .recorded, originDeviceId: "test")
+        let meeting = Meeting(title: "Retry", startedAt: Date(), durationMs: 1000, state: .recorded, originDeviceId: "test")
         try await MeetingRepository(database).insert(meeting)
         try await RecordingProcessingRepository(database).begin(meetingId: meeting.id, localeIdentifier: "en-US")
         let probe = FileSpeechProbe(fails: false)
@@ -962,7 +1004,11 @@ final class AppleSpeechIntegrationTests: XCTestCase {
                     let first = origin ?? chunk.startMs
                     origin = first
                     let range = CMTimeRange(start: CMTime(value: Int64(chunk.startMs - first), timescale: 1000), duration: CMTime(value: 1000, timescale: 1000))
-                    segments.append(AppleLiveTranscriber.segment(text: name, range: range, isFinal: true, meetingID: meetingID, locale: locale.identifier, offsetMs: first, streamID: name))
+                    do {
+                        segments.append(try AppleLiveTranscriber.segment(text: name, range: range, isFinal: true, meetingID: meetingID, locale: locale.identifier, offsetMs: first, streamID: name))
+                    } catch {
+                        output.continuation.yield(.failed(String(describing: error)))
+                    }
                 }
                 await finalGate()
                 if fails { output.continuation.yield(.failed("Old meeting failed")) }
@@ -984,14 +1030,15 @@ final class AppleSpeechIntegrationTests: XCTestCase {
 
     private actor FileSpeechProbe: AppleFileTranscribing {
         let fails: Bool
+        let endMs: Int
         private(set) var preparedLocale: String?
-        init(fails: Bool) { self.fails = fails }
+        init(fails: Bool, endMs: Int = 1000) { self.fails = fails; self.endMs = endMs }
         func prepare(locale: Locale) throws {
             preparedLocale = locale.identifier
             if fails { throw AppleLiveTranscriber.Failure.unavailable }
         }
         func transcribeFile(_ url: URL, meetingID: String) -> [ASRSegment] {
-            [.init(id: "new", text: "Apple result", startMs: 0, endMs: 1000, localeIdentifier: "en-US", isFinal: true)]
+            [.init(id: "new", text: "Apple result", startMs: 0, endMs: endMs, localeIdentifier: "en-US", isFinal: true)]
         }
         func cancelAndWait() {}
     }
@@ -1030,9 +1077,10 @@ final class AppleSpeechIntegrationTests: XCTestCase {
         let meeting = Meeting(title: "Apple", startedAt: Date(), originDeviceId: "test")
         try await MeetingRepository(db).insert(meeting)
         let range = CMTimeRange(start: CMTime(value: 1250, timescale: 1000), duration: CMTime(value: 2350, timescale: 1000))
-        let partial = AppleLiveTranscriber.segment(text: "hello", range: range, isFinal: false, meetingID: meeting.id, locale: "en-US")
-        let final = AppleLiveTranscriber.segment(text: "hello world", range: range, isFinal: true, meetingID: meeting.id, locale: "en-US")
+        let partial = try AppleLiveTranscriber.segment(text: "hello", range: range, isFinal: false, meetingID: meeting.id, locale: "en-US")
+        let final = try AppleLiveTranscriber.segment(text: "hello world", range: range, isFinal: true, meetingID: meeting.id, locale: "en-US")
         XCTAssertEqual(partial.id, final.id)
+        XCTAssertTrue(MeetingCopyWire.validID(final.id))
         let repository = UtteranceRepository(db)
         try await AppleTranscriptStore(repository: repository, meetingID: meeting.id, deviceID: "test").append(final)
         let rows = try await repository.fetch(meetingId: meeting.id)
@@ -1042,6 +1090,32 @@ final class AppleSpeechIntegrationTests: XCTestCase {
         XCTAssertEqual(rows.first?.endMs, 3600)
         XCTAssertEqual(rows.first?.engine, .appleSpeech)
         XCTAssertNil(rows.first?.speakerId)
+    }
+
+    func testAppleTimesRoundOnceFromCaptureOriginAndRejectOutOfInputFinalsWithoutClamping() throws {
+        let origin = CMTime(value: 8, timescale: 16_000) // 0.5 ms: do not round this separately.
+        let range = CMTimeRange(start: CMTime(value: 8, timescale: 16_000),
+                                duration: CMTime(value: 16, timescale: 16_000))
+        let result = try AppleLiveTranscriber.segment(text: "rounded", range: range, isFinal: true,
+            meetingID: "meeting", locale: "en-US", streamID: "run-a", origin: origin, inputEndMs: 2)
+        XCTAssertEqual(result.startMs, 1)
+        XCTAssertEqual(result.endMs, 2)
+        let nextRun = try AppleLiveTranscriber.segment(text: "rounded", range: range, isFinal: true,
+            meetingID: "meeting", locale: "en-US", streamID: "run-b", origin: origin, inputEndMs: 2)
+        XCTAssertNotEqual(result.id, nextRun.id)
+        XCTAssertThrowsError(try AppleLiveTranscriber.segment(text: "outside", range: range, isFinal: true,
+            meetingID: "meeting", locale: "en-US", origin: origin, inputEndMs: 1)) {
+            XCTAssertTrue($0 is AppleLiveTranscriber.InvalidTiming)
+        }
+        for invalid in [CMTimeRange.invalid,
+                        CMTimeRange(start: .indefinite, duration: .zero),
+                        CMTimeRange(start: CMTime(value: -1, timescale: 1000), duration: .zero)] {
+            XCTAssertThrowsError(try AppleLiveTranscriber.segment(text: "invalid", range: invalid,
+                isFinal: true, meetingID: "meeting", locale: "en-US"))
+        }
+        let tail = CMTimeRange(start: .zero, duration: CMTime(value: 9149, timescale: 1000))
+        XCTAssertThrowsError(try AppleLiveTranscriber.segment(text: "SDK tail", range: tail, isFinal: true,
+            meetingID: "meeting", locale: "en-US", inputEndMs: 9148))
     }
 
     func testUnavailableAppleSpeechStillAllowsAudioOnlyLifecycle() async throws {

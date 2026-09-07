@@ -4,6 +4,54 @@ import Network
 
 @MainActor
 final class MacDiscoveryTests: XCTestCase {
+    func testSameInterfaceUnequalPathsPassProductionMonitorFilter() async throws {
+        let (first, second) = try await loopbackPaths()
+        func oldSignature(_ path: NWPath) -> String {
+            "\(path.status):" + path.availableInterfaces.map {
+                "\($0.index):\($0.type):\(path.usesInterfaceType($0.type))"
+            }.sorted().joined(separator: ",")
+        }
+        XCTAssertEqual(oldSignature(first), oldSignature(second))
+        XCTAssertNotEqual(first, second, "Different loopback endpoints must provide distinct real path snapshots")
+        let discovery = BonjourMacDiscovery()
+        XCTAssertFalse(discovery.networkPathDidChange(first))
+        XCTAssertFalse(discovery.networkPathDidChange(first))
+        XCTAssertTrue(discovery.networkPathDidChange(second),
+                      "The production monitor filter must not discard changed paths on the same interface")
+        XCTAssertFalse(discovery.networkPathDidChange(second))
+    }
+
+    func testNetworkPathFilterTracksUnavailableAndResetsBaseline() async throws {
+        let (satisfied, _) = try await loopbackPaths()
+        let unavailable = NWPathMonitor().currentPath
+        XCTAssertNotEqual(unavailable.status, .satisfied)
+        let discovery = BonjourMacDiscovery()
+        XCTAssertFalse(discovery.networkPathDidChange(satisfied))
+        XCTAssertFalse(discovery.networkPathDidChange(unavailable))
+        XCTAssertFalse(discovery.networkPathDidChange(unavailable))
+        XCTAssertTrue(discovery.networkPathDidChange(satisfied))
+        discovery.stopMonitoringNetwork()
+        XCTAssertFalse(discovery.networkPathDidChange(satisfied),
+                       "A new monitor generation starts with a baseline, not a recovery request")
+    }
+
+    private func loopbackPaths() async throws -> (NWPath, NWPath) {
+        let firstServer = try PairingTCPFixture { try await $0.waitForClose() }
+        let secondServer = try PairingTCPFixture { try await $0.waitForClose() }
+        defer { firstServer.stop(); secondServer.stop() }
+        let first = NWConnection(to: try await firstServer.start(), using: .tcp)
+        let second = NWConnection(to: try await secondServer.start(), using: .tcp)
+        defer { first.cancel(); second.cancel() }
+        let queue = DispatchQueue(label: "transcript.test.discovery-paths")
+        first.start(queue: queue)
+        second.start(queue: queue)
+        try await pairingEventually {
+            guard case .ready = first.state, case .ready = second.state else { return false }
+            return first.currentPath?.status == .satisfied && second.currentPath?.status == .satisfied
+        }
+        return (try XCTUnwrap(first.currentPath), try XCTUnwrap(second.currentPath))
+    }
+
     func testRealBonjourTXTCapabilitiesRefreshAndRestartWithoutStaleCallbacks() async throws {
         let configuration = try TestStorageConfiguration.resolve()
         let runID = try XCTUnwrap(configuration.runID)
@@ -74,11 +122,13 @@ final class MacDiscoveryTests: XCTestCase {
         XCTAssertTrue(supported.meetingCopyProbeHint, "Actual meeting-copy=2 TXT must enable the discovery hint")
         for device in candidates {
             XCTAssertEqual(device.meetingCopyProbeHint, device.name == names[0])
-            guard case .service(let name, let type, _, _) = discovery.endpoint(for: device.id) else {
+            guard case .service(let name, let type, let domain, let interface) = discovery.endpoint(for: device.id) else {
                 return XCTFail("The actual discovered Network endpoint must be retained")
             }
             XCTAssertEqual(name, device.name)
             XCTAssertEqual(type, "_vtscribe._tcp")
+            XCTAssertEqual(device.id, "\(name).\(type).\(domain)@\(interface?.name ?? "")",
+                           "Retain the actual Bonjour interface scope; do not silently strip it")
         }
         guard supported.meetingCopyProbeHint else { return }
 

@@ -48,6 +48,12 @@ struct MacConnectionSceneLifecycle: ViewModifier {
             if phase == .background { model.suspendConnection() }
             if phase == .active { model.resumeConnection() }
         }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataWillBecomeUnavailableNotification)) { _ in
+            model.suspendConnection()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIApplication.protectedDataDidBecomeAvailableNotification)) { _ in
+            if scenePhase == .active { model.resumeConnection() }
+        }
     }
 }
 

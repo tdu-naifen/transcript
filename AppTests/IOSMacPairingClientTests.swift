@@ -194,6 +194,41 @@ final class IOSMacPairingClientTests: XCTestCase {
         XCTAssertTrue(store.saved.isEmpty)
     }
 
+    func testNetworkReadinessCannotAuthenticateAndWaitingCancelsPendingApproval() async throws {
+        let store = PairingStoreProbe()
+        var connections: [NWConnection] = []
+        let client = IOSMacPairingClient(store: store, timeouts: shortTimeouts, makeConnection: { endpoint, parameters in
+            let connection = NWConnection(to: endpoint, using: parameters)
+            connections.append(connection)
+            return connection
+        })
+        var closed = false
+        let server = try PairingTCPFixture { peer in
+            _ = try await peer.handshake()
+            try await peer.waitForClose()
+            closed = true
+        }
+        defer { client.disconnect(); server.stop() }
+        client.connect(to: try await server.start())
+        try await pairingEventually { client.isAwaitingApproval }
+        let connection = try XCTUnwrap(connections.first)
+        XCTAssertNotNil(connection.pathUpdateHandler)
+        connection.stateUpdateHandler?(.ready)
+        connection.viabilityUpdateHandler?(true)
+        connection.betterPathUpdateHandler?(false)
+        try await Task.sleep(for: .milliseconds(30))
+        XCTAssertFalse(client.isConnected, "Network readiness is not authentication or bilateral approval")
+        XCTAssertTrue(store.saved.isEmpty)
+        connection.stateUpdateHandler?(.waiting(.posix(.ENETDOWN)))
+        try await pairingEventually { client.isFailed && closed }
+        XCTAssertNil(connection.stateUpdateHandler)
+        XCTAssertNil(connection.viabilityUpdateHandler)
+        XCTAssertNil(connection.pathUpdateHandler)
+        XCTAssertNil(connection.betterPathUpdateHandler)
+        client.approve()
+        XCTAssertTrue(store.saved.isEmpty)
+    }
+
     func testApprovalDeadlineClosesPendingReader() async throws {
         let store = PairingStoreProbe()
         let client = IOSMacPairingClient(
