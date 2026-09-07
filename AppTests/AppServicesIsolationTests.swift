@@ -8,6 +8,14 @@ final class AppServicesIsolationTests: XCTestCase {
     func testHostedAppOptsIntoDiskStorageWithoutRequiringSampleData() throws {
         let configuration = try TestStorageConfiguration.resolve()
         let root = try XCTUnwrap(configuration.applicationSupportDirectory())
+        let runID = try XCTUnwrap(configuration.runID)
+        let environment = ProcessInfo.processInfo.environment
+        XCTAssertEqual(environment[TestStorageConfiguration.storageKey], "1")
+        XCTAssertEqual(root.lastPathComponent, runID.uuidString)
+        if let expected = environment["TRANSCRIPT_QA_EXPECTED_RUN_ID"] {
+            XCTAssertEqual(runID.uuidString, expected)
+        }
+        print("HOSTED_RUNTIME_ISOLATION actual=\(runID.uuidString) expected=\(environment["TRANSCRIPT_QA_EXPECTED_RUN_ID"] ?? "unspecified") storage=\(environment[TestStorageConfiguration.storageKey] ?? "unset") root=\(root.path)")
         XCTAssertFalse(UIFixture.isRequested)
         let services = try AppServices()
         defer { services.session.invalidate() }
