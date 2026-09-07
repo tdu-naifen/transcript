@@ -199,11 +199,14 @@ final class AppleSpeechIntegrationTests: XCTestCase {
         } catch AppleLiveTranscriber.Failure.unavailable {}
         let unchanged = try await repository.fetch(meetingId: meeting.id)
         XCTAssertEqual(unchanged.map(\.text), ["Original"])
+        let probe = FileSpeechProbe(fails: false)
         let successful = MeetingReprocessingCoordinator(
             database: db, deviceId: "test", recordingSession: services.session,
-            makeTranscriber: { FileSpeechProbe(fails: false) }
+            makeTranscriber: { probe }
         )
         _ = try await successful.run(meetingId: meeting.id, audioURL: URL(fileURLWithPath: "/unused"), language: .auto, progress: { _ in })
+        let inputDurationMs = await probe.inputDurationMs
+        XCTAssertEqual(inputDurationMs, meeting.durationMs)
         let updated = try await repository.fetch(meetingId: meeting.id)
         XCTAssertEqual(updated.map(\.text), ["Apple result"])
         XCTAssertEqual(updated.first?.engine, .appleSpeech)
@@ -1037,8 +1040,10 @@ final class AppleSpeechIntegrationTests: XCTestCase {
             preparedLocale = locale.identifier
             if fails { throw AppleLiveTranscriber.Failure.unavailable }
         }
-        func transcribeFile(_ url: URL, meetingID: String) -> [ASRSegment] {
-            [.init(id: "new", text: "Apple result", startMs: 0, endMs: endMs, localeIdentifier: "en-US", isFinal: true)]
+        private(set) var inputDurationMs: Int?
+        func transcribeFile(_ url: URL, meetingID: String, durationMs: Int) -> [ASRSegment] {
+            inputDurationMs = durationMs
+            return [.init(id: "new", text: "Apple result", startMs: 0, endMs: endMs, localeIdentifier: "en-US", isFinal: true)]
         }
         func cancelAndWait() {}
     }

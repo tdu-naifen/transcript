@@ -15,7 +15,7 @@ protocol AppleTranscribing: Actor {
 
 protocol AppleFileTranscribing: Actor {
     func prepare(locale: Locale) async throws
-    func transcribeFile(_ url: URL, meetingID: String) async throws -> [ASRSegment]
+    func transcribeFile(_ url: URL, meetingID: String, durationMs: Int) async throws -> [ASRSegment]
     func cancelAndWait() async
 }
 
@@ -149,10 +149,10 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
         task = Task { await consume(chunks, meetingID: meetingID, store: services) }
     }
 
-    func transcribeFile(_ url: URL, meetingID: String) async throws -> [ASRSegment] {
-        guard let analyzer, let speech, let locale else { throw Failure.unavailable }
-        let file = try AVAudioFile(forReading: url)
-        let durationMs = try Self.milliseconds(Double(file.length) / file.processingFormat.sampleRate)
+    func transcribeFile(_ url: URL, meetingID: String, durationMs: Int) async throws -> [ASRSegment] {
+        guard let analyzer, let speech, let locale, let format else { throw Failure.unavailable }
+        let input = try AppleFileAudioInput(url: url, durationMs: durationMs, outputFormat: format)
+        let sequence = AsyncThrowingStream<AnalyzerInput, any Error>(unfolding: { try await input.next() })
         let collector = Task {
             var segments: [ASRSegment] = []
             for try await result in speech.results where result.isFinal {
@@ -168,7 +168,7 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
             return segments
         }
         do {
-            if let end = try await analyzer.analyzeSequence(from: file) {
+            if let end = try await analyzer.analyzeSequence(sequence) {
                 try await analyzer.finalizeAndFinish(through: end)
             } else {
                 try await analyzer.finalizeAndFinishThroughEndOfInput()
@@ -305,6 +305,29 @@ actor AppleLiveTranscriber: AppleTranscribing, AppleFileTranscribing {
     }
 }
 
+actor AppleFileAudioInput {
+    private let reader: SavedRecordingAudioReader
+    private let converter: AppleAudioConverter
+    private var finished = false
+
+    init(url: URL, durationMs: Int, outputFormat: AVAudioFormat) throws {
+        let reader = try SavedRecordingAudioReader(url: url, durationMs: durationMs)
+        self.reader = reader
+        self.converter = try AppleAudioConverter(inputFormat: reader.format, outputFormat: outputFormat)
+    }
+
+    func next() throws -> AnalyzerInput? {
+        try Task.checkCancellation()
+        guard !finished else { return nil }
+        while let buffer = try reader.read() {
+            if let output = try converter.convert(buffer) { return AnalyzerInput(buffer: output) }
+        }
+        finished = true
+        if let tail = try converter.finish() { return AnalyzerInput(buffer: tail) }
+        return nil
+    }
+}
+
 /// The actual SDK-facing PCM queue, not merely the capture-side buffer.
 /// Overflow stops transcription explicitly; archival capture remains independent.
 struct AppleAnalyzerInputQueue {
@@ -351,14 +374,19 @@ final class AppleAudioConverter {
     private let outputFormat: AVAudioFormat
     private let converter: AVAudioConverter
 
-    init(outputFormat: AVAudioFormat) throws {
+    convenience init(outputFormat: AVAudioFormat) throws {
         guard let input = AVAudioFormat(
             commonFormat: .pcmFormatFloat32, sampleRate: AudioCaptureFormat.sampleRate,
             channels: 1, interleaved: false
-        ), let converter = AVAudioConverter(from: input, to: outputFormat) else {
+        ) else { throw AppleLiveTranscriber.Failure.invalidAudio }
+        try self.init(inputFormat: input, outputFormat: outputFormat)
+    }
+
+    init(inputFormat: AVAudioFormat, outputFormat: AVAudioFormat) throws {
+        guard let converter = AVAudioConverter(from: inputFormat, to: outputFormat) else {
             throw AppleLiveTranscriber.Failure.invalidAudio
         }
-        self.inputFormat = input
+        self.inputFormat = inputFormat
         self.outputFormat = outputFormat
         self.converter = converter
     }
@@ -377,6 +405,10 @@ final class AppleAudioConverter {
     }
 
     func finish() throws -> AVAudioPCMBuffer? { try output(input: nil, end: true) }
+
+    func convert(_ buffer: sending AVAudioPCMBuffer) throws -> AVAudioPCMBuffer? {
+        try output(input: buffer, end: false)
+    }
 
     private func output(input: sending AVAudioPCMBuffer?, end: Bool) throws -> AVAudioPCMBuffer? {
         let count = Double(input?.frameLength ?? 0) * outputFormat.sampleRate / inputFormat.sampleRate

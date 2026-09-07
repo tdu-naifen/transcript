@@ -102,6 +102,63 @@ import Testing
         #expect(RecordingSession.durationMs(frames: 16_000, sampleRate: 0) == 0)
     }
 
+    @Test func sealedAACReaderExcludesPacketPaddingWithoutMovingSpeechOrChangingArchive() async throws {
+        let directory = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for frames in [16_000, 48_000, 146_368, 146_369, 16_001] {
+            let url = directory.appendingPathComponent("\(frames).m4a")
+            let writer = try AudioFileWriter(url: url, segmentSeconds: 1)
+            try writer.start()
+            let samples = (0..<frames).map { frame -> Float in
+                let active = (frame >= 4000 && frame < 8000) || frame >= frames - 1600
+                return active ? Float(sin(Double(frame) * 2 * .pi * 440 / 16_000)) * 0.5 : 0
+            }
+            for chunk in AudioFileLoader.chunks(from: samples) {
+                try await writer.append(chunk)
+            }
+            let sealed = try await writer.finish()
+            let decoded = try AudioFileLoader.load16kMono(url: url)
+            let durationMs = RecordingSession.durationMs(frames: frames, sampleRate: 16_000)
+            let reader = try SavedRecordingAudioReader(url: url, durationMs: durationMs)
+            var bounded: [Float] = []
+            while let buffer = try reader.read() {
+                let channel = try #require(buffer.floatChannelData?[0])
+                bounded.append(contentsOf: UnsafeBufferPointer(start: channel, count: Int(buffer.frameLength)))
+            }
+            #expect(bounded.count == durationMs * 16)
+            #expect(bounded == Array(decoded.prefix(bounded.count)))
+            #expect(abs(try #require(bounded.firstIndex { abs($0) > 0.1 }) - 4000) < 16)
+            #expect(try #require(bounded.lastIndex { abs($0) > 0.1 }) >= bounded.count - 16)
+            #expect(try reader.read() == nil)
+            if frames == 16_000 { #expect(decoded.count > bounded.count) }
+            for invalidDuration in [0, -1, durationMs - 500, durationMs + 500, Int.max] {
+                #expect(throws: SavedRecordingAudioReader.Failure.self) {
+                    try SavedRecordingAudioReader(url: url, durationMs: invalidDuration)
+                }
+            }
+            #expect(try IncrementalSHA256.hashFile(at: url).sha256 == sealed.sha256)
+        }
+    }
+
+    @Test func savedPCMReaderDoesNotTreatExtraAudioAsAACPadding() throws {
+        let directory = try makeTempDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("input.caf")
+        let format = AudioCaptureFormat.makeProcessingFormat()
+        let buffer = try #require(AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 16_320))
+        buffer.frameLength = 16_320
+        try #require(buffer.floatChannelData?[0]).initialize(repeating: 0, count: 16_320)
+        do {
+            let writer = try AVAudioFile(forWriting: url, settings: format.settings)
+            try writer.write(from: buffer)
+        }
+        #expect(throws: SavedRecordingAudioReader.Failure.self) {
+            try SavedRecordingAudioReader(url: url, durationMs: 1000)
+        }
+        let reader = try SavedRecordingAudioReader(url: url, durationMs: 1020)
+        #expect(reader.frameCount == 16_320)
+    }
+
     @Test func pendingStopTokenIdentifiesTheMeetingBeingPublished() {
         let token = RecordingSession.PendingStop(meetingId: "pending-meeting")
         #expect(token.meetingId == "pending-meeting")

@@ -79,17 +79,19 @@ actor MeetingReprocessingCoordinator {
         var retryLocale = Locale(identifier: language.fixedLocaleIdentifier ?? Locale.current.identifier)
         do {
             let previous = try await UtteranceRepository(database).fetch(meetingId: meetingId)
-            let meeting = try await MeetingRepository(database).fetch(id: meetingId)
+            guard let meeting = try await MeetingRepository(database).fetch(id: meetingId) else {
+                throw RepositoryError.notFound(table: Meeting.databaseTableName, id: meetingId)
+            }
             let job = try await RecordingProcessingRepository(database).fetch(meetingId: meetingId)
             let locales = Set(previous.compactMap(\.localeIdentifier))
             guard locales.count <= 1, job?.requiresSegmentedRetry != true else {
                 throw MeetingReprocessingConflict.mixedLanguages
             }
-            let locale = locales.first ?? job?.localeIdentifier ?? meeting?.localeIdentifier
+            let locale = locales.first ?? job?.localeIdentifier ?? meeting.localeIdentifier
                 ?? language.fixedLocaleIdentifier ?? Locale.current.identifier
             retryLocale = Locale(identifier: locale)
-            let snapshot = MeetingReprocessingSnapshot(audioSHA256: meeting?.audioSHA256, utterances: previous)
-            if let hash = meeting?.audioSHA256 {
+            let snapshot = MeetingReprocessingSnapshot(audioSHA256: meeting.audioSHA256, utterances: previous)
+            if let hash = meeting.audioSHA256 {
                 guard try IncrementalSHA256.hashFile(at: audioURL).sha256 == hash else {
                     throw MeetingReprocessingSnapshotError.changed
                 }
@@ -98,7 +100,9 @@ actor MeetingReprocessingCoordinator {
             try await reprocessor.prepare(locale: retryLocale)
             try cancellation.check()
             await progress(.init(stage: .transcribing, fractionCompleted: 0))
-            let segments = try await reprocessor.transcribeFile(audioURL, meetingID: meetingId)
+            let segments = try await reprocessor.transcribeFile(
+                audioURL, meetingID: meetingId, durationMs: meeting.durationMs
+            )
             try cancellation.check()
             guard !segments.isEmpty else { throw MeetingReprocessingError.noSpeechDetected }
             let speakerIDs = Array(Set(previous.compactMap(\.speakerId))).sorted()
@@ -138,7 +142,7 @@ actor MeetingReprocessingCoordinator {
             )
         } catch {
             let reportedError: any Error
-            if error is MeetingReprocessingTimingError {
+            if error is MeetingReprocessingTimingError || error is SavedRecordingAudioReader.Failure {
                 reportedError = await MainActor.run {
                     MeetingReprocessingTimingFailure(message: LocalizationManager.shared.text(
                         MeetingReprocessingTimingFailure.messageKey, table: "MeetingCopy"
