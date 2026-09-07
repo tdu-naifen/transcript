@@ -2,6 +2,10 @@ import XCTest
 
 @MainActor
 final class MacAnalysisUITests: XCTestCase {
+    override func setUpWithError() throws {
+        throw XCTSkip("LLM Analysis UI is outside the current product scope.")
+    }
+
     func testPublicMeetingRAGThroughNativeUI() throws {
         guard let runID = ProcessInfo.processInfo.environment["MAC_REAL_MEETING_UI_RUN_ID"],
               UUID(uuidString: runID) != nil else {

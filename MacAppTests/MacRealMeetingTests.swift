@@ -1,6 +1,8 @@
 import AVFoundation
+import AppKit
 import Foundation
 import GRDB
+import SwiftUI
 import TranscriptCore
 import XCTest
 @testable import TranscriptMac
@@ -14,7 +16,6 @@ final class MacRealMeetingTests: XCTestCase {
         }
         let fixtures = try XCTUnwrap(Bundle.main.resourceURL).appendingPathComponent("MacSpeakerFixtures")
         let root = try MacProcessingTestFixtures.root()
-        defer { try? FileManager.default.removeItem(at: root) }
         let audio = fixtures.appendingPathComponent("librispeech-two-voices-alternating.m4a")
         let context = MacLibraryContext(database: try AppDatabase.onDisk(directory: root), directory: root,
             audioFiles: AudioFileStore(directory: root.appendingPathComponent("Audio")), deviceID: "mac-smoke")
@@ -105,6 +106,40 @@ final class MacRealMeetingTests: XCTestCase {
                        recovered.errorMessage ?? "Publication receipt recovery failed")
         let recoveredSnapshot = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
         XCTAssertEqual(recoveredSnapshot, second)
+        let library = MacLibraryModel(directory: root)
+        await library.load()
+        let workspace = MacWorkspace(library: library)
+        workspace.selectedMeetingID = meeting.id
+        workspace.processing.configure(context: context)
+        let host = NSHostingView(rootView: MacMeetingsView().environment(workspace))
+        let window = NSWindow(contentRect: NSRect(x: 80, y: 80, width: 1_280, height: 800),
+            styleMask: [.titled, .closable], backing: .buffered, defer: false)
+        window.isReleasedWhenClosed = false
+        window.contentView = host
+        window.makeKeyAndOrderFront(nil)
+        defer { workspace.player.unload(); window.close() }
+        for _ in 0..<100 {
+            if workspace.player.isLoaded { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(workspace.player.isLoaded, workspace.player.errorMessage ?? "")
+        workspace.player.play()
+        for _ in 0..<100 {
+            if workspace.player.currentTime > 0.25 { break }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        XCTAssertTrue(workspace.player.isPlaying, workspace.player.errorMessage ?? "")
+        XCTAssertGreaterThan(workspace.player.currentTime, 0.25)
+        host.layoutSubtreeIfNeeded()
+        let bitmap = try XCTUnwrap(host.bitmapImageRepForCachingDisplay(in: host.bounds))
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        let png = try XCTUnwrap(bitmap.representation(using: .png, properties: [:]))
+        try png.write(to: artifacts.deletingLastPathComponent().appendingPathComponent("public-speaker-playback.png"))
+        let attachment = XCTAttachment(data: png, uniformTypeIdentifier: "public.png")
+        attachment.name = "Public fixture - actual Mac processing and playback"
+        attachment.lifetime = .keepAlways
+        add(attachment)
+        workspace.player.pause()
         try await MeetingRepository(context.database).delete(id: meeting.id)
         let survivingTemplates = try await context.database.reader.read { db in try SpeakerEmbedding.fetchAll(db) }
         XCTAssertEqual(Set(survivingTemplates.map(\.id)), Set(templates.map(\.id)))
