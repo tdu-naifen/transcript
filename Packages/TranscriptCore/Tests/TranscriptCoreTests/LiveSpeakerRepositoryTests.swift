@@ -86,7 +86,7 @@ final class LiveSpeakerRepositoryTests: XCTestCase {
         let initialVector = voice(identity).embedding
         try await db.writer.write {
             try known.insert($0)
-            try SpeakerEmbedding(speakerId: known.id, floats: initialVector, originDeviceId: "test", modelIdentifier: "CAM-test").insert($0)
+            try SpeakerEmbedding(speakerId: known.id, floats: initialVector, originDeviceId: "test", modelIdentifier: "CAM-test", preprocessing: VoiceprintPreprocessing.campPlus).insert($0)
         }
         _ = try await append(db, meeting)
         _ = try await repo.publish(generation: 0, identities: [identity], spans: [span(identity)], voices: [voice(identity)], modelIdentifier: "CAM-test")
@@ -97,7 +97,7 @@ final class LiveSpeakerRepositoryTests: XCTestCase {
         let vector = voice(identity).embedding
         try await db.writer.write {
             try tied.insert($0)
-            try SpeakerEmbedding(speakerId: tied.id, floats: vector, originDeviceId: "test", modelIdentifier: "CAM-test").insert($0)
+            try SpeakerEmbedding(speakerId: tied.id, floats: vector, originDeviceId: "test", modelIdentifier: "CAM-test", preprocessing: VoiceprintPreprocessing.campPlus).insert($0)
         }
         let second = LiveSpeakerIdentity(id: UUID().uuidString, ordinal: 1)
         let bound = try await repo.publish(generation: 0, identities: [second], spans: [], voices: [voice(second)], modelIdentifier: "CAM-test")

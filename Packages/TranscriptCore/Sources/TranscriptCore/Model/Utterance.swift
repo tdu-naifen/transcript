@@ -75,6 +75,40 @@ public struct Utterance: Codable, Identifiable, Hashable, Sendable {
 
 extension Utterance: FetchableRecord, PersistableRecord {
     public static let databaseTableName = "utterance"
+    public static var databaseSelection: [any SQLSelectable] {
+        [AllColumnsExcluding(["text"]), SQL("CAST(text AS BLOB) AS text")]
+    }
+
+    public init(row: Row) throws {
+        let bytes: Data = row["text"]
+        guard let engine = TranscriptionEngine(rawValue: row["engine"]) else {
+            throw DecodingError.dataCorrupted(.init(codingPath: [], debugDescription: "Unknown transcription engine"))
+        }
+        self.init(id: row["id"], meetingId: row["meetingId"], startMs: row["startMs"],
+            endMs: row["endMs"], text: String(decoding: bytes, as: UTF8.self),
+            speakerId: row["speakerId"], localeIdentifier: row["localeIdentifier"],
+            confidence: row["confidence"], engine: engine,
+            revision: row["revision"], createdAt: row["createdAt"], updatedAt: row["updatedAt"],
+            originDeviceId: row["originDeviceId"])
+    }
+
+    public func encode(to container: inout PersistenceContainer) throws {
+        container["id"] = id
+        container["meetingId"] = meetingId
+        container["startMs"] = startMs
+        container["endMs"] = endMs
+        // Older GRDB versions bind String with a C-string length. A UTF-8 blob
+        // preserves embedded NULs and still decodes as String on both versions.
+        container["text"] = text.contains("\0") ? Data(text.utf8).databaseValue : text.databaseValue
+        container["speakerId"] = speakerId
+        container["localeIdentifier"] = localeIdentifier
+        container["confidence"] = confidence
+        container["engine"] = engine.rawValue
+        container["revision"] = revision
+        container["createdAt"] = createdAt
+        container["updatedAt"] = updatedAt
+        container["originDeviceId"] = originDeviceId
+    }
 
     public enum Columns {
         public static let id = Column("id")

@@ -11,6 +11,7 @@ public struct MeetingRepository: Sendable {
     public func insert(_ meeting: Meeting) async throws {
         try await database.writer.write { db in
             try meeting.insert(db)
+            try AutomaticSyncRepository.captureSealedAudio(db, meeting: meeting)
         }
     }
 
@@ -104,6 +105,7 @@ public struct MeetingRepository: Sendable {
             }
             try Self.applyTransition(db, to: &meeting, newState: newState, deviceId: deviceId, now: now)
             try meeting.update(db)
+            try AutomaticSyncRepository.captureSealedAudio(db, meeting: meeting)
             return meeting
         }
     }
@@ -148,6 +150,7 @@ public struct MeetingRepository: Sendable {
             }
             try Self.applyTransition(db, to: &meeting, newState: newState, deviceId: deviceId, now: now)
             try meeting.update(db)
+            try AutomaticSyncRepository.captureSealedAudio(db, meeting: meeting)
             return meeting
         }
     }

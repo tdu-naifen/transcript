@@ -106,7 +106,7 @@ public struct SpeakerRepository: Sendable {
         }
     }
 
-    /// Renaming is iPhone-exclusive by product decision (PLAN §3.2 / Phase 2f).
+    /// Renaming is available on both platforms and synchronizes the display name.
     public func rename(id: String, displayName: String?, deviceId: String, now: Date = Date()) async throws {
         try await database.writer.write { db in
             guard var speaker = try Speaker.fetchOne(db, key: id) else {
@@ -354,6 +354,11 @@ public struct SpeakerRepository: Sendable {
                     """,
                 arguments: [keepId, now, deviceId, absorbId]
             )
+            for embedding in try SpeakerEmbedding.filter(SpeakerEmbedding.Columns.speakerId == keepId).fetchAll(db)
+                where FloatVector.isValidStorage(embedding.vector, dimension: embedding.dimension)
+                    && FloatVector.normalized(embedding.floats) != nil {
+                try AutomaticSyncRepository.captureVoiceprint(db, embedding: embedding)
+            }
 
             let affectedMeetingIds = try String.fetchAll(db, sql: """
                 SELECT meetingId FROM meetingSpeaker WHERE speakerId = ?
@@ -416,12 +421,17 @@ public struct SpeakerRepository: Sendable {
         try await database.writer.write { db in
             let existing = try Int.fetchOne(db, sql: """
                 SELECT dimension FROM speakerEmbedding
-                WHERE speakerId = ? AND modelIdentifier IS ? LIMIT 1
-                """, arguments: [embedding.speakerId, embedding.modelIdentifier])
+                WHERE speakerId = ? AND modelIdentifier IS ? AND preprocessing IS ? LIMIT 1
+                """, arguments: [embedding.speakerId, embedding.modelIdentifier, embedding.preprocessing])
             if let existing, existing != embedding.dimension {
                 throw RepositoryError.dimensionMismatch(expected: existing, actual: embedding.dimension)
             }
             try embedding.insert(db)
+            if (embedding.modelIdentifier != nil && embedding.preprocessing != nil)
+                || (FloatVector.isValidStorage(embedding.vector, dimension: embedding.dimension)
+                    && FloatVector.normalized(embedding.floats) != nil) {
+                try AutomaticSyncRepository.captureVoiceprint(db, embedding: embedding)
+            }
         }
     }
 
@@ -452,7 +462,8 @@ public struct SpeakerRepository: Sendable {
     /// Invalid blobs, dimensions, and values are omitted rather than poisoning matching.
     func loadVoiceprintSnapshot(
         modelIdentifier: String,
-        includeLegacy: Bool
+        includeLegacy: Bool,
+        preprocessing: String = VoiceprintPreprocessing.campPlus
     ) async throws -> VoiceprintSnapshot {
         try await database.reader.read { db in
             let generation = try Int.fetchOne(
@@ -460,10 +471,8 @@ public struct SpeakerRepository: Sendable {
             ) ?? 0
             let rows = try SpeakerEmbedding.fetchAll(
                 db,
-                sql: includeLegacy
-                    ? "SELECT * FROM speakerEmbedding WHERE modelIdentifier = ? OR modelIdentifier IS NULL ORDER BY speakerId, id"
-                    : "SELECT * FROM speakerEmbedding WHERE modelIdentifier = ? ORDER BY speakerId, id",
-                arguments: [modelIdentifier]
+                sql: "SELECT * FROM speakerEmbedding WHERE modelIdentifier = ? AND preprocessing = ? ORDER BY speakerId, id",
+                arguments: [modelIdentifier, preprocessing]
             )
             var values: [Float] = []
             var entries: [VoiceprintSnapshot.Entry] = []

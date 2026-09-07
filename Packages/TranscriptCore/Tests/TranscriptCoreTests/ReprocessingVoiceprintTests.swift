@@ -54,7 +54,7 @@ import Testing
             speakerId: known.id,
             floats: [1, 0],
             originDeviceId: testiPhoneId,
-            modelIdentifier: "campplus-revision"
+            modelIdentifier: "campplus-revision", preprocessing: VoiceprintPreprocessing.campPlus
         ))
         let matcher = VoiceprintMatcher(
             speakers: speakers,
@@ -111,7 +111,7 @@ import Testing
             speakerId: candidate.id,
             floats: [1, 0],
             originDeviceId: testiPhoneId,
-            modelIdentifier: "campplus-revision"
+            modelIdentifier: "campplus-revision", preprocessing: VoiceprintPreprocessing.campPlus
         ))
         let matcher = VoiceprintMatcher(
             speakers: speakers,

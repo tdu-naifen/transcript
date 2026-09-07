@@ -17,7 +17,7 @@ struct SpeakerAnalysisTests {
             meetingID: fixture.id, expectedUtterances: fixture.rows, slotsByUtterance: [:],
             voices: [.init(slot: 0, embedding: [1, 0], cleanDuration: 3),
                      .init(slot: 1, embedding: [1, 0], cleanDuration: 3)],
-            timeline: timeline, modelIdentifier: "test-cam", deviceID: "test")
+            timeline: timeline, modelIdentifier: "test-cam", deviceID: "test", preprocessing: VoiceprintPreprocessing.campPlus)
         let stored = try await UtteranceRepository(db).fetch(meetingId: fixture.id)
         #expect(stored[0].speakerId == identities[0]?.id)
         #expect(stored[0].text == fixture.rows[0].text)
@@ -49,7 +49,7 @@ struct SpeakerAnalysisTests {
             meetingID: first.id, expectedUtterances: first.rows,
             slotsByUtterance: [first.rows[0].id: 0],
             voices: [.init(slot: 0, embedding: [1, 0], cleanDuration: 3)],
-            modelIdentifier: "test-cam", deviceID: "test")
+            modelIdentifier: "test-cam", deviceID: "test", preprocessing: VoiceprintPreprocessing.campPlus)
         let reopened = try AppDatabase.onDisk(directory: directory)
         let second = try await meeting(reopened)
         let jobs = SpeakerAnalysisRepository(reopened)
@@ -62,7 +62,7 @@ struct SpeakerAnalysisTests {
             meetingID: second.id, expectedUtterances: second.rows,
             slotsByUtterance: [second.rows[0].id: 0],
             voices: [.init(slot: 0, embedding: [1, 0], cleanDuration: 3)],
-            modelIdentifier: "test-cam", deviceID: "test")
+            modelIdentifier: "test-cam", deviceID: "test", preprocessing: VoiceprintPreprocessing.campPlus)
         #expect(matched[0]?.id == identities[0]?.id)
     }
 
@@ -82,7 +82,7 @@ struct SpeakerAnalysisTests {
             meetingID: fixture.id, expectedUtterances: fixture.rows,
             slotsByUtterance: [fixture.rows[0].id: 0],
             voices: [.init(slot: 0, embedding: [1, 0], cleanDuration: 3)],
-            modelIdentifier: "test-cam", deviceID: "test")
+            modelIdentifier: "test-cam", deviceID: "test", preprocessing: VoiceprintPreprocessing.campPlus)
         let afterSuccess = try await jobs.state(meetingID: fixture.id)
         #expect(afterSuccess == "pending")
     }
@@ -105,7 +105,7 @@ struct SpeakerAnalysisTests {
             meetingID: fixture.id, expectedUtterances: expected,
             slotsByUtterance: Dictionary(uniqueKeysWithValues: expected.map { ($0.id, 0) }),
             voices: [.init(slot: 0, embedding: [1, 0], cleanDuration: 4)],
-            modelIdentifier: "test-cam", deviceID: "test")
+            modelIdentifier: "test-cam", deviceID: "test", preprocessing: VoiceprintPreprocessing.campPlus)
         let stored = try await UtteranceRepository(db).fetch(meetingId: fixture.id)
         #expect(stored == expected)
         let links = try await repository.speakers(inMeeting: fixture.id)
@@ -118,13 +118,13 @@ struct SpeakerAnalysisTests {
         let first = try await meeting(db)
         let one = try await jobs.apply(meetingID: first.id, expectedUtterances: first.rows,
             slotsByUtterance: [first.rows[0].id: 0], voices: [.init(slot: 0, embedding: [1, 0, 0], cleanDuration: 3)],
-            modelIdentifier: "test-cam", deviceID: "test")
+            modelIdentifier: "test-cam", deviceID: "test", preprocessing: VoiceprintPreprocessing.campPlus)
         let animal = try #require(one[0])
         try await SpeakerRepository(db).rename(id: animal.id, displayName: "Taylor", deviceId: "test")
         let second = try await meeting(db)
         let two = try await jobs.apply(meetingID: second.id, expectedUtterances: second.rows,
             slotsByUtterance: [second.rows[0].id: 1], voices: [.init(slot: 1, embedding: [1, 0.01, 0], cleanDuration: 4)],
-            modelIdentifier: "test-cam", deviceID: "test")
+            modelIdentifier: "test-cam", deviceID: "test", preprocessing: VoiceprintPreprocessing.campPlus)
         #expect(two[1]?.id == animal.id)
         #expect(two[1]?.anonymousName == animal.anonymousName)
         #expect(two[1]?.resolvedName == "Taylor")
@@ -144,7 +144,7 @@ struct SpeakerAnalysisTests {
             voices: [.init(slot: 0, embedding: [1, 0], cleanDuration: 3),
                      .init(slot: 1, embedding: [0, 1], cleanDuration: 3),
                      .init(slot: 2, embedding: [1, 0], cleanDuration: 3)],
-            modelIdentifier: "test-cam", deviceID: "test")
+            modelIdentifier: "test-cam", deviceID: "test", preprocessing: VoiceprintPreprocessing.campPlus)
         #expect(result[0]?.id != result[1]?.id)
         #expect(result[0]?.id == result[2]?.id)
         let speakers = try await SpeakerRepository(db).speakers(inMeeting: fixture.id)
@@ -161,7 +161,7 @@ struct SpeakerAnalysisTests {
                 meetingID: fixture.id, expectedUtterances: altered,
                 slotsByUtterance: [fixture.rows[0].id: 0],
                 voices: [.init(slot: 0, embedding: [1, 0], cleanDuration: 3)],
-                modelIdentifier: "test-cam", deviceID: "test")
+                modelIdentifier: "test-cam", deviceID: "test", preprocessing: VoiceprintPreprocessing.campPlus)
             Issue.record("Stale analysis must fail")
         } catch VoiceprintBindingError.staleExpectation {}
         let stored = try await UtteranceRepository(db).fetch(meetingId: fixture.id)
@@ -183,7 +183,7 @@ struct SpeakerAnalysisTests {
             meetingID: fixture.id, expectedUtterances: fixture.rows,
             slotsByUtterance: [fixture.rows[0].id: 0],
             voices: [.init(slot: 0, embedding: [1, 0], cleanDuration: 0.5)],
-            modelIdentifier: "test-cam", deviceID: "test")
+            modelIdentifier: "test-cam", deviceID: "test", preprocessing: VoiceprintPreprocessing.campPlus)
         let animal = try #require(identities[0])
         let templates = try await SpeakerRepository(db).embeddings(forSpeaker: animal.id)
         #expect(templates.isEmpty)

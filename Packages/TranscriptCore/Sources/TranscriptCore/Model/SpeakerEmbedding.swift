@@ -18,6 +18,8 @@ public struct SpeakerEmbedding: Codable, Identifiable, Hashable, Sendable {
     /// Exact embedding artifact revision. Legacy rows remain nil and are excluded from
     /// matching unless the caller explicitly opts in.
     public var modelIdentifier: String?
+    /// Exact audio/feature preprocessing namespace. Unknown legacy rows stay nil.
+    public var preprocessing: String?
 
     public init(
         id: String = UUID().uuidString,
@@ -28,7 +30,8 @@ public struct SpeakerEmbedding: Codable, Identifiable, Hashable, Sendable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         originDeviceId: String,
-        modelIdentifier: String? = nil
+        modelIdentifier: String? = nil,
+        preprocessing: String? = nil
     ) {
         self.id = id
         self.speakerId = speakerId
@@ -39,6 +42,7 @@ public struct SpeakerEmbedding: Codable, Identifiable, Hashable, Sendable {
         self.updatedAt = updatedAt
         self.originDeviceId = originDeviceId
         self.modelIdentifier = modelIdentifier
+        self.preprocessing = preprocessing
     }
 
     public init(
@@ -49,7 +53,8 @@ public struct SpeakerEmbedding: Codable, Identifiable, Hashable, Sendable {
         createdAt: Date = Date(),
         updatedAt: Date = Date(),
         originDeviceId: String,
-        modelIdentifier: String? = nil
+        modelIdentifier: String? = nil,
+        preprocessing: String? = nil
     ) {
         self.init(
             id: id,
@@ -60,7 +65,8 @@ public struct SpeakerEmbedding: Codable, Identifiable, Hashable, Sendable {
             createdAt: createdAt,
             updatedAt: updatedAt,
             originDeviceId: originDeviceId,
-            modelIdentifier: modelIdentifier
+            modelIdentifier: modelIdentifier,
+            preprocessing: preprocessing
         )
     }
 
@@ -74,5 +80,6 @@ extension SpeakerEmbedding: FetchableRecord, PersistableRecord {
         public static let id = Column("id")
         public static let speakerId = Column("speakerId")
         public static let modelIdentifier = Column("modelIdentifier")
+        public static let preprocessing = Column("preprocessing")
     }
 }

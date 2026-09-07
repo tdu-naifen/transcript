@@ -17,8 +17,23 @@ public struct AnalysisResultRepository: Sendable {
     /// This is the only insert path — ``AnalysisResult`` is not a GRDB record — so a
     /// revision can never arrive from outside the module.
     @discardableResult
-    public func record(_ draft: AnalysisResultDraft) async throws -> AnalysisResult {
+    public func record(
+        _ draft: AnalysisResultDraft,
+        inputRevision: String? = nil,
+        modelFingerprint: String? = nil,
+        preprocessing: String? = nil
+    ) async throws -> AnalysisResult {
         try await database.writer.write { db in
+            if inputRevision != nil || modelFingerprint != nil || preprocessing != nil {
+                guard let inputRevision, let modelFingerprint, let preprocessing else {
+                    throw AutomaticSyncWire.Failure.invalid
+                }
+                guard try AutomaticSyncRepository.transcriptRevision(db, meetingID: draft.meetingId) == inputRevision else {
+                    throw AutomaticSyncWire.Failure.staleRevision
+                }
+                try AutomaticSyncRepository.captureAnalysis(db, draft: draft, inputRevision: inputRevision,
+                                                            modelFingerprint: modelFingerprint, preprocessing: preprocessing)
+            }
             let next = try Int.fetchOne(db, sql: """
                 SELECT COALESCE(MAX(revision), 0) + 1 FROM analysisResult
                 WHERE meetingId = ? AND kind = ?
@@ -41,11 +56,13 @@ public struct AnalysisResultRepository: Sendable {
 
     public func latest(meetingId: String, kind: AnalysisKind) async throws -> AnalysisResult? {
         try await database.reader.read { db in
-            try Row.fetchOne(db, sql: """
-                SELECT * FROM analysisResult
-                WHERE meetingId = ? AND kind = ?
-                ORDER BY revision DESC LIMIT 1
-                """, arguments: [meetingId, kind.rawValue])
+            let input = try AutomaticSyncRepository.transcriptRevision(db, meetingID: meetingId)
+            return try Row.fetchOne(db, sql: """
+                SELECT a.* FROM analysisResult a
+                LEFT JOIN automaticSyncAnalysisProvenance p ON p.analysisID=a.id
+                WHERE a.meetingId = ? AND a.kind = ? AND (p.analysisID IS NULL OR p.inputRevision=?)
+                ORDER BY a.revision DESC LIMIT 1
+                """, arguments: [meetingId, kind.rawValue, input])
                 .map(AnalysisResult.init(row:))
         }
     }

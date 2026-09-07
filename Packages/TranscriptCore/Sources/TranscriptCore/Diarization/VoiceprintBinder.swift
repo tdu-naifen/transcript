@@ -105,14 +105,16 @@ public struct VoiceprintBinder: Sendable {
         speakerId: String,
         modelIdentifier: String,
         deviceId: String,
-        now: Date = Date()
+        now: Date = Date(),
+        preprocessing: String? = nil
     ) async throws {
         guard !modelIdentifier.isEmpty, FloatVector.normalized(embedding) != nil else {
             throw VoiceprintBindingError.invalidEmbedding
         }
         try await speakers.addEmbedding(SpeakerEmbedding(
             speakerId: speakerId, floats: embedding, createdAt: now,
-            updatedAt: now, originDeviceId: deviceId, modelIdentifier: modelIdentifier
+            updatedAt: now, originDeviceId: deviceId, modelIdentifier: modelIdentifier,
+            preprocessing: preprocessing
         ))
     }
 

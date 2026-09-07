@@ -73,7 +73,8 @@ public struct SpeakerAnalysisRepository: Sendable {
         timeline: [DiarizerSegment] = [],
         modelIdentifier: String,
         deviceID: String,
-        policy: VoiceprintMatchPolicy = .init()
+        policy: VoiceprintMatchPolicy = .init(),
+        preprocessing: String? = nil
     ) async throws -> [Int: Speaker] {
         guard !modelIdentifier.isEmpty else { throw VoiceprintBindingError.invalidEmbedding }
         return try await database.writer.write { db in
@@ -91,7 +92,9 @@ public struct SpeakerAnalysisRepository: Sendable {
             }
             let links = try MeetingSpeaker.filter(Column("meetingId") == meetingID).fetchAll(db)
             let oldBySlot = Dictionary(uniqueKeysWithValues: links.map { ($0.displayIndex, $0.speakerId) })
-            var bank = try SpeakerEmbedding.filter(SpeakerEmbedding.Columns.modelIdentifier == modelIdentifier).fetchAll(db)
+            var bank = preprocessing == nil ? [] : try SpeakerEmbedding
+                .filter(SpeakerEmbedding.Columns.modelIdentifier == modelIdentifier)
+                .filter(SpeakerEmbedding.Columns.preprocessing == preprocessing).fetchAll(db)
             var resolved: [Int: Speaker] = [:]
             var usedNames = Set(try String.fetchAll(db, sql: "SELECT anonymousName FROM speaker"))
             for voice in voices.sorted(by: { $0.slot < $1.slot }) {
@@ -140,8 +143,10 @@ public struct SpeakerAnalysisRepository: Sendable {
                 resolved[voice.slot] = speaker
                 if let vector, voice.cleanDuration >= policy.minimumCleanDuration,
                    !bank.contains(where: { $0.speakerId == speaker.id }) {
-                    let template = SpeakerEmbedding(speakerId: speaker.id, floats: vector, originDeviceId: deviceID, modelIdentifier: modelIdentifier)
+                    let template = SpeakerEmbedding(speakerId: speaker.id, floats: vector, originDeviceId: deviceID, modelIdentifier: modelIdentifier,
+                                                    preprocessing: preprocessing)
                     try template.insert(db)
+                    try AutomaticSyncRepository.captureVoiceprint(db, embedding: template)
                     bank.append(template)
                 }
             }

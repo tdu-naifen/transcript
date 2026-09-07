@@ -136,7 +136,8 @@ import Testing
         speakerId: known.id,
         floats: [1, 0],
         originDeviceId: "test-device",
-        modelIdentifier: "processor-test"
+        modelIdentifier: "processor-test",
+        preprocessing: VoiceprintPreprocessing.campPlus
       ))
     let generation = try await speakers.voiceprintGeneration()
     let matcher = VoiceprintMatcher(

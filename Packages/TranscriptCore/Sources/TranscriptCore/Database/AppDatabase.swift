@@ -10,6 +10,11 @@ public struct AppDatabase: Sendable {
     public init(_ writer: any DatabaseWriter) throws {
         self.writer = writer
         try Self.migrator.migrate(writer)
+        // Mutations and their trigger-captured sync intent share the same durable
+        // commit. WAL's default NORMAL is insufficient for acknowledged sync.
+        try writer.writeWithoutTransaction { db in
+            try db.execute(sql: "PRAGMA synchronous = FULL")
+        }
     }
 
     /// Fresh, isolated database for tests.

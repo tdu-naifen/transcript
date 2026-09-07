@@ -1,0 +1,3 @@
+import TranscriptCore
+
+public typealias AutomaticSyncResourceWire = AutomaticSyncResourceTransfer.Wire

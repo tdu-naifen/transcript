@@ -108,14 +108,14 @@ public actor SpeakerAnalysisEngine: SpeakerAnalyzing {
             meetingID: meetingID, expectedUtterances: expected, slotsByUtterance: assignments,
             unknownUtteranceIDs: unknown,
             voices: voices, timeline: segments, modelIdentifier: modelIdentifier,
-            deviceID: deviceID
+            deviceID: deviceID, preprocessing: VoiceprintPreprocessing.campPlus
         )
     }
 
     /// Existing installs may predate revision receipts; bind templates to actual bytes.
     static func modelIdentifier(at directory: URL) throws -> String {
-        func collectFiles(in directory: URL) throws -> [URL] {
-            var result: [URL] = []
+        func collectFiles(in directory: URL, prefix: String = "") throws -> [(String, URL)] {
+            var result: [(String, URL)] = []
             for child in try FileManager.default.contentsOfDirectory(
                 at: directory, includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey],
                 options: [.skipsHiddenFiles]
@@ -123,19 +123,19 @@ public actor SpeakerAnalysisEngine: SpeakerAnalyzing {
                 let values = try child.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey])
                 guard values.isSymbolicLink != true else { throw CocoaError(.fileReadInvalidFileName) }
                 if values.isDirectory == true {
-                    result.append(contentsOf: try collectFiles(in: child))
+                    result.append(contentsOf: try collectFiles(in: child, prefix: prefix + child.lastPathComponent + "/"))
                 } else if values.isRegularFile == true {
-                    result.append(child)
+                    result.append((prefix + child.lastPathComponent, child))
                 }
             }
             return result
         }
-        let files = try collectFiles(in: directory).sorted { $0.path < $1.path }
+        let root = directory.resolvingSymlinksInPath().standardizedFileURL
+        let files = try collectFiles(in: root).sorted { $0.0 < $1.0 }
         guard !files.isEmpty else { throw VoiceprintBindingError.invalidEmbedding }
         var digest = IncrementalSHA256()
-        for file in files {
+        for (relative, file) in files {
             try Task.checkCancellation()
-            let relative = String(file.path.dropFirst(directory.path.count + 1))
             let hash = try IncrementalSHA256.hashFile(at: file).sha256
             digest.update(Data("\(relative.utf8.count):\(relative):\(hash)\n".utf8))
         }

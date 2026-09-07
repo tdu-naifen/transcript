@@ -10,7 +10,7 @@ import Testing
         let meeting = makeTestMeeting()
         try await meetings.insert(meeting)
         let speaker = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
-        try await speakers.addEmbedding(.init(speakerId: speaker.id, floats: [1, 0], originDeviceId: testiPhoneId, modelIdentifier: "cam++-v1"))
+        try await speakers.addEmbedding(.init(speakerId: speaker.id, floats: [1, 0], originDeviceId: testiPhoneId, modelIdentifier: "cam++-v1", preprocessing: VoiceprintPreprocessing.campPlus))
         let binder = VoiceprintBinder(speakers: speakers)
         let matcher = VoiceprintMatcher(
             speakers: speakers,
@@ -48,7 +48,7 @@ import Testing
         let matched = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
         try await speakers.addEmbedding(.init(
             speakerId: matched.id, floats: [1, 0], originDeviceId: testiPhoneId,
-            modelIdentifier: "cam++-v1"
+            modelIdentifier: "cam++-v1", preprocessing: VoiceprintPreprocessing.campPlus
         ))
         let matcher = VoiceprintMatcher(
             speakers: speakers,

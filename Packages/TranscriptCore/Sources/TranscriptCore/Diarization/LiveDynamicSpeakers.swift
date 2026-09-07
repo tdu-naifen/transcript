@@ -312,6 +312,7 @@ public actor LiveDynamicSpeakers {
         assets: LiveSpeakerAssets, generation: Int, sourceRevision: Int
     ) async throws {
         guard authorization.generation == generation, inputRevision == sourceRevision else { throw CancellationError() }
+        let recognitionStarted = ContinuousClock.now
         let evidence = try await runtime.extract(window.samples)
         let validated = try LiveWindowEvidence(start: window.start, evidence: evidence)
         let clustered = try await runtime.cluster(registry.cohort(adding: validated.rows))
@@ -333,6 +334,7 @@ public actor LiveDynamicSpeakers {
         }
         try Task.checkCancellation()
         guard inputRevision == sourceRevision else { throw CancellationError() }
+        LiveSpeakerTiming.record(.recognitionAccepted, since: recognitionStarted)
         do {
             let published = try await repository.publish(
                 generation: generation, identities: nextRegistry.identities.map { .init(id: $0.id, ordinal: $0.ordinal) },

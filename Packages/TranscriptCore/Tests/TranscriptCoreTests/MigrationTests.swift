@@ -24,7 +24,7 @@ import Testing
         let applied = try await db.reader.read { database in
             try AppDatabase.migrator.appliedIdentifiers(database)
         }
-        #expect(applied == ["v1", "v2_search_and_voiceprint_metadata", "v3_meeting_speaker_slot_revisions", "v4_real_slot_revision_triggers", "v5_meeting_emoji", "v6_speaker_analysis_jobs", "v7_meeting_deletion_slot_revision", "v8_local_recording_processing_jobs", "v9_local_immutable_meeting_copy_outbox", "v10_local_speaker_analysis_assignment_provenance", "v11_liveSpeakerEvidence"])
+        #expect(applied == ["v1", "v2_search_and_voiceprint_metadata", "v3_meeting_speaker_slot_revisions", "v4_real_slot_revision_triggers", "v5_meeting_emoji", "v6_speaker_analysis_jobs", "v7_meeting_deletion_slot_revision", "v8_local_recording_processing_jobs", "v9_local_immutable_meeting_copy_outbox", "v10_local_speaker_analysis_assignment_provenance", "v11_liveSpeakerEvidence", "v12_automatic_sync", "v13_deleted_meeting_audio", "v14_deleted_meeting_resources", "v15_transcript_publication_branches"])
     }
 
     @Test func v9PreservesV8RecordingRetryIntentAndSealedAudioMetadata() throws {
@@ -156,7 +156,16 @@ import Testing
             // Local delivery bookkeeping is not a mutable cross-device document.
             "meetingCopyOutbox", "speakerAnalysisAutomaticAssignment",
             // Live inference evidence/cursors are device-local, never sync documents.
-            "liveSpeakerSession", "liveSpeakerIdentity", "liveSpeakerSpan", "liveSpeakerChecked"
+            "liveSpeakerSession", "liveSpeakerIdentity", "liveSpeakerSpan", "liveSpeakerChecked",
+            "automaticSyncAcknowledgement", "automaticSyncAnalysisProvenance", "automaticSyncAssociation",
+            "automaticSyncAudioImport", "automaticSyncFileGarbage", "automaticSyncFragment",
+            "automaticSyncOperation", "automaticSyncPeer", "automaticSyncPublication", "automaticSyncRegister",
+            "automaticSyncResourceFile", "automaticSyncResourcePayload", "automaticSyncResourceReceive",
+            "automaticSyncResourceSource", "automaticSyncRevokedResource", "automaticSyncState",
+            "automaticSyncTombstone", "automaticSyncTranscriptMapping", "automaticSyncTranscriptPublication",
+            "automaticSyncVoiceprintProvenance", "automaticSyncDeletedMeetingAudio",
+            // Derived local branch snapshots are not mutable cross-device documents.
+            "automaticSyncTranscriptHead", "automaticSyncTranscriptRevision"
         ]
         let db = try AppDatabase.inMemory()
         let (tables, columnsByTable) = try await db.reader.read { database in
@@ -264,7 +273,7 @@ import Testing
                 """)
             return (applied, embeddingColumns, generation, Set(indexes))
         }
-        #expect(details.0 == ["v1", "v2_search_and_voiceprint_metadata", "v3_meeting_speaker_slot_revisions", "v4_real_slot_revision_triggers", "v5_meeting_emoji", "v6_speaker_analysis_jobs", "v7_meeting_deletion_slot_revision", "v8_local_recording_processing_jobs", "v9_local_immutable_meeting_copy_outbox", "v10_local_speaker_analysis_assignment_provenance", "v11_liveSpeakerEvidence"])
+        #expect(details.0 == ["v1", "v2_search_and_voiceprint_metadata", "v3_meeting_speaker_slot_revisions", "v4_real_slot_revision_triggers", "v5_meeting_emoji", "v6_speaker_analysis_jobs", "v7_meeting_deletion_slot_revision", "v8_local_recording_processing_jobs", "v9_local_immutable_meeting_copy_outbox", "v10_local_speaker_analysis_assignment_provenance", "v11_liveSpeakerEvidence", "v12_automatic_sync", "v13_deleted_meeting_audio", "v14_deleted_meeting_resources", "v15_transcript_publication_branches"])
         #expect(details.1.contains("modelIdentifier"))
         #expect(details.2 == 0)
         #expect(details.3.isSuperset(of: [
@@ -291,7 +300,7 @@ import Testing
             #expect(rows.results.first?.hits.map(\.utteranceId) == ["u1"])
             #expect(try Self.domainRows(reopened) == original)
             try await reopened.write { db in
-                #expect(try AppDatabase.migrator.appliedIdentifiers(db) == ["v1", "v2_search_and_voiceprint_metadata", "v3_meeting_speaker_slot_revisions", "v4_real_slot_revision_triggers", "v5_meeting_emoji", "v6_speaker_analysis_jobs", "v7_meeting_deletion_slot_revision", "v8_local_recording_processing_jobs", "v9_local_immutable_meeting_copy_outbox", "v10_local_speaker_analysis_assignment_provenance", "v11_liveSpeakerEvidence"])
+                #expect(try AppDatabase.migrator.appliedIdentifiers(db) == ["v1", "v2_search_and_voiceprint_metadata", "v3_meeting_speaker_slot_revisions", "v4_real_slot_revision_triggers", "v5_meeting_emoji", "v6_speaker_analysis_jobs", "v7_meeting_deletion_slot_revision", "v8_local_recording_processing_jobs", "v9_local_immutable_meeting_copy_outbox", "v10_local_speaker_analysis_assignment_provenance", "v11_liveSpeakerEvidence", "v12_automatic_sync", "v13_deleted_meeting_audio", "v14_deleted_meeting_resources", "v15_transcript_publication_branches"])
                 #expect(try Int.fetchOne(db, sql: "SELECT count(*) FROM searchDocument") == 2)
                 #expect(try Int.fetchOne(db, sql: "SELECT revision FROM voiceprintGeneration WHERE id = 1") == 0)
                 #expect(try Int.fetchOne(db, sql: "SELECT count(*) FROM speakerEmbedding WHERE modelIdentifier IS NULL") == 1)
@@ -437,7 +446,7 @@ import Testing
                     let customized = try Int.fetchOne(db, sql: "SELECT COUNT(*) FROM meeting WHERE emoji IS NOT NULL")
                     #expect(customized == 0, "Upgrading old meetings must preserve the default icon")
                 }
-                let columns = allColumns.filter { $0 != "modelIdentifier" && $0 != "emoji" }
+                let columns = allColumns.filter { $0 != "modelIdentifier" && $0 != "preprocessing" && $0 != "emoji" }
                 return try Row.fetchAll(db, sql: "SELECT \(columns.joined(separator: ",")) FROM \(table) ORDER BY 1")
             }
         }

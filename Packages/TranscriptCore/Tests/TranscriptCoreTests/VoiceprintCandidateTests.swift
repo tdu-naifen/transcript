@@ -9,9 +9,9 @@ import Testing
         let speakers = SpeakerRepository(db)
         let first = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
         let second = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
-        try await speakers.addEmbedding(.init(speakerId: first.id, floats: [1, 0], originDeviceId: testiPhoneId, modelIdentifier: "cam++-v1"))
-        try await speakers.addEmbedding(.init(speakerId: first.id, floats: [0.99, 0.01], originDeviceId: testiPhoneId, modelIdentifier: "cam++-v1"))
-        try await speakers.addEmbedding(.init(speakerId: second.id, floats: [0.8, 0.6], originDeviceId: testiPhoneId, modelIdentifier: "cam++-v1"))
+        try await speakers.addEmbedding(.init(speakerId: first.id, floats: [1, 0], originDeviceId: testiPhoneId, modelIdentifier: "cam++-v1", preprocessing: VoiceprintPreprocessing.campPlus))
+        try await speakers.addEmbedding(.init(speakerId: first.id, floats: [0.99, 0.01], originDeviceId: testiPhoneId, modelIdentifier: "cam++-v1", preprocessing: VoiceprintPreprocessing.campPlus))
+        try await speakers.addEmbedding(.init(speakerId: second.id, floats: [0.8, 0.6], originDeviceId: testiPhoneId, modelIdentifier: "cam++-v1", preprocessing: VoiceprintPreprocessing.campPlus))
 
         let matcher = VoiceprintMatcher(
             speakers: speakers,
@@ -52,8 +52,8 @@ import Testing
         let speakers = SpeakerRepository(db)
         let first = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
         let second = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
-        try await speakers.addEmbedding(.init(speakerId: first.id, floats: [1, 0], originDeviceId: testiPhoneId, modelIdentifier: "cam++-v1"))
-        try await speakers.addEmbedding(.init(speakerId: second.id, floats: [0.999, 0.001], originDeviceId: testiPhoneId, modelIdentifier: "cam++-v1"))
+        try await speakers.addEmbedding(.init(speakerId: first.id, floats: [1, 0], originDeviceId: testiPhoneId, modelIdentifier: "cam++-v1", preprocessing: VoiceprintPreprocessing.campPlus))
+        try await speakers.addEmbedding(.init(speakerId: second.id, floats: [0.999, 0.001], originDeviceId: testiPhoneId, modelIdentifier: "cam++-v1", preprocessing: VoiceprintPreprocessing.campPlus))
         let matcher = VoiceprintMatcher(
             speakers: speakers,
             modelIdentifier: "cam++-v1",
@@ -80,7 +80,7 @@ import Testing
         #expect(try await matcher.match(embedding: [1, 0], cleanDuration: 10) == .noMatch(candidates: []))
     }
 
-    @Test func legacyInclusionRequiresExplicitOptIn() async throws {
+    @Test func legacyUnknownProvenanceRemainsQuarantinedEvenWithOldOptIn() async throws {
         let db = try AppDatabase.inMemory()
         let speakers = SpeakerRepository(db)
         let legacy = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
@@ -92,11 +92,7 @@ import Testing
             policy: .init(minimumSimilarity: 0.5, minimumMargin: 0, minimumCleanDuration: 0),
             includeLegacyEmbeddings: true
         )
-        guard case let .matched(id, _) = try await matcher.match(embedding: [1, 0], cleanDuration: 1) else {
-            Issue.record("Expected opted-in legacy match")
-            return
-        }
-        #expect(id == legacy.id)
+        #expect(try await matcher.match(embedding: [1, 0], cleanDuration: 1) == .noMatch(candidates: []))
     }
 
     @Test func invalidStoredAndQueryVectorsNeverParticipate() async throws {
@@ -127,7 +123,7 @@ import Testing
         let speakers = SpeakerRepository(db)
         let keep = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
         let absorb = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
-        try await speakers.addEmbedding(.init(speakerId: absorb.id, floats: [1, 0], originDeviceId: testiPhoneId, modelIdentifier: "cam++-v1"))
+        try await speakers.addEmbedding(.init(speakerId: absorb.id, floats: [1, 0], originDeviceId: testiPhoneId, modelIdentifier: "cam++-v1", preprocessing: VoiceprintPreprocessing.campPlus))
         let matcher = VoiceprintMatcher(
             speakers: speakers,
             modelIdentifier: "cam++-v1",
@@ -152,7 +148,7 @@ import Testing
         let db = try AppDatabase.inMemory()
         let speakers = SpeakerRepository(db)
         let speaker = try await speakers.createAnonymousSpeaker(deviceId: testiPhoneId)
-        try await speakers.addEmbedding(.init(speakerId: speaker.id, floats: [1, 0], originDeviceId: testiPhoneId, modelIdentifier: modelIdentifier))
+        try await speakers.addEmbedding(.init(speakerId: speaker.id, floats: [1, 0], originDeviceId: testiPhoneId, modelIdentifier: modelIdentifier, preprocessing: VoiceprintPreprocessing.campPlus))
         return (speakers, speaker)
     }
 }

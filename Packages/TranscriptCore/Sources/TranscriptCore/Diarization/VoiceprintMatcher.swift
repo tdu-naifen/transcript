@@ -59,24 +59,25 @@ public struct VoiceprintMatchPolicy: Sendable, Equatable {
 }
 
 /// Exact O(N) matcher backed by a generation-invalidated, normalized in-memory snapshot.
-/// Model identity is mandatory; legacy nil-model templates require explicit opt-in.
+/// Model and preprocessing identities are mandatory. Legacy templates remain quarantined.
 public actor VoiceprintMatcher {
     private let speakers: SpeakerRepository
     private let modelIdentifier: String
     private let policy: VoiceprintMatchPolicy
-    private let includeLegacyEmbeddings: Bool
+    private let preprocessing: String
     private var snapshot: VoiceprintSnapshot?
 
     public init(
         speakers: SpeakerRepository,
         modelIdentifier: String,
         policy: VoiceprintMatchPolicy = .init(),
-        includeLegacyEmbeddings: Bool = false
+        includeLegacyEmbeddings: Bool = false,
+        preprocessing: String = VoiceprintPreprocessing.campPlus
     ) {
         self.speakers = speakers
         self.modelIdentifier = modelIdentifier
         self.policy = policy
-        self.includeLegacyEmbeddings = includeLegacyEmbeddings
+        self.preprocessing = preprocessing
     }
 
     public func match(
@@ -128,7 +129,8 @@ public actor VoiceprintMatcher {
         let generation = try await speakers.voiceprintGeneration()
         if let snapshot, snapshot.generation == generation { return snapshot }
         let loaded = try await speakers.loadVoiceprintSnapshot(
-            modelIdentifier: modelIdentifier, includeLegacy: includeLegacyEmbeddings
+            modelIdentifier: modelIdentifier, includeLegacy: false,
+            preprocessing: preprocessing
         )
         snapshot = loaded
         return loaded

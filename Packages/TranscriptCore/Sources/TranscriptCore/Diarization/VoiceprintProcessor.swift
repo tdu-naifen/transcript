@@ -2,6 +2,12 @@ import FluidAudio
 import Foundation
 import CoreML
 
+public enum VoiceprintPreprocessing {
+  /// CampPlusEmbedder's bundled feature preprocessor, mono 16 kHz clean samples.
+  /// Its actual model/preprocessor bytes are included in modelIdentifier.
+  public static let campPlus = "campplus-fbank-16khz-mono-clean-v1"
+}
+
 public struct VoiceprintRequest: Sendable {
   public let meetingId: String
   public let speakerSlot: Int

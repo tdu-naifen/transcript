@@ -16,7 +16,8 @@ import Testing
         let binder = VoiceprintBinder(speakers: speakers)
         try await binder.enroll(
             embedding: [1, 0], speakerId: known.id,
-            modelIdentifier: "runtime-test-v1", deviceId: testiPhoneId
+            modelIdentifier: "runtime-test-v1", deviceId: testiPhoneId,
+            preprocessing: VoiceprintPreprocessing.campPlus
         )
         let expectation = try await binder.expectation(meetingId: meeting.id, speakerIndex: 0)
         let generation = try await speakers.voiceprintGeneration()

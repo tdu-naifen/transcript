@@ -440,6 +440,43 @@ extension AppDatabase {
                 t.column("bindingRevision", .integer).notNull()
             }
         }
+        migrator.registerMigration("v12_automatic_sync") { db in
+            try AutomaticSyncSchema.migrate(db)
+        }
+        migrator.registerMigration("v13_deleted_meeting_audio") { db in
+            try db.execute(sql: """
+                CREATE TABLE automaticSyncDeletedMeetingAudio(fileName TEXT PRIMARY KEY NOT NULL);
+                CREATE TRIGGER automaticSync_meeting_audio_delete BEFORE DELETE ON meeting
+                WHEN OLD.audioFileName IS NOT NULL
+                BEGIN
+                    INSERT OR IGNORE INTO automaticSyncDeletedMeetingAudio VALUES(OLD.audioFileName);
+                END;
+                """)
+        }
+        migrator.registerMigration("v14_deleted_meeting_resources") { db in
+            try db.execute(sql: """
+                CREATE TRIGGER automaticSync_meeting_resources_delete BEFORE DELETE ON meeting
+                BEGIN \(AutomaticSyncSchema.removeMeetingResourcesSQL(meetingID: "OLD.id")) END;
+                CREATE TRIGGER automaticSync_meeting_resources_tombstone AFTER INSERT ON automaticSyncTombstone
+                WHEN NEW.entity='meeting'
+                BEGIN \(AutomaticSyncSchema.removeMeetingResourcesSQL(meetingID: "NEW.entityID")) END;
+                """)
+            for id in try String.fetchAll(db, sql: "SELECT entityID FROM automaticSyncTombstone WHERE entity='meeting'") {
+                try db.execute(sql: AutomaticSyncSchema.removeMeetingResourcesSQL(meetingID: ":deletedMeetingID"),
+                               arguments: ["deletedMeetingID": id])
+            }
+        }
+        migrator.registerMigration("v15_transcript_publication_branches") { db in
+            try db.execute(sql: """
+                CREATE TABLE automaticSyncTranscriptRevision (
+                    meetingID TEXT NOT NULL REFERENCES meeting(id) ON DELETE CASCADE,
+                    revision TEXT NOT NULL, utterances BLOB NOT NULL, path BLOB NOT NULL,
+                    PRIMARY KEY(meetingID,revision));
+                CREATE TABLE automaticSyncTranscriptHead (
+                    meetingID TEXT PRIMARY KEY REFERENCES meeting(id) ON DELETE CASCADE,
+                    path BLOB NOT NULL, utterances BLOB NOT NULL, protected INTEGER NOT NULL);
+                """)
+        }
         return migrator
     }
 }

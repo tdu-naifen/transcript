@@ -59,7 +59,8 @@ struct LiveSpeakerRepository: Sendable {
     private func transaction<T: Sendable>(
         generation: Int?, _ operation: @escaping @Sendable (Database) throws -> T
     ) async throws -> T {
-        try await database.writer.writeWithoutTransaction { db in
+        let started = ContinuousClock.now
+        let result = try await database.writer.writeWithoutTransaction { db in
             func perform() throws -> T {
                 var value: T?
                 try db.inTransaction {
@@ -73,6 +74,8 @@ struct LiveSpeakerRepository: Sendable {
             if let generation { return try authorization.authorize(generation, perform) }
             return try perform()
         }
+        LiveSpeakerTiming.record(.transactionCommit, since: started)
+        return result
     }
 
     func begin(generation: Int) async throws {
@@ -115,6 +118,7 @@ struct LiveSpeakerRepository: Sendable {
                     """, arguments: [meetingID, epoch, span.startTick, span.endTick, span.identityID, span.unknown])
                 frontier = span.endTick
             }
+            let bindingStarted = ContinuousClock.now
             let policy = VoiceprintMatchPolicy()
             var speakerCount = voices.isEmpty ? 0 : try Speaker.fetchCount(db)
             let templateCount = voices.isEmpty ? 0 : try SpeakerEmbedding
@@ -122,7 +126,8 @@ struct LiveSpeakerRepository: Sendable {
             var capacityLimited = speakerCount > LiveSpeakerLimits.bankEntries || templateCount > LiveSpeakerLimits.bankEntries
             let canBind = !voices.isEmpty && !capacityLimited
             var bank = canBind ? try SpeakerEmbedding
-                .filter(SpeakerEmbedding.Columns.modelIdentifier == modelIdentifier).fetchAll(db) : []
+                .filter(SpeakerEmbedding.Columns.modelIdentifier == modelIdentifier)
+                .filter(SpeakerEmbedding.Columns.preprocessing == VoiceprintPreprocessing.campPlus).fetchAll(db) : []
             var usedNames = canBind ? Set(try String.fetchAll(db, sql: "SELECT anonymousName FROM speaker")) : Set<String>()
             var bound = Set(try String.fetchAll(db, sql: """
                 SELECT id FROM liveSpeakerIdentity WHERE meetingId = ? AND epoch = ? AND speakerId IS NOT NULL
@@ -161,8 +166,10 @@ struct LiveSpeakerRepository: Sendable {
                     chosen = Speaker(anonymousName: name, colorIndex: try Speaker.fetchCount(db) % 12, originDeviceId: deviceID)
                     try chosen.insert(db)
                     speakerCount += 1
-                    let template = SpeakerEmbedding(speakerId: chosen.id, floats: vector, originDeviceId: deviceID, modelIdentifier: modelIdentifier)
+                    let template = SpeakerEmbedding(speakerId: chosen.id, floats: vector, originDeviceId: deviceID, modelIdentifier: modelIdentifier,
+                                                    preprocessing: VoiceprintPreprocessing.campPlus)
                     try template.insert(db)
+                    try AutomaticSyncRepository.captureVoiceprint(db, embedding: template)
                     bank.append(template)
                 }
                 try db.execute(sql: "UPDATE liveSpeakerIdentity SET speakerId = ? WHERE id = ?", arguments: [chosen.id, voice.identityID])
@@ -174,6 +181,7 @@ struct LiveSpeakerRepository: Sendable {
                 bound.insert(voice.identityID)
                 changed = true
             }
+            LiveSpeakerTiming.record(.identityBinding, since: bindingStarted)
             try db.execute(sql: """
                 UPDATE liveSpeakerSession SET frontier = ?, bindingRevision = bindingRevision + ? WHERE meetingId = ? AND epoch = ?
                 """, arguments: [frontier, changed ? 1 : 0, meetingID, epoch])
