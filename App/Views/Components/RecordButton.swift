@@ -2,6 +2,7 @@ import SwiftUI
 
 /// The large circular record/stop control.
 struct RecordButton: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let isRecording: Bool
     let isBusy: Bool
     let action: () -> Void
@@ -11,7 +12,7 @@ struct RecordButton: View {
             ZStack {
                 Circle()
                     .fill(Color(red: 0.94, green: 0.18, blue: 0.2))
-                    .frame(width: 58, height: 58)
+                    .frame(width: 48, height: 48)
                 if isRecording {
                     RoundedRectangle(cornerRadius: 4, style: .continuous)
                         .fill(.white)
@@ -22,25 +23,26 @@ struct RecordButton: View {
         }
         .buttonStyle(.plain)
         .disabled(isBusy)
-        .animation(.spring(response: 0.28, dampingFraction: 0.7), value: isRecording)
-        .accessibilityLabel(isRecording ? "Stop recording" : "Start recording")
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.2), value: isRecording)
+        .accessibilityLabel(LocalizedStringKey(isRecording ? "Stop recording" : "Start recording"))
         .accessibilityIdentifier(isRecording ? "expandedStopButton" : "expandedStartButton")
     }
 }
 
 struct PauseButton: View {
     let isPaused: Bool
+    var diameter: CGFloat = 48
     let action: () -> Void
 
     var body: some View {
         Button(action: action) {
             Image(systemName: isPaused ? "play.fill" : "pause.fill")
                 .font(.title3)
-                .frame(width: 56, height: 56)
+                .frame(width: diameter, height: diameter)
                 .background(Color.secondary.opacity(0.15), in: Circle())
         }
         .buttonStyle(.plain)
-        .accessibilityLabel(isPaused ? "Resume recording" : "Pause recording")
+        .accessibilityLabel(LocalizedStringKey(isPaused ? "Resume recording" : "Pause recording"))
     }
 }
 

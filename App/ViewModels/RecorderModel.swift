@@ -13,7 +13,7 @@ final class RecorderModel {
         case stopping
     }
 
-    /// Interruption / route notices (UI.md), kept as data rather than pre-formatted
+    /// Interruption / route notices, kept as data rather than pre-formatted
     /// text so the displayed string re-localizes if the app language changes while a
     /// notice is showing.
     enum Notice: Equatable {

@@ -22,6 +22,7 @@ struct RootView: View {
         }
         .environment(\.locale, localization.resolvedLocale)
         .tint(AppColors.controlTint)
+        .modifier(ForegroundIdleTimerLifecycle())
         #if DEBUG
         .preferredColorScheme(fixtureColorScheme)
         #endif
@@ -57,13 +58,9 @@ struct MacConnectionSceneLifecycle: ViewModifier {
     }
 }
 
-/// Default button clearance, shared with the top-level lists.
-/// The tab content supplies its safe area, so no tab-bar height is hard-coded.
+/// Retained as the shared list-clearance contract; controls now reserve a safe area.
 enum FloatingRecordButtonMetrics {
-    static let diameter: CGFloat = 64
-    static let bottomPadding: CGFloat = 58
-    /// Clearance a scrollable list needs at its bottom edge: padding + button + margin.
-    static let listBottomClearance: CGFloat = bottomPadding + diameter + 16
+    static let listBottomClearance: CGFloat = 0
 }
 
 /// Each tab keeps its own navigation history; the recorder belongs to the app, not a tab.
@@ -78,8 +75,9 @@ private struct ReadyView: View {
     @State private var settingsPath = NavigationPath()
     @State private var macConnection = MacConnectionModel(discovery: BonjourMacDiscovery())
     @Environment(\.scenePhase) private var scenePhase
-    @State private var isStartingRecording = false
-    @State private var isStoppingRecording = false
+    @State private var startGate = UIActionGate()
+    @State private var stopGate = UIActionGate()
+    @State private var pauseGate = UIActionGate()
     @State private var namingError: String?
     @State private var namingMeetingId: String?
     @State private var lastNamedMeetingId: String?
@@ -123,6 +121,9 @@ private struct ReadyView: View {
         recorder.phase != .idle || isStartingRecording
     }
 
+    private var isStartingRecording: Bool { startGate.isRunning }
+    private var isStoppingRecording: Bool { stopGate.isRunning }
+
     private var isCaptureActive: Bool {
         services.audioOwnership.isCaptureReserved || isStartingRecording
             || recorder.phase == .starting || recorder.isActive || recorder.phase == .stopping
@@ -139,6 +140,7 @@ private struct ReadyView: View {
                         isRecordingActive: { isCaptureActive },
                         macConnection: macConnection
                     )
+                    .toolbar(.hidden, for: .tabBar)
                 }
                 Tab(LocalizationManager.shared.text("Meetings"), systemImage: "list.bullet", value: AppTab.meetings) {
                     RecordingsListView(
@@ -148,33 +150,37 @@ private struct ReadyView: View {
                         isRecordingActive: { isCaptureActive },
                         macConnection: macConnection
                     )
+                    .toolbar(.hidden, for: .tabBar)
                 }
                 Tab(LocalizationManager.shared.text("Settings"), systemImage: "gearshape", value: AppTab.settings) {
                     SettingsView(services: services, path: $settingsPath)
+                        .toolbar(.hidden, for: .tabBar)
                 }
             }
-            .modifier(RecordingAccessory(
-                isEnabled: hasRecordingSession && !isRecordingExpanded,
-                model: recorder,
-                onExpand: { withAnimation(.snappy) { isRecordingExpanded = true } },
-                onStop: requestStop
-            ))
+            .toolbar(.hidden, for: .tabBar)
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                if !isRecordingExpanded && (!isFloatingButtonHidden || hasRecordingSession) {
+                    bottomDock
+                }
+            }
+            .accessibilityHidden(isRecordingExpanded)
+            .allowsHitTesting(!isRecordingExpanded)
 
             if isRecordingExpanded {
                 RecordView(
                     model: recorder,
-                    onCollapse: { withAnimation(.snappy) { isRecordingExpanded = false } },
+                    onCollapse: { isRecordingExpanded = false },
                     onStop: requestStop,
-                    onStart: startRecording
+                    onStart: startRecording,
+                    onPause: requestPause,
+                    isStartingRecording: isStartingRecording,
+                    areControlsBusy: isStoppingRecording || pauseGate.isRunning
                 )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    bottomDock
+                }
+                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
                 .zIndex(2)
-            }
-        }
-        .overlay {
-            if !isFloatingButtonHidden && !hasRecordingSession && !isRecordingExpanded && !isMeetingNamingPresented {
-                FloatingRecordButton(action: startRecording)
-                    .disabled(!recorder.canStartRecording || isStoppingRecording)
             }
         }
         .animation(reduceMotion ? nil : .spring(response: 0.4, dampingFraction: 0.8), value: isRecordingExpanded)
@@ -220,26 +226,67 @@ private struct ReadyView: View {
         }
         .onChange(of: recorder.phase) { oldPhase, newPhase in
             if newPhase == .idle && oldPhase == .stopping {
-                withAnimation(.snappy) { isRecordingExpanded = false }
+                isRecordingExpanded = false
                 Task { await library.reload() }
             }
         }
         .onChange(of: recorder.lastArchivedMeeting) { _, archived in
             guard let archived else { return }
-            withAnimation(.snappy) { isRecordingExpanded = false }
+            isRecordingExpanded = false
             presentMeetingNaming(archived)
             Task { await library.reload() }
+        }
+    }
+
+    private var bottomDock: some View {
+        VStack(spacing: 8) {
+            if hasRecordingSession && !isRecordingExpanded {
+                RecordingMiniBar(
+                    model: recorder,
+                    onExpand: { isRecordingExpanded = true },
+                    onStop: requestStop,
+                    onPause: requestPause,
+                    areControlsBusy: isStoppingRecording || pauseGate.isRunning
+                )
+            }
+            HStack(spacing: 12) {
+                RecordingDockTabs(selection: Binding(
+                    get: { selectedTab },
+                    set: {
+                        selectedTab = $0
+                        isRecordingExpanded = false
+                    }
+                ))
+                    .frame(height: 56)
+                if (hasRecordingSession || !isFloatingButtonHidden) && !isMeetingNamingPresented {
+                    FloatingRecordButton(hasRecordingSession: hasRecordingSession, isExpanded: isRecordingExpanded) {
+                        if hasRecordingSession { isRecordingExpanded.toggle() }
+                        else { startRecording() }
+                    }
+                    .disabled(!hasRecordingSession && (!recorder.canStartRecording || isStoppingRecording))
+                }
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+    }
+
+    private func requestPause() {
+        guard recorder.isActive, !isStoppingRecording, pauseGate.begin() else { return }
+        Task {
+            defer { pauseGate.finish() }
+            await recorder.togglePause()
         }
     }
 
     private func startRecording() {
         // Permission and startup both suspend before the model necessarily becomes busy.
         // Lock the root entry synchronously so a second tap cannot toggle the new session off.
-        guard recorder.canStartRecording, !isStartingRecording, !isStoppingRecording else { return }
-        isStartingRecording = true
+        guard recorder.canStartRecording, !isStoppingRecording, startGate.begin() else { return }
         isRecordingExpanded = true
         Task {
-            defer { isStartingRecording = false }
+            defer { startGate.finish() }
             await recorder.onAppear()
             guard recorder.canStartRecording else { return }
             await recorder.toggleRecording()
@@ -247,10 +294,9 @@ private struct ReadyView: View {
     }
 
     private func requestStop() {
-        guard recorder.isActive, !isStoppingRecording else { return }
-        isStoppingRecording = true
+        guard recorder.isActive, !pauseGate.isRunning, stopGate.begin() else { return }
         Task {
-            defer { isStoppingRecording = false }
+            defer { stopGate.finish() }
             // Capture must stop regardless of whether the naming alert is completed.
             guard recorder.isActive else { return }
             await recorder.toggleRecording()
@@ -287,34 +333,12 @@ private struct ReadyView: View {
     }
 }
 
-private struct RecordingAccessory: ViewModifier {
-    let isEnabled: Bool
-    let model: RecorderModel
-    let onExpand: () -> Void
-    let onStop: () -> Void
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 26.1, *) {
-            content.tabViewBottomAccessory(isEnabled: isEnabled) {
-                RecordingMiniBar(model: model, onExpand: onExpand, onStop: onStop)
-            }
-        } else {
-            content.overlay(alignment: .bottom) {
-                if isEnabled {
-                    RecordingMiniBar(model: model, onExpand: onExpand, onStop: onStop)
-                        .padding(.horizontal, 12)
-                        .padding(.bottom, FloatingRecordButtonMetrics.bottomPadding)
-                }
-            }
-        }
-    }
-}
-
 private struct RecordingMiniBar: View {
     let model: RecorderModel
     let onExpand: () -> Void
     let onStop: () -> Void
+    let onPause: () -> Void
+    let areControlsBusy: Bool
 
     private var statusLabel: String {
         model.stateLabel
@@ -347,6 +371,10 @@ private struct RecordingMiniBar: View {
             .accessibilityValue("\(statusLabel), \(Format.clock(model.elapsed))")
             .accessibilityIdentifier("recordingMiniBar")
 
+            PauseButton(isPaused: model.phase == .paused, diameter: 44, action: onPause)
+                .disabled(!model.isActive || areControlsBusy)
+                .accessibilityIdentifier("miniPauseButton")
+
             Button(action: onStop) {
                 Image(systemName: "stop.fill")
                     .font(.caption.weight(.bold))
@@ -356,7 +384,7 @@ private struct RecordingMiniBar: View {
                     .frame(width: 44, height: 44)
                     .contentShape(Rectangle())
             }
-            .disabled(!model.isActive)
+            .disabled(!model.isActive || areControlsBusy)
             .accessibilityLabel("Stop recording")
             .accessibilityIdentifier("miniStopButton")
         }
@@ -372,6 +400,52 @@ private enum AppTab: Hashable {
     case home
     case meetings
     case settings
+}
+
+/// A native tab bar shares the bottom row with the separate recording action.
+private struct RecordingDockTabs: UIViewRepresentable {
+    @Binding var selection: AppTab
+    private let tabs: [AppTab] = [.home, .meetings, .settings]
+
+    func makeCoordinator() -> Coordinator { Coordinator(selection: $selection) }
+
+    func makeUIView(context: Context) -> UITabBar {
+        let bar = DockTabBar()
+        let appearance = UITabBarAppearance()
+        appearance.configureWithTransparentBackground()
+        bar.standardAppearance = appearance
+        bar.scrollEdgeAppearance = appearance
+        bar.delegate = context.coordinator
+        return bar
+    }
+
+    func updateUIView(_ bar: UITabBar, context: Context) {
+        context.coordinator.selection = $selection
+        let titles = ["Home", "Meetings", "Settings"].map { LocalizationManager.shared.text($0) }
+        if bar.items?.map(\.title) != titles.map(Optional.some) {
+            bar.items = zip(titles, ["house", "list.bullet", "gearshape"]).enumerated().map { index, item in
+                UITabBarItem(title: item.0, image: UIImage(systemName: item.1), tag: index)
+            }
+        }
+        bar.tintColor = UIColor(AppColors.controlTint)
+        bar.selectedItem = bar.items?[tabs.firstIndex(of: selection) ?? 0]
+    }
+
+    final class Coordinator: NSObject, UITabBarDelegate {
+        var selection: Binding<AppTab>
+        init(selection: Binding<AppTab>) { self.selection = selection }
+
+        func tabBar(_ tabBar: UITabBar, didSelect item: UITabBarItem) {
+            let tabs: [AppTab] = [.home, .meetings, .settings]
+            guard tabs.indices.contains(item.tag) else { return }
+            selection.wrappedValue = tabs[item.tag]
+        }
+    }
+
+    private final class DockTabBar: UITabBar {
+        // SwiftUI already places this row above the home-indicator safe area.
+        override var safeAreaInsets: UIEdgeInsets { .zero }
+    }
 }
 
 @MainActor

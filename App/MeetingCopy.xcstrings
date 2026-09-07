@@ -1,6 +1,7 @@
 {
   "sourceLanguage" : "en",
   "strings" : {
+    "Release to submit" : { "extractionState" : "manual", "localizations" : { "en" : { "stringUnit" : { "state" : "translated", "value" : "Release to submit" } }, "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "松开以提交" } } } },
     "Review compatible copy" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "确认兼容副本" } } } },
     "Send compatible copy" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "发送兼容副本" } } } },
     "Cancel copy" : { "extractionState" : "manual", "localizations" : { "zh-Hans" : { "stringUnit" : { "state" : "translated", "value" : "取消复制" } } } },

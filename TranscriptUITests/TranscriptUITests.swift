@@ -779,7 +779,7 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertEqual(description.label, chinese)
     }
 
-    func testFloatingPositionSurvivesTabsRelaunchRotationAndReset() {
+    func testDockPositionSurvivesTabsRelaunchRotationAndLegacyReset() {
         XCUIDevice.shared.orientation = .portrait
         defer { XCUIDevice.shared.orientation = .portrait }
         let app = isolatedApp()
@@ -796,8 +796,8 @@ final class TranscriptUITests: XCTestCase {
             thenDragTo: app.coordinate(withNormalizedOffset: CGVector(dx: 0.28, dy: 0.42))
         )
         let moved = settledFrame(of: record)
-        XCTAssertGreaterThan(abs(initial.midX - moved.midX), 30)
-        XCTAssertGreaterThan(abs(initial.midY - moved.midY), 30)
+        XCTAssertEqual(initial.midX, moved.midX, accuracy: 3)
+        XCTAssertEqual(initial.midY, moved.midY, accuracy: 3)
         XCTAssertFalse(app.buttons["collapseRecordingButton"].exists)
         XCTAssertFalse(app.buttons["recordingMiniBar"].exists)
         app.tabBars.buttons["Meetings"].tap()
@@ -814,7 +814,7 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertTrue(app.windows.firstMatch.frame.contains(record.frame))
         XCTAssertFalse(record.frame.intersects(app.tabBars.firstMatch.frame))
         XCTAssertFalse(app.buttons["collapseRecordingButton"].exists)
-        attachScreenshot(of: app, name: "floating-landscape-bounds")
+        attachScreenshot(of: app, name: "dock-landscape-bounds")
         XCUIDevice.shared.orientation = .portrait
         waitForWindow(in: app, landscape: false)
         XCTAssertEqual(record.frame.midX, moved.midX, accuracy: 3)
@@ -829,7 +829,7 @@ final class TranscriptUITests: XCTestCase {
         XCTAssertTrue(record.waitForExistence(timeout: 5))
         XCTAssertEqual(record.frame.midX, initial.midX, accuracy: 3)
         XCTAssertEqual(record.frame.midY, initial.midY, accuracy: 3)
-        attachScreenshot(of: app, name: "floating-reset-persisted")
+        attachScreenshot(of: app, name: "dock-legacy-reset-stable")
     }
 
     private func settledFrame(of element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) -> CGRect {

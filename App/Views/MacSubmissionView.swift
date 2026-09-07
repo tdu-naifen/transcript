@@ -13,8 +13,13 @@ struct MacSubmissionView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
-    @GestureState private var dragTranslation: CGFloat = 0
-    @State private var isEnqueueing = false
+    @Environment(\.accessibilityVoiceOverEnabled) private var voiceOverEnabled
+    @Environment(\.scenePhase) private var scenePhase
+    @GestureState private var gestureActive = false
+    @State private var dragTranslation: CGFloat = 0
+    @State private var dragState = SubmissionDragState()
+    @State private var boundaryFeedback = 0
+    @State private var submissionGate = UIActionGate()
     @State private var didEnqueue = false
     @State private var submissionError: String?
     @State private var legacyPreview: MeetingCopySender.LegacyPreview?
@@ -25,6 +30,8 @@ struct MacSubmissionView: View {
     private var needsScrolling: Bool {
         dynamicTypeSize.isAccessibilitySize || (viewportHeight > 0 && contentHeight > viewportHeight + 1)
     }
+
+    private var isEnqueueing: Bool { submissionGate.isRunning }
 
     private let blue = Color(red: 6 / 255, green: 34 / 255, blue: 158 / 255)
 
@@ -48,8 +55,7 @@ struct MacSubmissionView: View {
                     // including when the surrounding app uses dark appearance.
                     .environment(\.colorScheme, .light)
                     .contentShape(Rectangle())
-                    .offset(y: dragTranslation)
-                    .animation(reduceMotion ? nil : .spring(response: 0.35, dampingFraction: 0.8), value: dragTranslation == 0)
+                    .offset(y: reduceMotion ? 0 : dragTranslation)
                     .simultaneousGesture(submissionDrag(height: geometry.size.height))
                     .accessibilityIdentifier("macSubmissionCard")
 
@@ -57,8 +63,18 @@ struct MacSubmissionView: View {
                     Image(systemName: "arrow.up")
                         .font(.title2.bold())
                         .accessibilityHidden(true)
-                    Text(MacConnectionModel.text(needsScrolling ? "Use Submit to confirm" : "Swipe up to Submit"))
+                    Text(MacConnectionModel.text(
+                        isEnqueueing ? "Checking and saving copy…"
+                            : needsScrolling || voiceOverEnabled ? "Use Submit to confirm"
+                            : dragState.isArmed ? "Release to submit" : "Swipe up to Submit"
+                    ))
                         .font(.headline)
+                    if !needsScrolling && !voiceOverEnabled {
+                        ProgressView(value: max(0, min(1, -dragTranslation / SubmissionMotion.threshold(height: geometry.size.height))))
+                            .tint(.white)
+                            .frame(width: 88)
+                            .accessibilityHidden(true)
+                    }
                     Text(MacConnectionModel.text("Keep Transcript open while sending. Interrupted copies stay queued for explicit retry."))
                         .font(.footnote)
                         .multilineTextAlignment(.center)
@@ -71,6 +87,20 @@ struct MacSubmissionView: View {
         .background(blue.ignoresSafeArea())
         .toolbar(.hidden, for: .navigationBar, .tabBar)
         .interactiveDismissDisabled(isEnqueueing)
+        .sensoryFeedback(.selection, trigger: boundaryFeedback)
+        .sensoryFeedback(.success, trigger: didEnqueue)
+        .onChange(of: gestureActive) { _, active in
+            if !active && dragState.isTracking { cancelDrag() }
+        }
+        .onChange(of: scenePhase) { _, phase in
+            if phase != .active { cancelDrag() }
+        }
+        .onChange(of: needsScrolling) { _, scrolls in
+            if scrolls { cancelDrag() }
+        }
+        .onChange(of: voiceOverEnabled) { _, enabled in
+            if enabled { cancelDrag() }
+        }
         .alert(MacConnectionModel.text("Review compatible copy"), isPresented: $showingLegacyPreview) {
             if let preview = legacyPreview {
                 Button(MacConnectionModel.text("Send compatible copy")) {
@@ -87,7 +117,11 @@ struct MacSubmissionView: View {
             Text(MacConnectionModel.text("Only transcript identifiers will change in the Mac copy. Your original identifiers, text, times, source, revision and audio on iPhone will not change. Nothing has been queued or sent.")
                  + "\n" + MacConnectionModel.text("Identifiers to convert") + ": \(legacyPreview?.identifierCount ?? 0)")
         }
-        .onDisappear { legacyPreview?.cancel() }
+        .onDisappear {
+            legacyPreview?.cancel()
+            dragState.cancel()
+            dragTranslation = 0
+        }
     }
 
     private var card: some View {
@@ -189,23 +223,56 @@ struct MacSubmissionView: View {
     }
 
     private func submissionDrag(height: CGFloat) -> some Gesture {
-        DragGesture(minimumDistance: 20)
-            .updating($dragTranslation) { value, translation, _ in
-                guard !needsScrolling, blockReason == nil, !isEnqueueing, !didEnqueue,
-                      abs(value.translation.height) > abs(value.translation.width) else { return }
-                translation = min(0, value.translation.height)
+        DragGesture(minimumDistance: 12)
+            .updating($gestureActive) { _, active, transaction in
+                transaction.animation = nil
+                active = true
+            }
+            .onChanged { value in
+                guard canDrag else {
+                    cancelDrag()
+                    return
+                }
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) {
+                    dragTranslation = SubmissionMotion.offset(translation: value.translation)
+                    if dragState.update(translation: value.translation, height: height) {
+                        boundaryFeedback += 1
+                    }
+                }
             }
             .onEnded { value in
-                guard !needsScrolling,
-                      Self.shouldSubmit(translation: value.translation, availableHeight: height) else { return }
-                submit()
+                let commits = canDrag && dragState.end(translation: value.translation, height: height)
+                dragState.cancel()
+                settle(to: commits ? dragTranslation - 36 : 0, velocity: value.velocity.height)
+                if commits { submit() }
             }
+    }
+
+    private var canDrag: Bool {
+        !needsScrolling && !voiceOverEnabled && scenePhase == .active
+            && blockReason == nil && !isEnqueueing && !didEnqueue && !showingLegacyPreview
+    }
+
+    private func cancelDrag() {
+        dragState.cancel()
+        settle(to: 0, velocity: 0)
+    }
+
+    private func settle(to offset: CGFloat, velocity: CGFloat) {
+        let duration = SubmissionMotion.settleDuration(distance: offset - dragTranslation, velocity: velocity)
+        let initialVelocity = SubmissionMotion.initialVelocity(distance: offset - dragTranslation, velocity: velocity)
+        withAnimation(reduceMotion ? nil : .interpolatingSpring(
+            duration: duration, bounce: 0, initialVelocity: initialVelocity
+        )) {
+            dragTranslation = offset
+        }
     }
 
     /// Use actual distance, never predicted momentum: a short flick cannot submit.
     static func shouldSubmit(translation: CGSize, availableHeight: CGFloat) -> Bool {
-        let threshold = min(180, max(100, availableHeight * 0.22))
-        return -translation.height >= threshold && -translation.height > abs(translation.width)
+        SubmissionMotion.isArmed(translation: translation, height: availableHeight)
     }
 
     private func submit() {
@@ -217,16 +284,17 @@ struct MacSubmissionView: View {
             preview?.cancel()
             return
         }
-        isEnqueueing = true
+        guard submissionGate.begin() else { return }
         submissionError = nil
         Task { @MainActor in
             do {
                 try await onEnqueue()
                 didEnqueue = true
-                isEnqueueing = false
+                submissionGate.finish()
                 dismiss()
             } catch {
-                isEnqueueing = false
+                submissionGate.finish()
+                settle(to: 0, velocity: 0)
                 preview?.cancel()
                 let problem = MeetingCopyProblem(error)
                 if let requested = problem.legacyPreview {

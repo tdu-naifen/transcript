@@ -6,8 +6,10 @@ struct RecordView: View {
     let onCollapse: () -> Void
     let onStop: () -> Void
     var onStart: (() -> Void)? = nil
+    var onPause: (() -> Void)? = nil
     var isStartingRecording = false
-    @State private var isStarting = false
+    var areControlsBusy = false
+    @State private var actionGate = UIActionGate()
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -164,15 +166,30 @@ struct RecordView: View {
     }
 
     private var recordingControls: some View {
-        HStack(spacing: 24) {
+        HStack(spacing: 16) {
             PauseButton(isPaused: model.phase == .paused) {
-                Task { await model.togglePause() }
+                if let onPause { onPause() }
+                else {
+                    guard actionGate.begin() else { return }
+                    Task {
+                        defer { actionGate.finish() }
+                        await model.togglePause()
+                    }
+                }
             }
-            .disabled(!model.isActive)
+            .disabled(!model.isActive || controlsBusy)
             .accessibilityIdentifier("recordingPauseButton")
-            RecordButton(isRecording: model.isActive, isBusy: model.isBusy) {
+            RecordButton(isRecording: model.isActive, isBusy: model.isBusy || controlsBusy) {
                 if model.isActive { onStop() }
-                else { Task { await model.toggleRecording() } }
+                else if let onStart { onStart() }
+                else {
+                    guard model.canStartRecording, actionGate.begin() else { return }
+                    Task {
+                        defer { actionGate.finish() }
+                        guard model.canStartRecording else { return }
+                        await model.toggleRecording()
+                    }
+                }
             }
             .disabled(!model.isActive && !model.canStartRecording)
             .accessibilityIdentifier("recordingPrimaryButton")
@@ -183,6 +200,10 @@ struct RecordView: View {
         .overlay(Capsule().strokeBorder(.primary.opacity(0.06), lineWidth: 1))
         .shadow(color: .black.opacity(0.1), radius: 16, y: 7)
         .padding(.bottom, 6)
+    }
+
+    private var controlsBusy: Bool {
+        areControlsBusy || isStartingRecording || actionGate.isRunning
     }
 
     private var recordingStatusLabel: String {
@@ -201,7 +222,12 @@ struct RecordView: View {
 
 extension RecordView {
     init(model: RecorderModel) {
-        self.init(model: model, onCollapse: {}, onStop: { Task { await model.toggleRecording() } })
+        self.init(model: model, onCollapse: {}, onStop: {
+            Task {
+                guard model.isActive else { return }
+                await model.toggleRecording()
+            }
+        })
     }
 }
 
