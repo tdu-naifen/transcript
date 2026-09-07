@@ -355,6 +355,59 @@ extension AppDatabase {
                 table.column("updatedAt", .datetime).notNull()
             }
         }
+        migrator.registerMigration("v9_local_immutable_meeting_copy_outbox") { db in
+            try db.create(table: "meetingCopyOutbox") { table in
+                table.primaryKey("id", .text)
+                table.column("meetingId", .text).notNull().references("meeting", onDelete: .cascade)
+                table.column("peerKey", .blob).notNull()
+                table.column("manifest", .blob).notNull()
+                table.column("transcript", .blob).notNull()
+                table.column("snapshot", .blob).notNull()
+                table.column("sourceIdentity", .blob).notNull()
+                table.column("state", .text).notNull().check { ["queued", "cancelled", "stale", "done"].contains($0) }
+                table.column("error", .text)
+                table.column("receipt", .blob)
+                table.column("createdAt", .datetime).notNull()
+                table.uniqueKey(["meetingId", "peerKey"])
+                table.check(sql: "(state = 'done') = (receipt IS NOT NULL)")
+            }
+            // These invalidate only local frozen exports, not remote objects.
+            try db.execute(sql: """
+                CREATE TRIGGER meeting_copy_source_update
+                AFTER UPDATE OF title, startedAt, durationMs, localeIdentifier, audioFileName,
+                    audioSHA256, audioByteCount, state, localAudioPurgedAt, updatedAt ON meeting BEGIN
+                    UPDATE meetingCopyOutbox SET state = 'stale', error = 'staleSnapshot'
+                    WHERE meetingId = new.id AND state IN ('queued', 'cancelled');
+                END;
+                CREATE TRIGGER meeting_copy_utterance_insert AFTER INSERT ON utterance BEGIN
+                    UPDATE meetingCopyOutbox SET state = 'stale', error = 'staleSnapshot'
+                    WHERE meetingId = new.meetingId AND state IN ('queued', 'cancelled');
+                END;
+                CREATE TRIGGER meeting_copy_utterance_update AFTER UPDATE ON utterance BEGIN
+                    UPDATE meetingCopyOutbox SET state = 'stale', error = 'staleSnapshot'
+                    WHERE meetingId IN (old.meetingId, new.meetingId) AND state IN ('queued', 'cancelled');
+                END;
+                CREATE TRIGGER meeting_copy_utterance_delete AFTER DELETE ON utterance BEGIN
+                    UPDATE meetingCopyOutbox SET state = 'stale', error = 'staleSnapshot'
+                    WHERE meetingId = old.meetingId AND state IN ('queued', 'cancelled');
+                END;
+                """)
+        }
+        migrator.registerMigration("v10_local_speaker_analysis_assignment_provenance") { db in
+            try db.create(table: "speakerAnalysisAutomaticAssignment") { table in
+                table.primaryKey("utteranceId", .text).references("utterance", onDelete: .cascade)
+                table.column("speakerId", .text).notNull()
+                table.column("utteranceRevision", .integer).notNull()
+            }
+            // No legacy backfill: only the publishing transaction can prove its own write.
+            try db.execute(sql: """
+                CREATE TRIGGER speaker_analysis_assignment_update
+                AFTER UPDATE ON utterance BEGIN
+                    DELETE FROM speakerAnalysisAutomaticAssignment
+                    WHERE utteranceId IN (old.id, new.id);
+                END;
+                """)
+        }
         return migrator
     }
 }
