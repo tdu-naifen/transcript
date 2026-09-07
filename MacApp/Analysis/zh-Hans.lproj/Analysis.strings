@@ -1,4 +1,6 @@
 "LLM Analysis" = "大模型分析";
+"Download cancelled. Retry in Settings." = "下载已取消，可在设置中重试。";
+"No transcript in this scope. Open a meeting, choose Process, then use the completed transcript in the library." = "此范围内暂无转写。请打开会议并选择“处理”，再使用资料库中已完成的转写。";
 "On-device inference · Private text stays on this Mac" = "设备端推理 · 私密文本保留在此 Mac 上";
 "Clear session" = "清除会话";
 "Check again" = "重新检查";

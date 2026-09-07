@@ -74,8 +74,17 @@ struct MacFrozenModel: Codable, Equatable, Sendable {
     }
 }
 
+struct MacProcessingImportProvenance: Codable, Equatable, Sendable {
+    let peerID: String
+    let operationID: String
+}
+
 struct MacProcessingJob: Codable, Identifiable, Sendable {
+    enum Destination: String, Codable, Sendable {
+        case localVersion, library
+    }
     enum State: String, Codable, Sendable {
+        case queued, waitingForConfiguration
         case preparing, running, cancelling, needsRetry, cancelled, failed
         case readyForReview, savedLocally, publishing, published, stale
         var isInterrupted: Bool {
@@ -97,6 +106,13 @@ struct MacProcessingJob: Codable, Identifiable, Sendable {
     var previous: MacTranscriptSnapshot?
     var proposal: MacTranscriptSnapshot?
     var publishedAt: Date?
+    var inputRevision: String?
+    var configurationID: String?
+    var automaticImport: MacProcessingImportProvenance?
+    var destination: Destination?
+    var sourceTranscriptRevision: String?
+    var processingInput: AutomaticSyncRepository.ProcessingInput?
+    var outputTranscriptRevision: String?
     // This pipeline produces evidence only; it never enrolls global voiceprints.
     var enrollsGlobalVoiceprints = false
 }
@@ -120,7 +136,28 @@ struct MacProcessingStore: Sendable {
         try encoder.encode(job).write(to: directory.appendingPathComponent("job.json"), options: .atomic)
     }
 
-    func load() throws -> [MacProcessingJob] {
+    func remove(_ job: MacProcessingJob) throws {
+        let directory = folder(job.id)
+        guard FileManager.default.fileExists(atPath: directory.path) else { return }
+        for url in [root, directory] {
+            let values = try url.resourceValues(forKeys: [.isSymbolicLinkKey, .isDirectoryKey])
+            guard values.isDirectory == true, values.isSymbolicLink != true else {
+                throw MacProcessingError.invalidManifest
+            }
+        }
+        let manifest = directory.appendingPathComponent("job.json")
+        let values = try manifest.resourceValues(forKeys: [.isSymbolicLinkKey, .isRegularFileKey])
+        guard values.isRegularFile == true, values.isSymbolicLink != true else {
+            throw MacProcessingError.invalidManifest
+        }
+        let owner = try JSONDecoder().decode(MacProcessingJob.self, from: Data(contentsOf: manifest))
+        guard owner.id == job.id, owner.meetingID == job.meetingID else {
+            throw MacProcessingError.invalidManifest
+        }
+        try FileManager.default.removeItem(at: directory)
+    }
+
+    func load(existingMeetingIDs: Set<String>? = nil) throws -> [MacProcessingJob] {
         var jobs: [MacProcessingJob] = []
         for directory in try FileManager.default.contentsOfDirectory(
             at: root, includingPropertiesForKeys: [.isSymbolicLinkKey, .isDirectoryKey]) {
@@ -133,9 +170,16 @@ struct MacProcessingStore: Sendable {
             guard [1, 2].contains(job.version), directory.lastPathComponent == job.id.uuidString else {
                 throw MacProcessingError.invalidManifest
             }
-            if job.state.isInterrupted {
+            if let existingMeetingIDs, !existingMeetingIDs.contains(job.meetingID) {
+                try remove(job)
+                continue
+            }
+            if job.state.isInterrupted && !(job.state == .publishing && job.destination == .library) {
                 job.state = .needsRetry
-                job.error = processingText("Processing was interrupted. Retry creates a new local version; it never replaces the library transcript.")
+                job.stage = "Processing interrupted"
+                job.error = processingText(job.destination == .library
+                    ? "Processing was interrupted. Retry checks the current input before publishing; original audio is unchanged."
+                    : "Processing was interrupted. Retry creates a new local version; it never replaces the library transcript.")
                 try save(job)
             }
             if job.version == 1 {
@@ -262,6 +306,12 @@ actor MacProcessingWorker {
         let meetingID = job.meetingID
         var job = job
         try Task.checkCancellation()
+        if job.destination == .library {
+            let input = try await AutomaticSyncRepository(context.database)
+                .captureProcessingInput(meetingID: meetingID)
+            job.processingInput = input
+            job.sourceTranscriptRevision = input.transcriptRevision
+        }
         let snapshot = try await context.database.reader.read { db in
             try MacTranscriptSnapshot.read(db, meetingID: meetingID)
         }
@@ -273,6 +323,9 @@ actor MacProcessingWorker {
             throw MacProcessingError.missingAudio
         }
         let sourceHash = try IncrementalSHA256.hashFile(at: source)
+        if let revision = job.inputRevision, revision.count == 64, revision != sourceHash.sha256 {
+            throw MacProcessingError.audioChanged
+        }
         if let expected = snapshot.meeting.audioSHA256, expected != sourceHash.sha256 {
             throw MacProcessingError.audioChanged
         }
@@ -324,6 +377,16 @@ actor MacProcessingWorker {
                                            deviceID: context.deviceID, models: job.models,
                                            language: job.language, progress: progress)
         try Task.checkCancellation()
+        let current = try await context.database.reader.read { db in
+            guard let meeting = try Meeting.fetchOne(db, key: job.meetingID) else {
+                throw MacProcessingError.missingMeeting
+            }
+            return meeting
+        }
+        guard current.audioFileName == previous.meeting.audioFileName,
+              current.audioSHA256 == nil || current.audioSHA256 == job.audioSHA256 else {
+            throw MacProcessingError.audioChanged
+        }
         for model in job.models {
             guard try Self.hashModel(at: URL(fileURLWithPath: model.path)) == model.localContentSHA256 else {
                 throw MacProcessingError.modelChanged

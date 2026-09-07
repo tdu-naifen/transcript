@@ -22,12 +22,13 @@ final class MacAppUITests: XCTestCase {
         app.typeKey(.upArrow, modifierFlags: [])
         XCTAssertEqual(app.staticTexts["macMeetingTitle"].value as? String, "Product design weekly")
 
-        app.typeKey("2", modifierFlags: .command)
-        XCTAssertTrue(app.staticTexts["macProcessingTitle"].waitForExistence(timeout: 5))
-        XCTAssertFalse(app.buttons["macCreateASRVersion"].isEnabled)
-        app.typeKey("3", modifierFlags: .command)
+        XCTAssertFalse(app.buttons["macNav-processing"].exists)
+        XCTAssertFalse(app.buttons["macNav-connection"].exists)
+        XCTAssertFalse(app.buttons["macMeetingProcess"].exists)
+        app.buttons["macConnectionToolbar"].click()
         XCTAssertTrue(app.buttons["macStartDiscovery"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["macBonjourStatus"].value as? String, "Connect your iPhone")
+        app.buttons["macConnectionDone"].click()
 
         app.buttons["macSettingsButton"].click()
         let settingsWindow = app.windows["Settings"]
@@ -62,6 +63,13 @@ final class MacAppUITests: XCTestCase {
         app.buttons["macSampleToggle"].click()
         XCTAssertTrue(app.staticTexts["macMeetingTitle"].waitForExistence(timeout: 5))
         XCTAssertEqual(app.staticTexts["macMeetingTitle"].value as? String, "产品设计周会")
+        app.typeKey(",", modifierFlags: .command)
+        let settings = app.windows["设置"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.radioButtons["转写模型"].click()
+        XCTAssertTrue(settings.staticTexts["macProcessingTitle"].waitForExistence(timeout: 5))
+        XCTAssertEqual(settings.staticTexts["macProcessingTitle"].value as? String, "转写模型")
+        settings.buttons[XCUIIdentifierCloseWindow].click()
         let screenshot = XCTAttachment(screenshot: app.windows.firstMatch.screenshot())
         screenshot.name = "Transcript Mac - Chinese dark sample"
         screenshot.lifetime = .keepAlways

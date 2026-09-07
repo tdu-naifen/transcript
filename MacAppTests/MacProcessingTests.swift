@@ -6,7 +6,8 @@ import XCTest
 
 enum MacProcessingTestFixtures {
     static func root() throws -> URL {
-        let root = FileManager.default.temporaryDirectory
+        let root = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TRANSCRIPT_TEST_ROOT"]
+                       ?? FileManager.default.temporaryDirectory.resolvingSymlinksInPath().path)
             .appendingPathComponent(".mac-processing-tests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
         return root
@@ -30,9 +31,12 @@ enum MacProcessingTestFixtures {
         let audio = root.appendingPathComponent("Audio")
         try FileManager.default.createDirectory(at: audio, withIntermediateDirectories: true)
         let files = AudioFileStore(directory: audio)
+        let bytes = Data("synthetic input for fake runner".utf8)
+        try bytes.write(to: files.url(forFileName: "fixture.m4a"))
+        let digest = try IncrementalSHA256.hashFile(at: files.url(forFileName: "fixture.m4a"))
         let meeting = Meeting(title: "Fixture meeting", startedAt: Date(), durationMs: 1_000,
-                              audioFileName: "fixture.m4a", state: .recorded, originDeviceId: "iphone")
-        try Data("synthetic input for fake runner".utf8).write(to: files.url(forFileName: "fixture.m4a"))
+                              audioFileName: "fixture.m4a", audioSHA256: digest.sha256,
+                              audioByteCount: digest.byteCount, state: .recorded, originDeviceId: "iphone")
         try await database.writer.write { db in
             try meeting.insert(db)
             for index in 0..<speakerCount {
@@ -58,8 +62,12 @@ enum MacProcessingTestFixtures {
 private actor FixtureASRRunner: MacProcessingRunning {
     enum Outcome: Sendable { case success, failure, waitForCancellation, empty }
     let outcome: Outcome
+    let beforeResult: (@Sendable () async throws -> Void)?
     private(set) var calls = 0
-    init(_ outcome: Outcome = .success) { self.outcome = outcome }
+    init(_ outcome: Outcome = .success, beforeResult: (@Sendable () async throws -> Void)? = nil) {
+        self.outcome = outcome
+        self.beforeResult = beforeResult
+    }
 
     func run(meetingID: String, audioURL: URL, deviceID: String, models: [MacFrozenModel], language: String,
              progress: @escaping @Sendable (MeetingReprocessingProgress) async -> Void) async throws -> [ASRSegment] {
@@ -73,13 +81,479 @@ private actor FixtureASRRunner: MacProcessingRunning {
         case .empty: return []
         case .success: break
         }
+        try await beforeResult?()
         return [ASRSegment(id: "result", text: "New ASR text", startMs: 0, endMs: 800,
                            localeIdentifier: "en-US", isFinal: true)]
     }
 }
 
+private actor DeletionDrainRunner: MacProcessingRunning {
+    private(set) var started = false
+    private(set) var cancellationObserved = false
+    private var drain: CheckedContinuation<Void, Never>?
+    private var released = false
+
+    func release() {
+        released = true
+        drain?.resume()
+        drain = nil
+    }
+
+    func run(meetingID: String, audioURL: URL, deviceID: String, models: [MacFrozenModel], language: String,
+             progress: @escaping @Sendable (MeetingReprocessingProgress) async -> Void) async throws -> [ASRSegment] {
+        started = true
+        do { try await Task.sleep(for: .seconds(60)) } catch { cancellationObserved = true }
+        if !released { await withCheckedContinuation { drain = $0 } }
+        await progress(.init(stage: .transcribing, fractionCompleted: 0.9))
+        return [ASRSegment(id: "late-result", text: "Must not survive deletion", startMs: 0, endMs: 800,
+                           localeIdentifier: "en-US", isFinal: true)]
+    }
+}
+
+@MainActor
+private extension MacProcessingModel {
+    func enqueueImportedMeeting(meetingID: String, inputRevision: String) async {
+        await enqueueImportedMeeting(
+            meetingID: meetingID, inputRevision: inputRevision,
+            provenance: .init(peerID: "authorized-fixture-peer", operationID: "authorized-fixture-import"))
+    }
+}
+
 @MainActor
 final class MacProcessingTests: XCTestCase {
+    // Hypothesis: deletion removes only owned job artifacts, including after an offline restart.
+    func testStartupRemovesDeletedMeetingJobFoldersButPreservesOtherOwners() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root, speakerCount: 1)
+        let other = Meeting(title: "Keep", startedAt: Date(), originDeviceId: "mac")
+        try await context.database.writer.write { db in try other.insert(db) }
+        let store = try MacProcessingStore(libraryDirectory: root)
+        let snapshot = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
+        let deleted = MacProcessingJob(
+            id: UUID(), meetingID: meeting.id, createdAt: Date(), state: .readyForReview,
+            stage: "Ready", progress: 1, language: "auto", models: [], previous: snapshot, proposal: snapshot)
+        let retained = MacProcessingJob(
+            id: UUID(), meetingID: other.id, createdAt: Date(), state: .savedLocally,
+            stage: "Keep", progress: 1, language: "auto", models: [])
+        try store.save(deleted)
+        try store.save(retained)
+        try Data("private frozen audio".utf8).write(to: store.audio(deleted.id))
+        try Data("private proposal".utf8).write(to: store.folder(deleted.id).appendingPathComponent("proposal.json"))
+        let retainedBytes = try Data(contentsOf: store.folder(retained.id).appendingPathComponent("job.json"))
+        let bundle = try MacProcessingTestFixtures.asr(in: root)
+        let modelHash = try MacProcessingWorker.hashModel(at: bundle.directory)
+        try await MeetingRepository(context.database).delete(id: meeting.id)
+
+        let reopened = MacProcessingModel(runner: FixtureASRRunner())
+        reopened.configure(context: context)
+        XCTAssertTrue(reopened.isConfigured)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.folder(deleted.id).path))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.audio(deleted.id).path))
+        XCTAssertEqual(reopened.jobs.map(\.id), [retained.id])
+        XCTAssertEqual(try Data(contentsOf: store.folder(retained.id).appendingPathComponent("job.json")), retainedBytes)
+        XCTAssertEqual(try MacProcessingWorker.hashModel(at: bundle.directory), modelHash)
+        let speakerCount = try await context.database.reader.read { db in try Speaker.fetchCount(db) }
+        XCTAssertEqual(speakerCount, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: try context.audioFiles.url(forFileName: "fixture.m4a").path))
+        let again = MacProcessingModel(runner: FixtureASRRunner())
+        again.configure(context: context)
+        XCTAssertEqual(again.jobs.map(\.id), [retained.id])
+    }
+
+    // Hypothesis: a committed remote tombstone cancels work, but deletion waits for the runner to drain.
+    func testRemoteDeletionDrainsActiveRunnerAndRejectsLateProgressAndResults() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
+        let runner = DeletionDrainRunner()
+        let model = MacProcessingModel(runner: runner)
+        model.configure(context: context)
+        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        model.start(meetingID: meeting.id)
+        for _ in 0..<400 {
+            if await runner.started { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let started = await runner.started
+        XCTAssertTrue(started)
+        let jobID = try XCTUnwrap(model.activeJobID)
+        let store = try MacProcessingStore(libraryDirectory: root)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.audio(jobID).path))
+
+        let sourceDB = try AppDatabase.inMemory()
+        let source = AutomaticSyncRepository(sourceDB)
+        try await source.configure(peerID: "mac", enabled: true)
+        try await context.database.writer.write { db in
+            // Ensure observation also handles a populated job while other metadata is changing.
+            try db.execute(sql: "UPDATE meeting SET title = 'Before deletion' WHERE id = ?", arguments: [meeting.id])
+        }
+        try await sourceDB.writer.write { db in try meeting.insert(db) }
+        try await MeetingRepository(sourceDB).delete(id: meeting.id)
+        let tombstones = try await source.pending(peerID: "mac").filter { $0.entity == .meeting && $0.isDelete }
+        XCTAssertFalse(tombstones.isEmpty)
+        let target = AutomaticSyncRepository(context.database)
+        try await target.configure(peerID: "iphone", enabled: true)
+        try await target.apply(tombstones, from: "iphone")
+        for _ in 0..<400 {
+            if await runner.cancellationObserved { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let cancelled = await runner.cancellationObserved
+        XCTAssertTrue(cancelled)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.audio(jobID).path),
+                      "The runner still owns its frozen input until it finishes draining")
+        await runner.release()
+        if !cancelled { model.cancel() }
+        await model.waitForCurrentJob()
+        for _ in 0..<400 where FileManager.default.fileExists(atPath: store.folder(jobID).path) {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.folder(jobID).path))
+        XCTAssertTrue(model.jobs.isEmpty)
+        XCTAssertNil(model.activeJobID)
+        let missing = try await MeetingRepository(context.database).fetch(id: meeting.id)
+        XCTAssertNil(missing)
+        let reopened = MacProcessingModel(runner: FixtureASRRunner())
+        reopened.configure(context: context)
+        XCTAssertTrue(reopened.jobs.isEmpty)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: store.folder(jobID).path))
+    }
+
+    func testOrphanRemovalRejectsMismatchedOwnershipAndSymbolicLinks() throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = try MacProcessingStore(libraryDirectory: root)
+        let job = MacProcessingJob(
+            id: UUID(), meetingID: "deleted", createdAt: Date(), state: .savedLocally,
+            stage: "Keep", progress: 1, language: "auto", models: [])
+        let other = MacProcessingJob(
+            id: job.id, meetingID: "other-meeting", createdAt: Date(), state: .savedLocally,
+            stage: "Keep", progress: 1, language: "auto", models: [])
+        try store.save(other)
+        XCTAssertThrowsError(try store.remove(job))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: store.folder(other.id).path))
+        try store.remove(other)
+
+        let outside = root.appendingPathComponent("not-processing")
+        try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
+        let manifest = outside.appendingPathComponent("job.json")
+        try JSONEncoder().encode(job).write(to: manifest)
+        try FileManager.default.createSymbolicLink(at: store.folder(job.id), withDestinationURL: outside)
+        XCTAssertThrowsError(try store.remove(job))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: manifest.path))
+    }
+
+    // Hypothesis: a committed import is one durable request, not a side effect of rendering or reconnecting.
+    func testImportedMeetingWaitsForConfigurationAndDeduplicatesAcrossRestart() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
+        let model = MacProcessingModel(runner: FixtureASRRunner())
+        model.configure(context: context)
+        let missing = try MacProcessingTestFixtures.asr(in: root)
+        try model.catalog.useManagedASR(missing)
+        try FileManager.default.removeItem(at: missing.directory)
+        await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: "audio-revision")
+        await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: "audio-revision")
+        XCTAssertEqual(model.jobs.count, 1)
+        XCTAssertEqual(model.jobs.first?.state, .waitingForConfiguration)
+        XCTAssertNil(model.activeJobID)
+        let reopened = MacProcessingModel(runner: FixtureASRRunner())
+        reopened.configure(context: context)
+        await reopened.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: "audio-revision")
+        XCTAssertEqual(reopened.jobs.count, 1)
+        XCTAssertEqual(reopened.jobs.first?.state, .waitingForConfiguration)
+        XCTAssertEqual(reopened.jobs.first?.automaticImport?.peerID, "authorized-fixture-peer")
+        reopened.cancel(jobID: try XCTUnwrap(reopened.jobs.first?.id))
+        await reopened.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: "audio-revision")
+        XCTAssertEqual(reopened.jobs.count, 1)
+        XCTAssertEqual(reopened.jobs.first?.state, .cancelled)
+    }
+
+    func testManualProcessWithoutResourcesWaitsWithoutPretendingToRun() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
+        let runner = FixtureASRRunner()
+        let model = MacProcessingModel(runner: runner)
+        model.configure(context: context)
+        let bundle = try MacProcessingTestFixtures.asr(in: root)
+        try model.catalog.useManagedASR(bundle)
+        try FileManager.default.removeItem(at: bundle.directory)
+        model.start(meetingID: meeting.id)
+        model.start(meetingID: meeting.id)
+        XCTAssertEqual(model.jobs.count, 1)
+        XCTAssertEqual(model.jobs.first?.state, .waitingForConfiguration)
+        XCTAssertNil(model.activeJobID)
+        XCTAssertFalse(model.isBusy)
+        let calls = await runner.calls
+        XCTAssertEqual(calls, 0)
+    }
+
+    func testImportedMeetingProcessesOnceAndMetadataDoesNotEnqueueAgain() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
+        let runner = FixtureASRRunner()
+        let model = MacProcessingModel(runner: runner)
+        model.configure(context: context)
+        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: "audio-revision")
+        await model.waitForCurrentJob()
+        try await context.database.writer.write { db in
+            try db.execute(sql: "UPDATE meeting SET title = ? WHERE id = ?", arguments: ["Renamed", meeting.id])
+            try db.execute(sql: "UPDATE utterance SET text = ? WHERE meetingId = ?", arguments: ["Edited", meeting.id])
+        }
+        await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: "audio-revision")
+        await model.waitForCurrentJob()
+        XCTAssertEqual(model.jobs.count, 1)
+        XCTAssertEqual(model.jobs.first?.state, .published)
+        XCTAssertNotNil(model.jobs.first?.outputTranscriptRevision)
+        let calls = await runner.calls
+        XCTAssertEqual(calls, 1)
+        try model.catalog.setLanguage("en-US")
+        await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: "audio-revision")
+        await model.waitForCurrentJob()
+        XCTAssertEqual(model.jobs.count, 1, "Replaying the authorized import is not explicit reprocessing.")
+        model.start(meetingID: meeting.id)
+        await model.waitForCurrentJob()
+        XCTAssertEqual(model.jobs.count, 2)
+    }
+
+    func testWaitingImportResumesAfterSettingsAndFailureDoesNotAutoRetry() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
+        let runner = FixtureASRRunner(.failure)
+        let model = MacProcessingModel(runner: runner)
+        model.configure(context: context)
+        let missing = try MacProcessingTestFixtures.asr(in: root)
+        try model.catalog.useManagedASR(missing)
+        try FileManager.default.removeItem(at: missing.directory)
+        await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: "audio-revision")
+        let id = try XCTUnwrap(model.jobs.first?.id)
+        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        model.resumeQueuedJobs()
+        await model.waitForCurrentJob()
+        XCTAssertEqual(model.jobs.first?.id, id)
+        XCTAssertEqual(model.jobs.first?.state, .failed)
+        await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: "audio-revision")
+        await model.waitForCurrentJob()
+        XCTAssertEqual(model.jobs.count, 1)
+        let calls = await runner.calls
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testLegacyVerifiedCopyDoesNotAuthorizeAutomaticProcessing() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
+        let runner = FixtureASRRunner()
+        let model = MacProcessingModel(runner: runner)
+        model.configure(context: context)
+        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        XCTAssertTrue(model.jobs.isEmpty)
+        let hash = try IncrementalSHA256.hashFile(at: context.audioFiles.url(forFileName: "fixture.m4a")).sha256
+        try await context.database.writer.write { db in
+            try db.execute(sql: "UPDATE meeting SET audioSHA256 = ?, audioVerifiedOnMacAt = ? WHERE id = ?",
+                           arguments: [hash, Date(), meeting.id])
+        }
+        let reopened = MacProcessingModel(runner: runner)
+        reopened.configure(context: context)
+        await reopened.waitForCurrentJob()
+        XCTAssertTrue(reopened.jobs.isEmpty, "A legacy immutable copy receipt grants no automatic processing.")
+        await reopened.enqueueImportedMeeting(
+            meetingID: meeting.id, inputRevision: hash, provenance: .init(peerID: "", operationID: ""))
+        XCTAssertTrue(reopened.jobs.isEmpty)
+        try model.catalog.setLanguage("zh-CN")
+        XCTAssertTrue(model.jobs.isEmpty)
+        let calls = await runner.calls
+        XCTAssertEqual(calls, 0)
+    }
+
+    func testInterruptedImportRequiresExplicitRetryAndRetainsDedupIdentity() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
+        let runner = FixtureASRRunner()
+        let model = MacProcessingModel(runner: runner)
+        model.configure(context: context)
+        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        let store = try MacProcessingStore(libraryDirectory: root)
+        let job = MacProcessingJob(
+            id: UUID(), meetingID: meeting.id, createdAt: Date(), state: .running,
+            stage: "transcribing", progress: 0.5, language: "auto", models: [],
+            inputRevision: "revision", configurationID: model.configurationID)
+        try store.save(job)
+        let reopened = MacProcessingModel(runner: runner)
+        reopened.configure(context: context)
+        await reopened.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: "revision")
+        await reopened.waitForCurrentJob()
+        XCTAssertEqual(reopened.jobs.count, 1)
+        XCTAssertEqual(reopened.jobs.first?.state, .needsRetry)
+        XCTAssertNil(reopened.activeJobID)
+        XCTAssertEqual(try store.load().first?.state, .needsRetry)
+        let calls = await runner.calls
+        XCTAssertEqual(calls, 0)
+    }
+
+    // Hypothesis: publication commits real timed utterances and rejects edits made after input freeze.
+    func testAutomaticPublicationWritesTranscriptAndRetainsNewerEdits() async throws {
+        for editsDuringProcessing in [false, true] {
+            let root = try MacProcessingTestFixtures.root()
+            defer { try? FileManager.default.removeItem(at: root) }
+            let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
+            let runner = FixtureASRRunner(beforeResult: {
+                if editsDuringProcessing {
+                    try await context.database.writer.write { db in
+                        try db.execute(sql: "UPDATE utterance SET text = ? WHERE meetingId = ?",
+                                       arguments: ["Newer user edit", meeting.id])
+                    }
+                }
+            })
+            let model = MacProcessingModel(runner: runner)
+            model.configure(context: context)
+            try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+            await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: try XCTUnwrap(meeting.audioSHA256))
+            await model.waitForCurrentJob()
+            let saved = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
+            XCTAssertEqual(saved.utterances.map(\.text), [editsDuringProcessing ? "Newer user edit" : "New ASR text"])
+            XCTAssertEqual(model.jobs.first?.state, editsDuringProcessing ? .stale : .published)
+            XCTAssertEqual(saved.utterances.first?.startMs, 0)
+            if !editsDuringProcessing { XCTAssertEqual(saved.utterances.first?.endMs, 800) }
+        }
+    }
+
+    func testPublicationRecoveryIsIdempotentAndDoesNotRequireModelsOrRerunASR() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
+        let runner = FixtureASRRunner()
+        let model = MacProcessingModel(runner: runner)
+        model.configure(context: context)
+        let bundle = try MacProcessingTestFixtures.asr(in: root)
+        try model.catalog.useManagedASR(bundle)
+        await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: try XCTUnwrap(meeting.audioSHA256))
+        await model.waitForCurrentJob()
+        var job = try XCTUnwrap(model.jobs.first)
+        XCTAssertEqual(job.state, .published)
+        let output = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
+        job.state = .publishing
+        job.outputTranscriptRevision = nil
+        job.publishedAt = nil
+        try MacProcessingStore(libraryDirectory: root).save(job)
+        try FileManager.default.removeItem(at: bundle.directory)
+        let reopened = MacProcessingModel(runner: runner)
+        reopened.configure(context: context)
+        await reopened.waitForCurrentJob()
+        XCTAssertEqual(reopened.jobs.first?.state, .published)
+        XCTAssertEqual(reopened.jobs.first?.id, job.id)
+        let recovered = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
+        XCTAssertEqual(recovered, output)
+        let calls = await runner.calls
+        XCTAssertEqual(calls, 1)
+    }
+
+    func testAutomaticPublicationCannotOverwriteNewerSpeakerAssignment() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
+        let speaker = Speaker(displayName: "User assigned", anonymousName: "Speaker", originDeviceId: "iphone")
+        let runner = FixtureASRRunner(beforeResult: {
+            try await context.database.writer.write { db in
+                try speaker.insert(db)
+                try MeetingSpeaker(meetingId: meeting.id, speakerId: speaker.id,
+                                   displayIndex: 1, originDeviceId: "iphone").insert(db)
+                try db.execute(sql: "UPDATE utterance SET speakerId = ? WHERE meetingId = ?",
+                               arguments: [speaker.id, meeting.id])
+            }
+        })
+        let model = MacProcessingModel(runner: runner)
+        model.configure(context: context)
+        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: try XCTUnwrap(meeting.audioSHA256))
+        await model.waitForCurrentJob()
+        XCTAssertEqual(model.jobs.first?.state, .stale)
+        let saved = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
+        XCTAssertEqual(saved.utterances.first?.speakerId, speaker.id)
+        XCTAssertEqual(saved.utterances.first?.text, "Original edited text")
+    }
+
+    func testAutomaticPublicationHonorsAudioPurgeAfterInputCapture() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
+        let runner = FixtureASRRunner(beforeResult: {
+            try await context.database.writer.write { db in
+                try db.execute(
+                    sql: "UPDATE meeting SET audioVerifiedOnMacAt = ?, localAudioPurgedAt = ? WHERE id = ?",
+                    arguments: [Date(), Date(), meeting.id]
+                )
+            }
+        })
+        let model = MacProcessingModel(runner: runner)
+        model.configure(context: context)
+        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        await model.enqueueImportedMeeting(meetingID: meeting.id, inputRevision: try XCTUnwrap(meeting.audioSHA256))
+        await model.waitForCurrentJob()
+        XCTAssertNotNil(model.jobs.first?.processingInput)
+        XCTAssertEqual(model.jobs.first?.state, .stale, model.jobs.first?.error ?? "No failure detail")
+        let saved = try await MacProcessingTestFixtures.snapshot(context, meetingID: meeting.id)
+        XCTAssertEqual(saved.utterances.first?.text, "Original edited text")
+    }
+
+    func testStartupReplayProcessesOnlyDurablyAdoptedAutomaticAudio() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let (context, meeting) = try await MacProcessingTestFixtures.context(in: root)
+        let remote = try AppDatabase.inMemory()
+        let sender = AutomaticSyncRepository(remote)
+        let receiver = AutomaticSyncRepository(context.database)
+        try await sender.configure(peerID: "mac", enabled: true)
+        try await receiver.configure(peerID: "authorized-iphone", enabled: true)
+        let resourceID = try await sender.registerResource(.init(
+            kind: .audio, meetingID: meeting.id, sha256: try XCTUnwrap(meeting.audioSHA256),
+            byteCount: Int64(try XCTUnwrap(meeting.audioByteCount))))
+        let operations = try await sender.pending(peerID: "mac")
+        try await receiver.apply(operations, from: "authorized-iphone")
+        let source = try context.audioFiles.url(forFileName: "fixture.m4a")
+        let bytes = try Data(contentsOf: source)
+        let transfer = AutomaticSyncResourceTransfer(context.database, directory: context.audioFiles.directory)
+        let committedOffset = try await transfer.receive(
+            .init(resourceID: resourceID, offset: 0, total: Int64(bytes.count), bytes: bytes),
+            from: "authorized-iphone")
+        XCTAssertEqual(committedOffset, Int64(bytes.count))
+        let beforeAdoption = try await receiver.verifiedAudioImports()
+        XCTAssertTrue(beforeAdoption.isEmpty)
+        try await receiver.adoptAudioResource(id: resourceID)
+        let imports = try await receiver.verifiedAudioImports()
+        let imported = try XCTUnwrap(imports.first)
+        let unauthorized = MacProcessingModel(runner: FixtureASRRunner())
+        unauthorized.configure(context: context)
+        await unauthorized.replayVerifiedImports()
+        XCTAssertTrue(unauthorized.jobs.isEmpty, "A durable import still requires the trusted replay adapter.")
+        let model = MacProcessingModel(runner: FixtureASRRunner())
+        model.replayAutomaticImports = { [weak model] in
+            for imported in try await receiver.verifiedAudioImports() {
+                await model?.enqueueImportedMeeting(
+                    meetingID: imported.meetingID, inputRevision: imported.audioSHA256,
+                    provenance: .init(peerID: imported.peerID, operationID: imported.operationID))
+            }
+        }
+        model.configure(context: context)
+        try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
+        for _ in 0..<400 where model.jobs.isEmpty { try await Task.sleep(for: .milliseconds(5)) }
+        await model.waitForCurrentJob()
+        XCTAssertEqual(model.jobs.count, 1)
+        XCTAssertEqual(model.jobs.first?.state, .published)
+        XCTAssertEqual(model.jobs.first?.automaticImport?.operationID, imported.operationID)
+        XCTAssertEqual(model.jobs.first?.automaticImport?.peerID, "authorized-iphone")
+        await model.replayVerifiedImports()
+        XCTAssertEqual(model.jobs.count, 1)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path))
+    }
+
     func testASROnlyVersionPreservesFortySpeakersAndEntireLiveTranscript() async throws {
         let root = try MacProcessingTestFixtures.root()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -304,7 +778,8 @@ final class MacProcessingTests: XCTestCase {
         try model.catalog.useManagedASR(MacProcessingTestFixtures.asr(in: root))
         model.start(meetingID: "missing")
         await model.waitForCurrentJob()
-        XCTAssertEqual(model.jobs.first?.state, .failed)
+        XCTAssertTrue(model.jobs.isEmpty)
+        XCTAssertNotNil(model.errorMessage)
         let missing = try await MeetingRepository(context.database).fetch(id: "missing")
         XCTAssertNil(missing)
     }

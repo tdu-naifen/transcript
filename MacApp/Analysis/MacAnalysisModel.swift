@@ -22,6 +22,7 @@ final class MacAnalysisModel {
             guard configuration != oldValue else { return }
             clearSession()
             cancelDownload()
+            retryDownloadEmbedding = nil
             semanticIndex = MacAnalysisSemanticIndex()
             configureBackends()
             availability = .checking
@@ -32,6 +33,8 @@ final class MacAnalysisModel {
     private(set) var retrievalStatus: String?
     private(set) var downloadProgress: Double?
     private(set) var downloadStatus: String?
+    private(set) var retryDownloadEmbedding: Bool?
+    private var downloadingEmbedding: Bool?
     @ObservationIgnored private var backend: any MacAnalysisGenerating
     @ObservationIgnored private var embedding: (any MacAnalysisEmbedding)?
     @ObservationIgnored private let injectedBackend: (any MacAnalysisGenerating)?
@@ -195,6 +198,8 @@ final class MacAnalysisModel {
         let location = embedding ? configuration.embedding : configuration.llm
         let id = UUID()
         downloadID = id
+        downloadingEmbedding = embedding
+        retryDownloadEmbedding = nil
         downloadProgress = 0
         downloadStatus = analysisText("Downloading model files only from Hugging Face. Transcript text is never sent.")
         download = Task { [weak self] in
@@ -208,23 +213,37 @@ final class MacAnalysisModel {
                 guard let self, self.downloadID == id else { return }
                 self.download = nil
                 self.downloadProgress = nil
+                self.downloadingEmbedding = nil
                 self.downloadStatus = analysisText("Pinned model downloaded. Architecture and tokenizer compatibility are checked when first used.")
                 await self.refreshAvailability()
             } catch {
                 guard let self, self.downloadID == id else { return }
                 self.download = nil
                 self.downloadProgress = nil
+                self.retryDownloadEmbedding = embedding
+                self.downloadingEmbedding = nil
                 self.downloadStatus = MacAnalysisEvidence.prefix(error.localizedDescription, bytes: 500)
             }
         }
     }
 
     func cancelDownload() {
+        let wasDownloading = download != nil
+        let target = downloadingEmbedding
         downloadID = UUID()
         download?.cancel()
         download = nil
         downloadProgress = nil
-        downloadStatus = nil
+        downloadingEmbedding = nil
+        if wasDownloading {
+            retryDownloadEmbedding = target
+            downloadStatus = analysisText("Download cancelled. Retry in Settings.")
+        }
+    }
+
+    func retryDownload() {
+        guard let embedding = retryDownloadEmbedding else { return }
+        downloadModel(embedding: embedding)
     }
 
     func selectDirectory(_ url: URL, embedding: Bool) {

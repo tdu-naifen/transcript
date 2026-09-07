@@ -25,6 +25,7 @@ enum MacLocalTranscriptAdoption {
                 "Only an empty meeting imported on this Mac can use this version. Existing transcripts and iPhone meetings are never overwritten."
             ))
         }
+
         let url = try context.audioFiles.url(forFileName: name)
         let digest = try await Task.detached {
             try IncrementalSHA256.hashFile(at: url)
@@ -56,5 +57,32 @@ enum MacLocalTranscriptAdoption {
             }
             for utterance in proposal.utterances { try utterance.insert(db) }
         }
+    }
+}
+
+enum MacAutomaticTranscriptPublication {
+    static func apply(_ job: MacProcessingJob, context: MacLibraryContext) async throws -> String {
+        guard job.destination == .library, let proposal = job.proposal,
+               let previous = job.previous,
+              let revision = job.sourceTranscriptRevision, let audio = job.audioSHA256,
+              !job.models.isEmpty, proposal.meeting.id == job.meetingID,
+              !proposal.utterances.isEmpty else { throw MacProcessingError.invalidManifest }
+        let fingerprint = job.models.map(\.localContentSHA256).joined(separator: ":")
+        let repository = AutomaticSyncRepository(context.database)
+        if let input = job.processingInput {
+            return try await repository.publishTranscript(
+                input: input, utterances: proposal.utterances, publicationID: job.id.uuidString,
+                modelFingerprint: fingerprint, preprocessing: "nemotron-asr-16khz-mono-v1-\(job.language)",
+                expectedUtterances: previous.utterances
+            )
+        }
+        guard try await repository.transcriptPublication(publicationID: job.id.uuidString) != nil else {
+            throw AutomaticSyncRepository.Wire.Failure.staleRevision
+        }
+        return try await repository.publishTranscript(
+            meetingID: job.meetingID, expectedAudioSHA256: audio, expectedRevision: revision,
+            utterances: proposal.utterances, publicationID: job.id.uuidString,
+            modelFingerprint: fingerprint, preprocessing: "nemotron-asr-16khz-mono-v1-\(job.language)",
+            expectedUtterances: previous.utterances)
     }
 }

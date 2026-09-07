@@ -10,7 +10,7 @@ final class MacMeetingCopyUITests: XCTestCase {
         app.activate()
         defer { app.terminate() }
 
-        let connection = app.buttons["macNav-connection"]
+        let connection = app.buttons["macConnectionToolbar"]
         XCTAssertTrue(connection.waitForExistence(timeout: 10))
         connection.click()
         let permission = app.descendants(matching: .any)["macAllowMeetingCopies"].firstMatch

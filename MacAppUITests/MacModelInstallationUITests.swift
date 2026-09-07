@@ -10,7 +10,12 @@ final class MacModelInstallationUITests: XCTestCase {
         app.activate()
         defer { app.terminate() }
         XCTAssertTrue(app.buttons["macSampleToggle"].waitForExistence(timeout: 10))
-        app.typeKey("2", modifierFlags: .command)
+        XCTAssertFalse(app.buttons["macNav-processing"].exists)
+        XCTAssertFalse(app.buttons["macInstallModels"].exists)
+        app.typeKey(",", modifierFlags: .command)
+        let settings = app.windows["Settings"]
+        XCTAssertTrue(settings.waitForExistence(timeout: 5))
+        settings.radioButtons["Transcription Models"].click()
         let install = app.buttons["macInstallModels"]
         XCTAssertTrue(install.waitForExistence(timeout: 10))
         for _ in 0..<8 where !install.isHittable {

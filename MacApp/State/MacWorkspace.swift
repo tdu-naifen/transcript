@@ -1,17 +1,16 @@
 import Observation
+import OSLog
 import SwiftUI
 import TranscriptCore
 
 enum MacSection: String, CaseIterable, Identifiable {
-    case meetings, processing, connection, voiceprints, analysis
+    case meetings, voiceprints, analysis
 
     var id: String { rawValue }
 
     var title: LocalizedStringKey {
         switch self {
         case .meetings: "Meetings"
-        case .processing: "Processing"
-        case .connection: "Connection"
         case .voiceprints: "Voiceprints"
         case .analysis: "LLM Analysis"
         }
@@ -20,8 +19,6 @@ enum MacSection: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .meetings: "doc.text"
-        case .processing: "clock"
-        case .connection: "network"
         case .voiceprints: "person.wave.2"
         case .analysis: "text.bubble"
         }
@@ -34,6 +31,7 @@ final class MacWorkspace {
     let player = MacAudioPlayer()
     let bonjour: MacBonjourService
     let processing = MacProcessingModel()
+    let analysis = MacAnalysisModel()
     let meetingCopy: MacMeetingCopyController
     @ObservationIgnored private var startupTask: Task<Void, Never>?
     var section: MacSection? = .meetings
@@ -41,15 +39,30 @@ final class MacWorkspace {
     var search = ""
     var showingSamples = false
     var showingImporter = false
+    var showingConnection = false
     var importError: String?
     var referenceError: String?
     var referenceLocation: MacTranscriptLocation?
     var analysisMeetingID: String?
 
+    #if DEBUG
+    private static let testRunID: UUID? = {
+        let environment = ProcessInfo.processInfo.environment
+        if let value = environment["TRANSCRIPT_MAC_TEST_RUN_ID"] {
+            if let id = UUID(uuidString: value) { return id }
+            Logger(subsystem: "com.transcript.mac", category: "TestIsolation")
+                .error("Invalid test namespace; refusing to use production storage.")
+            return UUID()
+        }
+        let isTesting = environment["XCTestConfigurationFilePath"] != nil
+            || environment["XCTestBundlePath"] != nil || NSClassFromString("XCTestCase") != nil
+        return isTesting ? UUID() : nil
+    }()
+    #endif
+
     init(library: MacLibraryModel? = nil) {
         #if DEBUG
-        if let run = ProcessInfo.processInfo.environment["TRANSCRIPT_MAC_TEST_RUN_ID"],
-           let id = UUID(uuidString: run) {
+        if let id = Self.testRunID {
             let preferences = UserDefaults(suiteName: "TranscriptMacUITests-\(id.uuidString)")
             bonjour = MacBonjourService(
                 serviceName: "Transcript Mac QA \(id.uuidString.prefix(8))",
@@ -70,9 +83,11 @@ final class MacWorkspace {
             return
         }
         #if DEBUG
-        if let runID = ProcessInfo.processInfo.environment["TRANSCRIPT_MAC_TEST_RUN_ID"],
-           let id = UUID(uuidString: runID) {
-            self.library = MacLibraryModel(directory: FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+        if let id = Self.testRunID {
+            let root = ProcessInfo.processInfo.environment["TRANSCRIPT_TEST_ROOT"].map {
+                URL(fileURLWithPath: $0, isDirectory: true)
+            } ?? FileManager.default.temporaryDirectory.resolvingSymlinksInPath()
+            self.library = MacLibraryModel(directory: root
                 .appendingPathComponent("TranscriptMacUITests-\(id.uuidString)", isDirectory: true))
         } else {
             self.library = MacLibraryModel()
@@ -96,6 +111,25 @@ final class MacWorkspace {
             return
         }
         let task = Task { [self] in
+            do {
+                let context = try await library.processingContext()
+                processing.replayAutomaticImports = { [weak pairing = bonjour.pairing] in
+                    try await pairing?.replayAutomaticAudioImports()
+                }
+                processing.configure(context: context)
+                bonjour.pairing.installAutomaticSync(
+                    database: context.database, audioDirectory: context.audioFiles.directory,
+                    onAudioImported: { [weak processing] imported in
+                        await processing?.enqueueImportedMeeting(
+                            meetingID: imported.meetingID, inputRevision: imported.inputRevision,
+                            provenance: .init(peerID: imported.peerID, operationID: imported.operationID)
+                        )
+                    }
+                )
+                bonjour.advertiseAutomaticSync(true)
+                try await AutomaticSyncRepository(context.database).collectRevokedFiles()
+                try await bonjour.pairing.replayAutomaticAudioImports()
+            } catch { processing.report(error) }
             await meetingCopy.prepare(library: library)
             let pairing = bonjour.pairing
             pairing.makeMeetingCopySession = { [weak pairing, weak meetingCopy] peer, identity in
@@ -112,6 +146,7 @@ final class MacWorkspace {
         }
         startupTask = task
         await task.value
+        startupTask = nil
     }
 
     func setMeetingCopyEnabled(_ enabled: Bool) {
@@ -154,6 +189,7 @@ final class MacWorkspace {
 
     func selectFirstIfNeeded() {
         if !filteredItems.contains(where: { $0.id == selectedMeetingID }) {
+            player.unload()
             selectedMeetingID = filteredItems.first?.id
         }
     }

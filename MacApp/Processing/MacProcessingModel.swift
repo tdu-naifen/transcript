@@ -1,4 +1,6 @@
 import Foundation
+import CryptoKit
+import GRDB
 import Observation
 import TranscriptCore
 
@@ -162,9 +164,14 @@ final class MacProcessingModel {
     @ObservationIgnored private var store: MacProcessingStore?
     @ObservationIgnored private let worker: MacProcessingWorker
     @ObservationIgnored private var activeTask: Task<Void, Never>?
+    @ObservationIgnored private var invalidatedJobIDs: Set<UUID> = []
+    @ObservationIgnored private var isReconcilingDeletedJobs = false
+    @ObservationIgnored private var importObservation: Task<Void, Never>?
     @ObservationIgnored private var downloadTask: Task<Void, Never>?
     @ObservationIgnored private var downloader: (any MacModelDownloading)?
     @ObservationIgnored private var downloadAttemptID: UUID?
+    @ObservationIgnored var onPublished: (@MainActor (String) async -> Void)?
+    @ObservationIgnored var replayAutomaticImports: (@MainActor () async throws -> Void)?
     @ObservationIgnored private let makeDownloader: @Sendable () -> any MacModelDownloading
 
     init(
@@ -175,10 +182,24 @@ final class MacProcessingModel {
         self.makeDownloader = makeDownloader
     }
 
-    var isBusy: Bool { activeJobID != nil || isDownloading || isApplying }
+    var isBusy: Bool { activeJobID != nil || isDownloading || isApplying || isReconcilingDeletedJobs }
     var canRun: Bool {
-        isConfigured && !isBusy && catalog.selected(.asr)?.adapter == .nemotronMultilingual
+        resourcesReady && !isBusy
+    }
+
+    private var resourcesReady: Bool {
+        isConfigured && ["auto", "en-US", "zh-CN"].contains(catalog.language)
+            && catalog.selected(.asr)?.adapter == .nemotronMultilingual
             && catalog.selected(.asr)?.isInstalled() == true
+    }
+
+    var configurationID: String {
+        let card = catalog.selected(.asr)
+        let fields = [catalog.language, card?.id ?? "", card?.revision ?? "",
+                      card?.adapter.rawValue ?? "", card?.localPath ?? "",
+                      card?.bookmark?.base64EncodedString() ?? ""]
+        let bytes = (try? JSONEncoder().encode(fields)) ?? Data()
+        return SHA256.hash(data: bytes).map { String(format: "%02x", $0) }.joined()
     }
 
     func configure(context: MacLibraryContext) {
@@ -187,13 +208,17 @@ final class MacProcessingModel {
         do {
             let store = try MacProcessingStore(libraryDirectory: context.directory)
             try catalog.load(directory: context.directory)
-            let restored = try store.load()
+            let existingMeetingIDs = try Self.meetingIDs(in: context)
+            let restored = try store.load(existingMeetingIDs: existingMeetingIDs)
             self.context = context
             self.store = store
             jobs = restored
+            invalidatedJobIDs = []
             downloads = []
             isConfigured = true
             errorMessage = nil
+            resumeQueuedJobs()
+            observeAutomaticImports(context: context)
         } catch {
             self.context = nil
             self.store = nil
@@ -205,24 +230,155 @@ final class MacProcessingModel {
     func report(_ error: any Error) { errorMessage = error.localizedDescription }
     func clearError() { errorMessage = nil }
 
-    func start(meetingID: String) {
+    func replayVerifiedImports() async {
+        guard isConfigured else { return }
+        do {
+            // The pairing adapter rechecks current trust and sync authorization.
+            try await replayAutomaticImports?()
+        } catch { report(error) }
+    }
+
+    private func observeAutomaticImports(context: MacLibraryContext) {
+        importObservation?.cancel()
+        importObservation = Task { [weak self] in
+            do {
+                // Audio adoption commits a meeting update. The initial observation also
+                // closes the crash gap between that commit and the separate job manifest.
+                let observation = ValueObservation.tracking { db in try Meeting.fetchAll(db) }
+                for try await _ in observation.values(in: context.database.reader) {
+                    try Task.checkCancellation()
+                    guard let self else { return }
+                    do { try await self.reconcileDeletedMeetingJobs() } catch { self.report(error) }
+                    await self.replayVerifiedImports()
+                }
+            } catch is CancellationError {
+                return
+            } catch {
+                self?.report(error)
+            }
+        }
+    }
+
+    deinit { importObservation?.cancel() }
+
+    private func reconcileDeletedMeetingJobs() async throws {
+        guard let context, let store, !isReconcilingDeletedJobs else { return }
+        let existing = try Self.meetingIDs(in: context)
+        let orphans = jobs.filter { !existing.contains($0.meetingID) }
+        guard !orphans.isEmpty else { return }
+        isReconcilingDeletedJobs = true
+        defer {
+            isReconcilingDeletedJobs = false
+            resumeQueuedJobs()
+        }
+        invalidatedJobIDs.formUnion(orphans.map(\.id))
+        if let activeJobID, invalidatedJobIDs.contains(activeJobID), let task = activeTask {
+            task.cancel()
+            // A cancelled inference task can still be draining audio/model work.
+            // Fence manifest writes now; remove its directory only after that task exits.
+            await task.value
+        }
+        for job in orphans {
+            try store.remove(job)
+            jobs.removeAll { $0.id == job.id }
+        }
+    }
+
+    private func requireMeeting(_ meetingID: String) throws {
+        guard let context else { throw MacProcessingError.notConfigured }
+        let exists = try context.database.reader.read { db in try Meeting.exists(db, key: meetingID) }
+        guard exists else { throw MacProcessingError.missingMeeting }
+    }
+
+    private static func meetingIDs(in context: MacLibraryContext) throws -> Set<String> {
+        try context.database.reader.read { db in
+            Set(try String.fetchAll(db, sql: "SELECT id FROM meeting"))
+        }
+    }
+
+    /// The authorized automatic-sync importer calls this only after verified audio commits.
+    /// Legacy immutable-copy receipts and metadata/resource descriptors are not qualifying imports.
+    func enqueueImportedMeeting(
+        meetingID: String, inputRevision: String, provenance: MacProcessingImportProvenance
+    ) async {
+        guard !inputRevision.isEmpty, !provenance.peerID.isEmpty, !provenance.operationID.isEmpty,
+              let store, isConfigured else {
+            report(MacProcessingError.notConfigured); return
+        }
+        if jobs.contains(where: {
+            $0.meetingID == meetingID && $0.inputRevision == inputRevision
+                && ($0.automaticImport == provenance || $0.configurationID == configurationID
+                    || [.queued, .waitingForConfiguration].contains($0.state))
+        }) { return }
+        let job = MacProcessingJob(
+            id: UUID(), meetingID: meetingID, createdAt: Date(),
+            state: resourcesReady ? .queued : .waitingForConfiguration,
+            stage: resourcesReady ? "Queued" : "Waiting for configuration in Settings",
+            progress: 0, language: catalog.language, models: [],
+            inputRevision: inputRevision, configurationID: configurationID, automaticImport: provenance,
+            destination: .library)
+        do {
+            try requireMeeting(meetingID)
+            try store.save(job)
+            jobs.insert(job, at: 0)
+            resumeQueuedJobs()
+        } catch { report(error) }
+    }
+
+    func resumeQueuedJobs() {
+        guard !isBusy, let store else { return }
+        if let job = jobs.reversed().first(where: {
+            !invalidatedJobIDs.contains($0.id) && $0.state == .publishing && $0.destination == .library
+        }) {
+            resumePublication(job: job)
+            return
+        }
+        for var job in jobs.reversed() where !invalidatedJobIDs.contains(job.id)
+            && [.queued, .waitingForConfiguration].contains(job.state) {
+            job.state = resourcesReady ? .queued : .waitingForConfiguration
+            job.stage = resourcesReady ? "Queued" : "Waiting for configuration in Settings"
+            // An unstarted request uses the configuration the user finishes setting up.
+            job.configurationID = configurationID
+            job.language = catalog.language
+            do { try replace(job, store: store) } catch { report(error); return }
+            if resourcesReady { execute(job: job); return }
+        }
+    }
+
+    func start(meetingID: String, destination: MacProcessingJob.Destination = .localVersion) {
         guard !isBusy else { report(MacProcessingError.alreadyRunning); return }
-        guard let context, let store, isConfigured else { report(MacProcessingError.notConfigured); return }
+        guard context != nil, let store, isConfigured else { report(MacProcessingError.notConfigured); return }
+        if jobs.contains(where: {
+            $0.meetingID == meetingID && [.queued, .waitingForConfiguration].contains($0.state)
+        }) {
+            resumeQueuedJobs()
+            return
+        }
         guard let asr = catalog.selected(.asr), asr.adapter == .nemotronMultilingual else {
             report(MacProcessingError.unsupportedModel); return
         }
-        let cards = [asr]
         guard ["auto", "en-US", "zh-CN"].contains(catalog.language) else {
             report(MacProcessingError.unsupportedModel); return
         }
         let job = MacProcessingJob(
-            id: UUID(), meetingID: meetingID, createdAt: Date(), state: .preparing,
-            stage: "Preparing frozen input", progress: 0, language: catalog.language, models: [])
+            id: UUID(), meetingID: meetingID, createdAt: Date(),
+            state: resourcesReady ? .preparing : .waitingForConfiguration,
+            stage: resourcesReady ? "Preparing frozen input" : "Waiting for configuration in Settings",
+            progress: 0, language: catalog.language, models: [], configurationID: configurationID,
+            destination: destination)
         do {
+            try requireMeeting(meetingID)
             try catalog.save()
             try store.save(job)
         } catch { report(error); return }
         jobs.insert(job, at: 0)
+        errorMessage = nil
+        if resourcesReady { execute(job: job) }
+    }
+
+    private func execute(job: MacProcessingJob) {
+        guard let context, let store, let asr = catalog.selected(.asr) else { return }
+        let cards = [asr]
         activeJobID = job.id
         errorMessage = nil
         activeTask = Task {
@@ -230,9 +386,14 @@ final class MacProcessingModel {
                 try? FileManager.default.removeItem(at: store.audio(job.id))
                 activeJobID = nil
                 activeTask = nil
+                resumeQueuedJobs()
             }
             do {
-                var frozen = try await worker.prepare(job: job, cards: cards, context: context, store: store)
+                var preparing = job
+                preparing.state = .preparing
+                preparing.stage = "Preparing frozen input"
+                try replace(preparing, store: store)
+                var frozen = try await worker.prepare(job: preparing, cards: cards, context: context, store: store)
                 try Task.checkCancellation()
                 frozen.state = .running
                 frozen.stage = "loadingAudio"
@@ -242,14 +403,17 @@ final class MacProcessingModel {
                 }
                 try Task.checkCancellation()
                 frozen.proposal = proposal
-                frozen.state = .readyForReview
-                frozen.stage = "Local ASR version ready for review"
+                frozen.state = frozen.destination == .library ? .publishing : .readyForReview
+                frozen.stage = frozen.destination == .library ? "Publishing timed transcript" : "Local ASR version ready for review"
                 frozen.progress = 1
                 try replace(frozen, store: store)
+                if frozen.destination == .library { try await publish(frozen, context: context, store: store) }
             } catch {
+                guard !invalidatedJobIDs.contains(job.id) else { return }
                 guard var failed = jobs.first(where: { $0.id == job.id }) else { return }
-                failed.state = Task.isCancelled ? .cancelled : .failed
-                failed.error = Task.isCancelled ? processingText("Cancelled. The original transcript is unchanged.") : error.localizedDescription
+                failed.state = error as? AutomaticSyncWire.Failure == .staleRevision
+                    ? .stale : (Task.isCancelled ? .cancelled : .failed)
+                failed.error = Task.isCancelled ? processingText("Cancelled. The original transcript is unchanged.") : Self.jobErrorMessage(error)
                 failed.stage = failed.state.rawValue
                 do { try replace(failed, store: store) } catch { report(error) }
                 if failed.state == .failed { errorMessage = failed.error }
@@ -259,8 +423,69 @@ final class MacProcessingModel {
 
     func retry(jobID: UUID) {
         guard let job = jobs.first(where: { $0.id == jobID }) else { return }
+        if job.destination == .library, job.proposal != nil, job.state != .stale {
+            guard !isBusy, let store else { return }
+            var publishing = job
+            publishing.state = .publishing
+            publishing.stage = "Publishing timed transcript"
+            publishing.error = nil
+            do { try replace(publishing, store: store) } catch { report(error); return }
+            resumePublication(job: publishing)
+            return
+        }
         // Retry creates a new immutable input version, never reuses a stale proposal.
-        start(meetingID: job.meetingID)
+        start(meetingID: job.meetingID, destination: job.destination ?? .localVersion)
+    }
+
+    private func publish(_ job: MacProcessingJob, context: MacLibraryContext, store: MacProcessingStore) async throws {
+        let revision = try await MacAutomaticTranscriptPublication.apply(job, context: context)
+        var published = job
+        published.state = .published
+        published.stage = "Timed transcript published in library"
+        published.outputTranscriptRevision = revision
+        published.publishedAt = Date()
+        published.error = nil
+        try replace(published, store: store)
+        await onPublished?(job.meetingID)
+    }
+
+    private func resumePublication(job: MacProcessingJob) {
+        guard let context, let store else { return }
+        activeJobID = job.id
+        activeTask = Task {
+            defer {
+                activeJobID = nil
+                activeTask = nil
+                resumeQueuedJobs()
+            }
+            do {
+                try await publish(job, context: context, store: store)
+            } catch {
+                guard !invalidatedJobIDs.contains(job.id) else { return }
+                var failed = job
+                failed.state = error as? AutomaticSyncWire.Failure == .staleRevision ? .stale : .failed
+                failed.error = Self.jobErrorMessage(error)
+                failed.stage = failed.state.rawValue
+                do { try replace(failed, store: store) } catch { report(error) }
+            }
+        }
+    }
+
+    private static func jobErrorMessage(_ error: any Error) -> String {
+        guard let failure = error as? AutomaticSyncWire.Failure else { return error.localizedDescription }
+        if failure == .staleRevision {
+            return processingText("The transcript changed while processing. This result was retained but cannot overwrite newer edits. Reprocess to use the current version.")
+        }
+        return processingText("Unable to publish the transcript. No newer edits were overwritten. Retry publication from the meeting.")
+    }
+
+    func cancel(jobID: UUID) {
+        guard let store, var job = jobs.first(where: { $0.id == jobID }) else { return }
+        if job.id == activeJobID { cancel(); return }
+        guard [.queued, .waitingForConfiguration].contains(job.state) else { return }
+        job.state = .cancelled
+        job.stage = "Cancelled"
+        do { try replace(job, store: store) } catch { report(error) }
     }
 
     func cancel() {
@@ -286,7 +511,10 @@ final class MacProcessingModel {
             report(MacProcessingError.notConfigured); return false
         }
         isApplying = true
-        defer { isApplying = false }
+        defer {
+            isApplying = false
+            resumeQueuedJobs()
+        }
         do {
             try await MacLocalTranscriptAdoption.apply(job, context: context)
             errorMessage = nil
@@ -316,6 +544,7 @@ final class MacProcessingModel {
                 self.downloader = nil
                 downloadAttemptID = nil
                 downloadTask = nil
+                resumeQueuedJobs()
             }
             for category in categories {
                 guard !Task.isCancelled else { break }
@@ -389,10 +618,13 @@ final class MacProcessingModel {
         downloadProgress = downloads.reduce(0) { $0 + $1.fraction } / Double(max(1, downloads.count))
     }
 
-    func waitForCurrentJob() async { await activeTask?.value }
+    func waitForCurrentJob() async {
+        while let task = activeTask { await task.value }
+    }
 
     private func recordProgress(id: UUID, update: MeetingReprocessingProgress) {
-        guard let store, var job = jobs.first(where: { $0.id == id }), job.state == .running else { return }
+        guard !invalidatedJobIDs.contains(id), let store,
+              var job = jobs.first(where: { $0.id == id }), job.state == .running else { return }
         job.stage = update.stage.rawValue
         job.progress = update.fractionCompleted
         do { try replace(job, store: store) } catch {
@@ -402,6 +634,7 @@ final class MacProcessingModel {
     }
 
     private func replace(_ job: MacProcessingJob, store: MacProcessingStore) throws {
+        guard !invalidatedJobIDs.contains(job.id) else { throw MacProcessingError.missingMeeting }
         try store.save(job)
         if let index = jobs.firstIndex(where: { $0.id == job.id }) { jobs[index] = job }
     }

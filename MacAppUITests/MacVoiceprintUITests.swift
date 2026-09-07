@@ -15,7 +15,7 @@ final class MacVoiceprintUITests: XCTestCase {
             app.buttons["macSampleToggle"].click()
         }
         XCTAssertTrue(app.staticTexts["macMeetingTitle"].waitForExistence(timeout: 5))
-        app.typeKey("4", modifierFlags: .command)
+        app.typeKey("2", modifierFlags: .command)
 
         XCTAssertTrue(app.buttons["macRefreshVoiceprints"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["macVoiceprintsEmpty"].waitForExistence(timeout: 5))

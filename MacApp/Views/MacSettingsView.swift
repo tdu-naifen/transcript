@@ -11,6 +11,12 @@ struct MacSettingsView: View {
             Tab("General", systemImage: "gearshape") {
                 generalSettings
             }
+            Tab("Transcription Models", systemImage: "waveform") {
+                MacProcessingView()
+            }
+            Tab("Analysis Models", systemImage: "cpu") {
+                ScrollView { MacAnalysisView(settingsOnly: true) }
+            }
             Tab("Backups", systemImage: "externaldrive.badge.timemachine") {
                 ScrollView {
                     MacBackupSettingsView {
@@ -37,7 +43,7 @@ struct MacSettingsView: View {
                 Text("Appearance")
             }
             Section("Models") {
-                Text("Choose transcription models and inspect compatibility in Processing. Choose the language model and text embedding model independently in LLM Analysis.")
+                Text("Manage transcription, diarization, speaker embedding, language, and text embedding models in the model tabs in Settings.")
                     .font(.caption).foregroundStyle(.secondary)
                 LabeledContent("Apple Intelligence", value: modelAvailability.message)
                 Text("Apple Intelligence is only required for the Apple language model. MLX models use separately downloaded weights on Apple silicon. Importing and listening do not require an AI model.")
@@ -47,7 +53,7 @@ struct MacSettingsView: View {
                 LabeledContent("Storage", value: String(localized: "This Mac only"))
                 Text("Imported M4A files are copied into the app's local library. The original file is never changed. Samples are read-only and never saved.")
                     .font(.caption).foregroundStyle(.secondary)
-                Text("Discovery remembers your choice. Pairing verifies device identity. Enable meeting receiving in Connection to accept immutable copies explicitly sent from your iPhone.")
+                Text("Discovery remembers your choice. Pairing verifies device identity. Open the connection control in the toolbar to manage your iPhone.")
                     .font(.caption).foregroundStyle(.secondary)
             }
             Section {

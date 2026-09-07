@@ -115,6 +115,65 @@ final class MacVoiceprintTests: XCTestCase {
         XCTAssertEqual(persisted.first?.speaker.resolvedName, "Alice")
     }
 
+    // A committed remote/local identity mutation must reach the open view without manual reload.
+    func testObservationReflectsIdentityAndRealEmbeddingChanges() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = MacLibraryModel(directory: root)
+        let context = try await library.processingContext()
+        let speakers = SpeakerRepository(context.database)
+        let model = MacVoiceprintsModel()
+        let observing = Task { await model.observe(context: context) }
+        defer { observing.cancel() }
+        let speaker = Speaker(anonymousName: "Calm Otter", colorIndex: 7, originDeviceId: "iphone")
+        try await speakers.upsert(speaker)
+        try await waitUntil { model.profiles.contains { $0.id == speaker.id } }
+        try await speakers.rename(id: speaker.id, displayName: "Remote rename", deviceId: "iphone")
+        try await waitUntil { model.selectedProfile?.speaker.resolvedName == "Remote rename" }
+        let vector = SpeakerEmbedding(
+            speakerId: speaker.id, floats: [0.25, -0.5], originDeviceId: "iphone", modelIdentifier: "fixture-real-storage")
+        try await speakers.addEmbedding(vector)
+        let persistedVectors = try await speakers.embeddings(forSpeaker: speaker.id)
+        XCTAssertEqual(persistedVectors.map(\.id), [vector.id])
+        XCTAssertEqual(persistedVectors.map(\.vector), [vector.vector])
+        try await waitUntil { model.selectedProfile?.embeddings == persistedVectors }
+        XCTAssertEqual(model.selectedProfile?.speaker.anonymousName, "Calm Otter")
+        XCTAssertEqual(model.selectedProfile?.speaker.colorIndex, 7)
+        observing.cancel()
+        await observing.value
+    }
+
+    func testMacRenamePersistsStableIdentityAndCapturesOutboundOperation() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let library = MacLibraryModel(directory: root)
+        let context = try await library.processingContext()
+        let speaker = Speaker(anonymousName: "Bright Fox", colorIndex: 5, originDeviceId: "iphone")
+        try await SpeakerRepository(context.database).upsert(speaker)
+        let model = MacVoiceprintsModel()
+        let renamed = await model.rename(id: speaker.id, displayName: "  Alice  ", context: context)
+        XCTAssertTrue(renamed)
+        let fetched = try await SpeakerRepository(context.database).fetch(id: speaker.id)
+        let persisted = try XCTUnwrap(fetched)
+        XCTAssertEqual(persisted.displayName, "Alice")
+        XCTAssertEqual(persisted.anonymousName, speaker.anonymousName)
+        XCTAssertEqual(persisted.colorIndex, speaker.colorIndex)
+        let sync = AutomaticSyncRepository(context.database)
+        try await sync.configure(peerID: "fixture-peer", enabled: true)
+        let denied = try await sync.pending(peerID: "fixture-peer", limit: 256)
+        XCTAssertFalse(denied.contains { $0.entity == .speaker })
+        try await sync.setVoiceprintConsent(peerID: "fixture-peer", state: .allowed)
+        let pending = try await sync.pending(peerID: "fixture-peer", limit: 256)
+        let expectedID = try XCTUnwrap(UUID(uuidString: speaker.id))
+        XCTAssertTrue(pending.contains {
+            $0.entity == .speaker && UUID(uuidString: $0.entityID) == expectedID
+                && $0.field == "displayName" && $0.value == "Alice"
+        })
+        let failed = await model.rename(id: "missing", displayName: "Not recreated", context: context)
+        XCTAssertFalse(failed)
+        XCTAssertNotNil(model.editError)
+    }
+
     func testEmptyLibraryIsHonestAndReadyStoreCanRetry() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -238,9 +297,14 @@ final class MacVoiceprintTests: XCTestCase {
     }
 
     private func makeRoot() throws -> URL {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent(".voiceprint-test-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        return root
+        try MacProcessingTestFixtures.root()
+    }
+
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        for _ in 0..<400 {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("Database observation did not update the voiceprint view model")
     }
 }

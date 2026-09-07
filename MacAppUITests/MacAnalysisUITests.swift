@@ -17,7 +17,7 @@ final class MacAnalysisUITests: XCTestCase {
         app.activate()
         defer { app.terminate() }
         XCTAssertTrue(app.buttons["macSampleToggle"].waitForExistence(timeout: 10))
-        app.typeKey("5", modifierFlags: .command)
+        app.typeKey("3", modifierFlags: .command)
         let input = app.textFields["macAnalysisInput"]
         XCTAssertTrue(input.waitForExistence(timeout: 10))
         app.radioButtons["RAG"].click()
@@ -47,7 +47,9 @@ final class MacAnalysisUITests: XCTestCase {
         defer { app.terminate() }
 
         XCTAssertTrue(app.buttons["macSampleToggle"].waitForExistence(timeout: 10))
-        app.typeKey("5", modifierFlags: .command)
+        app.typeKey("3", modifierFlags: .command)
+        XCTAssertFalse(app.popUpButtons["macAnalysisLanguageModel"].exists)
+        XCTAssertTrue(app.buttons["macAnalysisOpenSettings"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.textFields["macAnalysisInput"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["General chat — no meeting access or meeting references."].exists)
         app.radioButtons["RAG"].click()

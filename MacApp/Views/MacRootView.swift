@@ -16,8 +16,6 @@ struct MacRootView: View {
             Group {
                 switch workspace.section ?? .meetings {
                 case .meetings: MacMeetingsView()
-                case .processing: MacProcessingView()
-                case .connection: MacConnectionView()
                 case .voiceprints: MacVoiceprintsView()
                 case .analysis:
                     MacAnalysisView(meetingID: workspace.analysisMeetingID) { citation in
@@ -36,7 +34,7 @@ struct MacRootView: View {
                         .foregroundStyle(.secondary)
                 }
                 Button {
-                    workspace.section = .connection
+                    workspace.showingConnection = true
                 } label: {
                     HStack(spacing: 6) {
                         MacPhoneConnectionIcon(
@@ -52,6 +50,17 @@ struct MacRootView: View {
                 SettingsLink { Label("Settings", systemImage: "gearshape") }
                     .accessibilityIdentifier("macSettingsButton")
             }
+        }
+        .sheet(isPresented: $workspace.showingConnection) {
+            VStack {
+                HStack {
+                    Spacer()
+                    Button("Done") { workspace.showingConnection = false }
+                        .accessibilityIdentifier("macConnectionDone")
+                }.padding()
+                MacConnectionView()
+            }
+            .frame(minWidth: 720, minHeight: 600)
         }
         .fileImporter(
             isPresented: $workspace.showingImporter,
@@ -82,8 +91,14 @@ struct MacRootView: View {
             Text(workspace.importError ?? "")
         }
         .task {
+            workspace.processing.onPublished = { [weak library = workspace.library] _ in
+                await library?.load()
+            }
             await workspace.startServices()
             await workspace.library.load()
+            do {
+                workspace.processing.configure(context: try await workspace.library.processingContext())
+            } catch { workspace.processing.report(error) }
             workspace.selectFirstIfNeeded()
         }
         .alert("Reference unavailable", isPresented: Binding(
@@ -95,12 +110,19 @@ struct MacRootView: View {
             Text(workspace.referenceError ?? "")
         }
         .onChange(of: workspace.search) { workspace.selectFirstIfNeeded() }
+        .onChange(of: workspace.library.revision) {
+            if !workspace.showingSamples, let selected = workspace.selectedMeetingID,
+               !workspace.library.items.contains(where: { $0.id == selected }) {
+                workspace.player.unload()
+            }
+            if !workspace.showingSamples { workspace.selectFirstIfNeeded() }
+        }
         .onChange(of: workspace.section) { _, section in
             if section != .meetings { workspace.player.unload() }
             if section != .analysis { workspace.analysisMeetingID = nil }
         }
         .onChange(of: workspace.bonjour.pairing.confirmation) { _, confirmation in
-            if confirmation != nil { workspace.section = .connection }
+            if confirmation != nil { workspace.showingConnection = true }
         }
         .onDisappear { workspace.player.unload() }
     }
@@ -143,28 +165,6 @@ struct MacRootView: View {
             .onMoveCommand(perform: moveSection)
 
             VStack(alignment: .leading, spacing: 12) {
-                Button {
-                    workspace.section = .connection
-                } label: {
-                    HStack(spacing: 8) {
-                        MacPhoneConnectionIcon(
-                            isConnected: workspace.bonjour.pairing.isConnected,
-                            isWorking: workspace.meetingCopy.progress != nil || workspace.bonjour.pairing.state == .negotiating,
-                            size: 22
-                        )
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text("Your iPhone")
-                                .fontWeight(.medium)
-                            Text(workspace.bonjour.pairing.connectedPeer?.name ?? String(localized: "Not connected"))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
-                    .background(.background, in: RoundedRectangle(cornerRadius: 10))
-                }
-                .buttonStyle(.plain)
-                .accessibilityIdentifier("macSidebarIPhoneButton")
                 Label("Saved meetings work offline", systemImage: "checkmark")
                     .font(.caption)
                     .foregroundStyle(.secondary)

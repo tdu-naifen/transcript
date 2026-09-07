@@ -3,6 +3,7 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct MacProcessingView: View {
+    var meetingID: String? = nil
     @Environment(MacWorkspace.self) private var workspace
     @State private var repository = ""
     @State private var importCategory: MacModelCategory = .asr
@@ -16,11 +17,11 @@ struct MacProcessingView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                Text(processingText("PROCESS ON THIS MAC"))
+                Text(processingText(meetingID == nil ? "MODEL SETTINGS" : "PROCESS ON THIS MAC"))
                     .font(.caption2.weight(.semibold)).tracking(2).foregroundStyle(.secondary)
-                Text(processingText("Transcribe. Keep local versions. Review.")).font(.title.bold())
+                Text(processingText(meetingID == nil ? "Transcription models" : "Processing & results")).font(.title.bold())
                     .accessibilityIdentifier("macProcessingTitle")
-                Text(processingText("Run Nemotron 3.5 Streaming Multilingual 0.6B ASR on this Mac. Results have unassigned speakers and never replace the library transcript or global voiceprints."))
+                Text(processingText("Run Nemotron 3.5 Streaming Multilingual 0.6B ASR on this Mac. Library publication checks the source version before saving timed text. Results have unassigned speakers; global voiceprints are never changed."))
                     .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 Label(processingText("40+ speaker diarization is not supported. Sortformer has only 4 speaker slots; CAMPPlus embeddings do not remove that limit. This workflow runs ASR only, not speaker separation or identification."),
                       systemImage: "exclamationmark.triangle.fill")
@@ -29,28 +30,31 @@ struct MacProcessingView: View {
                     Label(error, systemImage: "exclamationmark.triangle").foregroundStyle(.orange)
                         .textSelection(.enabled)
                 }
-                meetingSelection
-                modelSelection
-                importCard
+                if meetingID == nil {
+                    languageSelection
+                    modelSelection
+                    importCard
+                } else {
                 MacInfoCard {
                     Label(processingText("Processing jobs"), systemImage: "clock").font(.headline)
-                    if model.jobs.isEmpty {
+                    if !model.jobs.contains(where: { $0.meetingID == meetingID }) {
                         Text(processingText("No jobs yet. Select a real recording and install or locate the compatible ASR model."))
                             .foregroundStyle(.secondary)
                     }
-                    ForEach(model.jobs) { job in
+                    ForEach(model.jobs.filter { $0.meetingID == meetingID }) { job in
                         Divider()
                         jobRow(job)
                     }
                 }
-                Text(processingText("Original audio and library transcripts are never replaced. Versions stay in this Mac library's MacProcessing folder and are not synced to iPhone. LLM and text embedding models are managed in LLM Analysis."))
+                }
+                Text(processingText("Original audio is never replaced. All model resources, including optional diarization and embedding dependencies, are managed in Settings."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             .padding(36)
             .frame(maxWidth: 980, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
-        .navigationTitle(processingText("Processing"))
+        .navigationTitle(processingText(meetingID == nil ? "Transcription Models" : "Processing & results"))
         .task {
             do {
                 let context = try await workspace.library.processingContext()
@@ -61,6 +65,8 @@ struct MacProcessingView: View {
         .onChange(of: model.activeJobID) { previous, current in
             if previous != nil, current == nil { Task { await workspace.library.load() } }
         }
+        .onChange(of: model.configurationID) { model.resumeQueuedJobs() }
+        .onDisappear { model.resumeQueuedJobs() }
         .sheet(item: $selectedCard) { card in
             VStack(alignment: .leading, spacing: 16) {
                 Text(verbatim: processingText(card.name)).font(.title2)
@@ -74,23 +80,8 @@ struct MacProcessingView: View {
         }
     }
 
-    private var meetingSelection: some View {
+    private var languageSelection: some View {
         MacInfoCard {
-            Label(processingText("Recording to process"), systemImage: "waveform").font(.headline)
-            Picker(processingText("Meeting"), selection: Binding(
-                get: { workspace.showingSamples ? "" : workspace.selectedMeetingID ?? "" },
-                set: { workspace.showingSamples = false; workspace.selectedMeetingID = $0.isEmpty ? nil : $0 }
-            )) {
-                Text(processingText("Select a recording")).tag("")
-                ForEach(workspace.library.items) { item in
-                    Text(verbatim: item.meeting.title).tag(item.id)
-                }
-            }
-            .disabled(model.isBusy)
-            if workspace.showingSamples {
-                Text(processingText("Sample meetings cannot be processed. Choose an imported recording above."))
-                    .foregroundStyle(.orange)
-            }
             Picker(processingText("Language prompt"), selection: Binding(
                 get: { model.catalog.language },
                 set: {
@@ -102,20 +93,8 @@ struct MacProcessingView: View {
                 Text(processingText("Chinese")).tag("zh-CN")
             }
             .disabled(model.isBusy)
-            Text(processingText("Creates an ASR-only local version for review, without inferred speaker labels. Existing edits, named speakers, and voiceprints remain untouched. Language, audio hash, model file hashes, and the previous transcript are frozen per job. Diarization and embedding selections below are not executed."))
+            Text(processingText("Processing produces timed ASR text without inferred speaker labels. Language, audio hash, model file hashes, and the source transcript revision are frozen per job. Publication rejects newer edits. Diarization and embedding selections below are not executed."))
                 .font(.callout).foregroundStyle(.secondary)
-            HStack {
-                Button(processingText("Create local ASR version")) {
-                    if let id = workspace.selectedMeetingID { model.start(meetingID: id) }
-                }
-                .buttonStyle(.borderedProminent)
-                .accessibilityIdentifier("macCreateASRVersion")
-                .disabled(!model.canRun || workspace.showingSamples
-                          || !workspace.library.items.contains(where: { $0.id == workspace.selectedMeetingID }))
-                if model.activeJobID != nil {
-                    Button(processingText("Cancel job")) { model.cancel() }
-                }
-            }
         }
     }
 
@@ -301,10 +280,18 @@ struct MacProcessingView: View {
             if job.state.isInterrupted {
                 ProgressView(value: job.progress) { Text(processingText(job.stage)) }
             }
+            if [.waitingForConfiguration, .queued].contains(job.state) {
+                Text(processingText(job.stage)).foregroundStyle(.secondary)
+                SettingsLink { Label("Configure models in Settings", systemImage: "gearshape") }
+            }
+            if [.waitingForConfiguration, .queued, .preparing, .running].contains(job.state) {
+                Button("Cancel processing") { model.cancel(jobID: job.id) }
+                    .accessibilityIdentifier("macCancelProcessing")
+            }
             if let error = job.error { Text(verbatim: error).foregroundStyle(.orange).textSelection(.enabled) }
             if let proposal = job.proposal {
                 Text("\(processingText("Proposed segments")): \(proposal.utterances.count)")
-                Text(processingText("ASR only · speaker labels unassigned · not synced"))
+                Text(processingText("ASR only · speaker labels unassigned"))
                     .font(.caption).foregroundStyle(.secondary)
                 DisclosureGroup(processingText("Review transcript proposal")) {
                     ForEach(proposal.utterances.sorted { $0.startMs < $1.startMs }) { utterance in
@@ -337,6 +324,14 @@ struct MacProcessingView: View {
             if job.state == .savedLocally {
                 Text(processingText("Reviewed local version retained. Reviewing alone does not change the library or sync status."))
                     .font(.caption).foregroundStyle(.secondary)
+            }
+            if job.state == .published {
+                Text(processingText("Timed transcript saved in the library. Device delivery is tracked separately in Connection."))
+                    .font(.caption).foregroundStyle(.secondary)
+                    .accessibilityIdentifier("macTranscriptPublished")
+                if let revision = job.outputTranscriptRevision {
+                    Text(verbatim: revision).font(.caption.monospaced()).textSelection(.enabled)
+                }
             }
             if [.readyForReview, .savedLocally].contains(job.state),
                job.previous?.utterances.isEmpty == true {

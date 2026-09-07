@@ -1,11 +1,104 @@
 import AVFoundation
 import Foundation
+import GRDB
 import TranscriptCore
 import XCTest
 @testable import TranscriptMac
 
 @MainActor
 final class MacLibraryTests: XCTestCase {
+    func testWorkspacePublishesAutomaticCapabilityAfterRealStoragePreparation() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = MacWorkspace(library: MacLibraryModel(directory: root))
+        XCTAssertFalse(workspace.bonjour.advertisesAutomaticSync)
+        await workspace.startServices()
+        XCTAssertTrue(workspace.processing.isConfigured)
+        XCTAssertTrue(workspace.bonjour.advertisesAutomaticSync)
+        XCTAssertFalse(workspace.bonjour.isEnabled, "Unit setup must not start production discovery")
+    }
+
+    func testWorkspaceCanRetryFailedAutomaticSyncStorageWithoutRestart() async throws {
+        let root = try MacProcessingTestFixtures.root()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let blocked = root.appendingPathComponent("Library")
+        try Data("not a directory".utf8).write(to: blocked)
+        let workspace = MacWorkspace(library: MacLibraryModel(directory: blocked))
+        await workspace.startServices()
+        XCTAssertFalse(workspace.bonjour.advertisesAutomaticSync)
+        try FileManager.default.removeItem(at: blocked)
+        await workspace.startServices()
+        XCTAssertTrue(workspace.processing.isConfigured)
+        XCTAssertTrue(workspace.bonjour.advertisesAutomaticSync)
+    }
+
+    func testCommittedScalarIdentityAndTranscriptChangesRefreshWithoutExplicitLoad() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = MacLibraryModel(directory: root)
+        await model.load()
+        let context = try await model.processingContext()
+        let meeting = Meeting(title: "Original", startedAt: Date(), state: .recorded, originDeviceId: "iphone")
+        let speaker = Speaker(anonymousName: "Calm Otter", colorIndex: 7, originDeviceId: "iphone")
+        try await MeetingRepository(context.database).insert(meeting)
+        try await SpeakerRepository(context.database).upsert(speaker)
+        try await SpeakerRepository(context.database).assignDisplayIndex(
+            meetingId: meeting.id, speakerId: speaker.id, displayIndex: 0, deviceId: "iphone")
+        try await waitUntil { model.items.first?.speakers.first?.id == speaker.id }
+        let revision = model.revision
+
+        try await context.database.writer.write { db in
+            var changedMeeting = meeting
+            changedMeeting.title = "Remote title"
+            try changedMeeting.update(db)
+            var changedSpeaker = speaker
+            changedSpeaker.displayName = "Remote identity"
+            try changedSpeaker.update(db)
+            try Utterance(meetingId: meeting.id, startMs: 20, endMs: 80,
+                          text: "Remote timed transcript", speakerId: speaker.id,
+                          originDeviceId: "iphone").insert(db)
+        }
+        try await waitUntil {
+            model.items.first?.meeting.title == "Remote title"
+                && model.items.first?.speakers.first?.resolvedName == "Remote identity"
+                && model.items.first?.utterances.first?.text == "Remote timed transcript"
+        }
+        XCTAssertGreaterThan(model.revision, revision)
+        XCTAssertEqual(model.items.first?.speakers.first?.anonymousName, speaker.anonymousName)
+        XCTAssertEqual(model.items.first?.speakers.first?.colorIndex, speaker.colorIndex)
+        try await MeetingRepository(context.database).delete(id: meeting.id)
+        try await waitUntil { model.items.isEmpty }
+    }
+
+    func testBurstRefreshKeepsFinalCommitAndDoesNotClearActionError() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let model = MacLibraryModel(directory: root)
+        let context = try await model.processingContext()
+        let meeting = Meeting(title: "Original", startedAt: Date(), state: .recorded, originDeviceId: "iphone")
+        try await MeetingRepository(context.database).insert(meeting)
+        await model.load()
+        await model.rename(id: meeting.id, title: " ")
+        let actionError = try XCTUnwrap(model.errorMessage)
+        for index in 0..<20 {
+            try await MeetingRepository(context.database).rename(
+                id: meeting.id, title: "Revision \(index)", deviceId: "iphone")
+        }
+        try await waitUntil { model.items.first?.meeting.title == "Revision 19" && !model.isLoading }
+        XCTAssertEqual(model.items.count, 1)
+        XCTAssertEqual(model.errorMessage, actionError)
+    }
+
+    func testIdleDatabaseObservationDoesNotRetainLibraryModel() async throws {
+        let root = try makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        var model: MacLibraryModel? = MacLibraryModel(directory: root)
+        await model?.load()
+        weak var released = model
+        model = nil
+        try await waitUntil { released == nil }
+    }
+
     func testImportPreservesOriginalAndPersistsMetadata() async throws {
         let root = try makeRoot()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -311,11 +404,16 @@ final class MacLibraryTests: XCTestCase {
         XCTAssertEqual(player.currentTime, 0)
     }
 
+    private func waitUntil(_ condition: () -> Bool) async throws {
+        for _ in 0..<400 {
+            if condition() { return }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTFail("Committed database changes did not reach the library")
+    }
+
     private func makeRoot() throws -> URL {
-        let root = FileManager.default.temporaryDirectory
-            .appendingPathComponent(".library-test-\(UUID().uuidString)", isDirectory: true)
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-        return root
+        try MacProcessingTestFixtures.root()
     }
 
     func testReturningToCurrentLibraryDoesNotUnloadSelectedAudio() throws {
@@ -326,7 +424,7 @@ final class MacLibraryTests: XCTestCase {
         workspace.player.seek(to: 0.2)
         workspace.selectedMeetingID = "current"
         workspace.search = "Meeting"
-        workspace.section = .connection
+        workspace.section = .voiceprints
 
         workspace.setSamples(false)
 

@@ -6,6 +6,10 @@ struct MacVoiceprintsView: View {
     @Environment(MacWorkspace.self) private var workspace
     @State private var model = MacVoiceprintsModel()
     @FocusState private var focusedProfileID: String?
+    @State private var renamingProfile: MacVoiceprintProfile?
+    @State private var nameDraft = ""
+    @State private var renameStorageError: String?
+    @State private var observationAttempt = 0
 
     var body: some View {
         @Bindable var model = model
@@ -38,7 +42,38 @@ struct MacVoiceprintsView: View {
                 .accessibilityIdentifier("macRefreshVoiceprints")
             }
         }
-        .task { await reload() }
+        .task(id: observationAttempt) {
+            do {
+                await model.observe(context: try await workspace.library.processingContext())
+            } catch {
+                await model.load { throw error }
+            }
+        }
+        .sheet(item: $renamingProfile) { profile in
+            VStack(alignment: .leading, spacing: 16) {
+                Text("Rename Speaker").font(.title2.bold())
+                TextField("Speaker name", text: $nameDraft)
+                    .textFieldStyle(.roundedBorder)
+                    .accessibilityIdentifier("macSpeakerNameField")
+                    .onSubmit { saveName(profile) }
+                Text("Leave the name empty to use the originally assigned animal name. The stable identity and color do not change.")
+                    .font(.caption).foregroundStyle(.secondary)
+                if let error = model.editError ?? renameStorageError {
+                    Text(verbatim: error).foregroundStyle(.orange).textSelection(.enabled)
+                        .accessibilityIdentifier("macSpeakerRenameError")
+                }
+                HStack {
+                    Spacer()
+                    Button("Cancel") { renamingProfile = nil }
+                        .keyboardShortcut(.cancelAction)
+                        .disabled(model.isSaving)
+                    Button("Save") { saveName(profile) }
+                        .keyboardShortcut(.defaultAction)
+                        .disabled(model.isSaving || nameDraft.trimmingCharacters(in: .whitespacesAndNewlines).count > 200)
+                        .accessibilityIdentifier("macSaveSpeakerName")
+                }
+            }.padding(24).frame(width: 450)
+        }
         .onChange(of: model.search) { model.selectedID = model.selectedProfile?.id }
     }
 
@@ -121,7 +156,12 @@ struct MacVoiceprintsView: View {
             .frame(minWidth: 225, idealWidth: 260, maxWidth: 330)
 
             if let profile = model.selectedProfile {
-                MacVoiceprintDetailView(profile: profile)
+                MacVoiceprintDetailView(profile: profile) {
+                    nameDraft = profile.speaker.displayName ?? ""
+                    model.clearEditError()
+                    renameStorageError = nil
+                    renamingProfile = profile
+                }
                     .id(profile.id)
                     .frame(minWidth: 380, maxWidth: .infinity, maxHeight: .infinity)
             }
@@ -130,6 +170,21 @@ struct MacVoiceprintsView: View {
 
     private func reload() async {
         await model.load { try await workspace.library.voiceprints() }
+        observationAttempt += 1
+    }
+
+    private func saveName(_ profile: MacVoiceprintProfile) {
+        Task {
+            do {
+                let context = try await workspace.library.processingContext()
+                if await model.rename(id: profile.id, displayName: nameDraft, context: context) {
+                    renamingProfile = nil
+                    await workspace.library.load()
+                }
+            } catch {
+                renameStorageError = error.localizedDescription
+            }
+        }
     }
 
     private func moveSelection(_ direction: MoveCommandDirection) {
@@ -142,6 +197,7 @@ struct MacVoiceprintsView: View {
 
 private struct MacVoiceprintDetailView: View {
     let profile: MacVoiceprintProfile
+    let rename: () -> Void
     @Environment(\.colorScheme) private var scheme
     @Environment(\.colorSchemeContrast) private var contrast
 
@@ -156,6 +212,11 @@ private struct MacVoiceprintDetailView: View {
                         Text(profile.speaker.resolvedName).font(.largeTitle.bold())
                         Text("Global speaker identity").foregroundStyle(.secondary)
                     }
+                    Spacer()
+                    Button(action: rename) {
+                        Label("Rename Speaker", systemImage: "pencil")
+                    }
+                    .accessibilityIdentifier("macRenameSpeaker")
                 }
                 GroupBox {
                     VStack(alignment: .leading, spacing: 12) {
@@ -210,6 +271,24 @@ private struct MacVoiceprintEmbeddingView: View {
                 LabeledContent("Embedding model", value: embedding.modelIdentifier.flatMap {
                     $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : $0
                 } ?? String(localized: "Unknown (legacy embedding)"))
+                LabeledContent {
+                    if let preprocessing = embedding.preprocessing {
+                        Text(verbatim: preprocessing)
+                    } else {
+                        Text("Not provided", tableName: "AutomaticSync")
+                    }
+                } label: {
+                    Text("Preprocessing", tableName: "AutomaticSync")
+                }
+                if embedding.modelIdentifier?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false
+                    || embedding.preprocessing?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty != false {
+                    Label {
+                        Text("Missing provenance. Preserved for inspection, not used for matching.", tableName: "AutomaticSync")
+                    } icon: {
+                        Image(systemName: "exclamationmark.shield")
+                    }
+                    .foregroundStyle(.orange)
+                }
                 LabeledContent("Updated") {
                     Text(embedding.updatedAt, format: .dateTime.year().month().day().hour().minute())
                 }
@@ -243,7 +322,13 @@ private struct MacVoiceprintEmbeddingView: View {
     }
 
     private var samples: some View {
-        LabeledContent("Samples represented") { Text(embedding.sampleCount, format: .number) }
+        LabeledContent("Samples represented") {
+            if embedding.sampleCount > 0 {
+                Text(embedding.sampleCount, format: .number)
+            } else {
+                Text("Not provided", tableName: "AutomaticSync")
+            }
+        }
     }
 
     private func chart(_ vector: MacVoiceprintVector) -> some View {

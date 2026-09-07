@@ -36,6 +36,9 @@ actor MacLibraryStore {
     }
 
     func load() async throws -> [MacLibraryItem] {
+        try await AutomaticSyncRepository(context.database)
+            .cleanupDeletedMeetingAudio(audioDirectory: audioFiles.directory)
+        try await AutomaticSyncRepository(context.database).collectRevokedFiles()
         var result: [MacLibraryItem] = []
         for meeting in try await meetings.fetchAll() {
             let transcript = try await utterances.fetch(meetingId: meeting.id)

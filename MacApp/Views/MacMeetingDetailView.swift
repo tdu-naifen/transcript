@@ -23,12 +23,15 @@ struct MacMeetingDetailView: View {
     @State private var showingRename = false
     @State private var titleDraft = ""
     @State private var audioError: String?
+    @State private var showingProcessing = false
+    @State private var confirmingReprocess = false
 
     private var tint: Color { MacTheme.tint(scheme: scheme, contrast: contrast) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             header
+            if !isSample { processingControls.padding(.bottom, 16) }
             Picker("Meeting content", selection: $tab) {
                 ForEach(MacDetailTab.allCases) { Text($0.title).tag($0) }
             }
@@ -61,9 +64,11 @@ struct MacMeetingDetailView: View {
         }
         .padding(.horizontal, 28)
         .background(Color(nsColor: .textBackgroundColor))
-        .task(id: item.id) {
+        .task(id: [item.id, item.meeting.audioFileName ?? "", item.meeting.localAudioPurgedAt?.description ?? ""]) {
             workspace.player.unload()
-            guard !isSample, item.meeting.audioFileName != nil else { return }
+            audioError = nil
+            guard !isSample, item.meeting.audioFileName != nil,
+                  item.meeting.localAudioPurgedAt == nil else { return }
             do {
                 let url = try workspace.library.audioURL(for: item)
                 workspace.player.load(url: url)
@@ -73,6 +78,20 @@ struct MacMeetingDetailView: View {
             }
         }
         .onChange(of: workspace.referenceLocation?.id) { seekToReference() }
+        .sheet(isPresented: $showingProcessing) {
+            VStack {
+                HStack {
+                    Spacer()
+                    Button("Done") { showingProcessing = false }
+                }.padding()
+                MacProcessingView(meetingID: item.id)
+            }.frame(minWidth: 700, minHeight: 520)
+        }
+        .confirmationDialog("Reprocess this meeting?", isPresented: $confirmingReprocess) {
+            Button("Reprocess") { workspace.processing.start(meetingID: item.id, destination: .library) }
+        } message: {
+            Text("Creates a new version with the current configuration. Existing recordings and versions are preserved.")
+        }
         .sheet(isPresented: $showingRename) {
             VStack(alignment: .leading, spacing: 20) {
                 Text("Rename Meeting").font(.title2.bold())
@@ -94,6 +113,61 @@ struct MacMeetingDetailView: View {
             }
             .padding(26)
             .frame(width: 420)
+        }
+    }
+
+    private var latestJob: MacProcessingJob? {
+        workspace.processing.jobs.first { $0.meetingID == item.id }
+    }
+
+    private var processingControls: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                if let job = latestJob {
+                    Text(processingText(job.stage))
+                        .accessibilityIdentifier("macMeetingProcessingStatus")
+                    if job.state.isInterrupted {
+                        ProgressView(value: job.progress).frame(width: 90)
+                            .accessibilityLabel("Processing progress")
+                            .accessibilityValue(Text("\(processingText(job.stage)): \(job.progress.formatted(.percent))"))
+                    }
+                    if [.preparing, .running, .queued, .waitingForConfiguration].contains(job.state) {
+                        Button("Cancel") { workspace.processing.cancel(jobID: job.id) }
+                            .keyboardShortcut(".", modifiers: .command)
+                            .accessibilityIdentifier("macMeetingCancelProcessing")
+                    } else if [.failed, .cancelled, .needsRetry, .stale].contains(job.state) {
+                        Button("Retry") { workspace.processing.retry(jobID: job.id) }
+                            .disabled(!workspace.processing.isConfigured || workspace.processing.isBusy)
+                            .accessibilityIdentifier("macMeetingRetryProcessing")
+                    }
+                    Button(LocalizedStringKey(job.proposal == nil ? "Job details" : "View result version")) {
+                        showingProcessing = true
+                    }.accessibilityIdentifier("macMeetingProcessingResults")
+                }
+                Spacer()
+                if latestJob == nil && item.utterances.isEmpty {
+                    Button("Process") { workspace.processing.start(meetingID: item.id, destination: .library) }
+                        .buttonStyle(.borderedProminent)
+                        .keyboardShortcut("p", modifiers: [.command, .shift])
+                        .accessibilityIdentifier("macMeetingProcess")
+                        .disabled(!workspace.processing.isConfigured || workspace.processing.isBusy
+                                  || item.meeting.audioFileName == nil)
+                } else {
+                    Button("Reprocess…") { confirmingReprocess = true }
+                        .keyboardShortcut("p", modifiers: [.command, .shift])
+                        .accessibilityIdentifier("macMeetingReprocess")
+                        .disabled(!workspace.processing.canRun || item.meeting.audioFileName == nil)
+                }
+            }
+            if let error = latestJob?.error {
+                Text(verbatim: error).foregroundStyle(.orange).textSelection(.enabled)
+            }
+            if !workspace.processing.canRun && !workspace.processing.isBusy {
+                SettingsLink { Label("Configure processing models in Settings", systemImage: "gearshape") }
+            }
+            if let error = workspace.processing.errorMessage {
+                Text(verbatim: error).font(.caption).foregroundStyle(.orange)
+            }
         }
     }
 
@@ -162,7 +236,7 @@ struct MacMeetingDetailView: View {
                 ContentUnavailableView {
                     Label("No transcript yet", systemImage: "text.alignleft")
                 } description: {
-                    Text("You can listen to the original recording below. Mac transcription and iPhone transcript transfer are not connected yet.")
+                    Text("Listen to the original recording below or choose Process to create a transcript on this Mac. Model resources are managed in Settings.")
                 }
             } else {
                 ScrollViewReader { proxy in

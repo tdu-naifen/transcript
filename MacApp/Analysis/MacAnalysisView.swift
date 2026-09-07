@@ -4,20 +4,32 @@ import Textual
 
 struct MacAnalysisView: View {
     @Environment(MacWorkspace.self) private var workspace
-    @State private var model: MacAnalysisModel
+    private var model: MacAnalysisModel { workspace.analysis }
+    let meetingID: String?
+    let settingsOnly: Bool
     let onOpenCitation: (MacAnalysisCitation) -> Void
 
-    init(meetingID: String? = nil, onOpenCitation: @escaping (MacAnalysisCitation) -> Void = { _ in }) {
+    init(meetingID: String? = nil, settingsOnly: Bool = false,
+         onOpenCitation: @escaping (MacAnalysisCitation) -> Void = { _ in }) {
         self.onOpenCitation = onOpenCitation
-        let model = MacAnalysisModel()
-        if let meetingID {
-            model.mode = .summary
-            model.selectedMeetingID = meetingID
-        }
-        _model = State(initialValue: model)
+        self.meetingID = meetingID
+        self.settingsOnly = settingsOnly
     }
 
     var body: some View {
+        if settingsOnly {
+            VStack(alignment: .leading, spacing: 16) {
+                modelSettings
+                if let error = model.errorMessage {
+                    Text(verbatim: error).foregroundStyle(.orange).textSelection(.enabled)
+                }
+            }.padding(24)
+        } else {
+            analysisContent
+        }
+    }
+
+    @ViewBuilder private var analysisContent: some View {
         @Bindable var model = model
         VStack(alignment: .leading, spacing: 16) {
             HStack {
@@ -29,7 +41,8 @@ struct MacAnalysisView: View {
                 Button(analysisText("Clear session")) { model.clearSession() }
                     .accessibilityIdentifier("macAnalysisClear")
             }
-            modelSettings
+            SettingsLink { Label("Model Settings", systemImage: "gearshape") }
+                .accessibilityIdentifier("macAnalysisOpenSettings")
             HStack {
                 Label(model.availability.message, systemImage: model.availability == .available ? "checkmark.circle" : "info.circle")
                     .font(.callout).foregroundStyle(.secondary)
@@ -64,10 +77,10 @@ struct MacAnalysisView: View {
                 }
                 if !hasTranscript {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text(analysisText("No transcript in this scope. Import audio, create a local ASR version in Processing, then choose Use transcript in library & RAG."))
+                        Text(analysisText("No transcript in this scope. Open a meeting, choose Process, then use the completed transcript in the library."))
                             .foregroundStyle(.secondary)
                             .accessibilityIdentifier("macAnalysisEmptyLibrary")
-                        Button(analysisText("Open Processing")) { workspace.section = .processing }
+                        Button("Open Meetings") { workspace.section = .meetings }
                     }
                 }
             } else {
@@ -160,6 +173,10 @@ struct MacAnalysisView: View {
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("macAnalysisView")
         .task {
+            if let meetingID {
+                model.mode = .summary
+                model.selectedMeetingID = meetingID
+            }
             await workspace.library.load()
             model.updateCorpus(workspace.library.items)
             await model.refreshAvailability()
@@ -169,7 +186,6 @@ struct MacAnalysisView: View {
         }
         .onDisappear {
             model.clearSession()
-            model.cancelDownload()
         }
     }
 
@@ -185,36 +201,57 @@ struct MacAnalysisView: View {
     }
 
     private var modelSettings: some View {
-        @Bindable var model = model
-        return DisclosureGroup(analysisText("Models & retrieval")) {
+        DisclosureGroup(analysisText("Models & retrieval")) {
             VStack(alignment: .leading, spacing: 10) {
-                Picker(analysisText("Language model"), selection: $model.configuration.languageModel) {
-                    Text(analysisText("Apple Intelligence (built in)")).tag(MacAnalysisLanguageModel.apple)
-                    Text(analysisText("Local MLX language model")).tag(MacAnalysisLanguageModel.mlx)
-                }
-                .accessibilityIdentifier("macAnalysisLanguageModel")
-                if model.configuration.languageModel == .mlx { modelLocation(embedding: false) }
-                Picker(analysisText("Text retrieval"), selection: $model.configuration.embeddingModel) {
-                    Text(analysisText("Keyword (no vectors)")).tag(MacAnalysisEmbeddingModel.keyword)
-                    Text(analysisText("Apple sentence embedding · English")).tag(MacAnalysisEmbeddingModel.appleEnglish)
-                    Text(analysisText("Local MLX sentence embedding")).tag(MacAnalysisEmbeddingModel.mlx)
-                }
-                .accessibilityIdentifier("macAnalysisEmbeddingModel")
-                if model.configuration.embeddingModel == .mlx { modelLocation(embedding: true) }
+                languageModelSettings
+                retrievalModelSettings
                 Text(analysisText("Model changes clear pending requests and answers. Downloads are optional, can be large, and require your explicit action. Only supported safetensors architectures run; no repository Python code is executed."))
                     .font(.caption).foregroundStyle(.secondary)
-                if let progress = model.downloadProgress {
-                    HStack {
-                        ProgressView(value: progress)
-                        Button(analysisText("Cancel download")) { model.cancelDownload() }
-                    }
-                }
-                if let status = model.downloadStatus {
-                    Text(verbatim: status).font(.caption).textSelection(.enabled)
-                }
+                modelDownloadStatus
             }.padding(.top, 8)
         }
         .accessibilityIdentifier("macAnalysisModelSettings")
+    }
+
+    private var languageModelSettings: some View {
+        @Bindable var model = model
+        return VStack(alignment: .leading, spacing: 8) {
+            Picker(analysisText("Language model"), selection: $model.configuration.languageModel) {
+                Text(analysisText("Apple Intelligence (built in)")).tag(MacAnalysisLanguageModel.apple)
+                Text(analysisText("Local MLX language model")).tag(MacAnalysisLanguageModel.mlx)
+            }.accessibilityIdentifier("macAnalysisLanguageModel")
+            if model.configuration.languageModel == .mlx { modelLocation(embedding: false) }
+        }
+    }
+
+    private var retrievalModelSettings: some View {
+        @Bindable var model = model
+        return VStack(alignment: .leading, spacing: 8) {
+            Picker(analysisText("Text retrieval"), selection: $model.configuration.embeddingModel) {
+                Text(analysisText("Keyword (no vectors)")).tag(MacAnalysisEmbeddingModel.keyword)
+                Text(analysisText("Apple sentence embedding · English")).tag(MacAnalysisEmbeddingModel.appleEnglish)
+                Text(analysisText("Local MLX sentence embedding")).tag(MacAnalysisEmbeddingModel.mlx)
+            }.accessibilityIdentifier("macAnalysisEmbeddingModel")
+            if model.configuration.embeddingModel == .mlx { modelLocation(embedding: true) }
+        }
+    }
+
+    private var modelDownloadStatus: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if let progress = model.downloadProgress {
+                HStack {
+                    ProgressView(value: progress)
+                    Button(analysisText("Cancel download")) { model.cancelDownload() }
+                }
+            }
+            if let status = model.downloadStatus {
+                Text(verbatim: status).font(.caption).textSelection(.enabled)
+            }
+            if model.retryDownloadEmbedding != nil, model.downloadProgress == nil {
+                Button("Retry download") { model.retryDownload() }
+                    .accessibilityIdentifier("macAnalysisRetryDownload")
+            }
+        }
     }
 
     private func modelLocation(embedding: Bool) -> some View {
